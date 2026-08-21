@@ -2,6 +2,7 @@ import "dotenv/config";
 import { getSession } from "../src/auth.js";
 import { availableProviders, generateReelPackage } from "../src/ai-providers.js";
 import { submitFalVideo } from "../src/fal-video.js";
+import { baseProductTitle } from "../src/lib/product-title.js";
 
 const baseId = process.env.AIRTABLE_BASE_ID || "apphVqbUQohAMIoWk";
 const tableId = process.env.AIRTABLE_TABLE_ID || "tblir7vlazMo8v532";
@@ -17,7 +18,7 @@ export default async function handler(request, response) {
     if (!providers.includes(body.provider)) return response.status(400).json({ error: "Seçilen AI sağlayıcısının API anahtarı Vercel'de tanımlı değil." });
     const data = await airtable(); const record = (data.records || []).find((item) => item.id === body.productId); const fields = record?.fields || {};
     if (!record || !fields["Kaynak URL"] || !fields["Görsel URL"]) return response.status(400).json({ error: "Ürün URL veya görsel bilgisi eksik." });
-    const product = { title: fields.Başlık || "Buzsu ürünü", url: fields["Kaynak URL"], imageUrl: fields["Görsel URL"] };
+    const product = { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", url: fields["Kaynak URL"], imageUrl: fields["Görsel URL"] };
     if (body.provider === "fal") return response.status(200).json({ ok: true, fal: await submitFalVideo(product) });
     const reel = await generateReelPackage(body.provider, product);
     return response.status(200).json({ ok: true, reel });

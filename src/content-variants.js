@@ -1,3 +1,5 @@
+import { baseProductTitle } from "./lib/product-title.js";
+
 const blockedClaims = [/en iyi/gi, /kesinlikle sağlıklı/gi, /hastalığı/gi, /tedavi/gi, /garanti eder/gi];
 
 function cleanClaim(text) {
@@ -9,7 +11,7 @@ function productKey(product) {
 }
 
 export function createContentVariant(product, variant = 0) {
-  const title = String(product.title || "Buzsu ürünü").trim();
+  const title = baseProductTitle(product.title) || "Buzsu ürünü";
   const url = String(product.url || "").trim();
   const key = productKey(product);
   const templates = key.includes("ultramag")

@@ -32,6 +32,12 @@ test("content worker uses the AI caption override instead of the canned template
   assert.equal(draft.hashtags, "#Buzsu #Test");
 });
 
+test("content worker does not compound an already-suffixed product title (regression for the accumulating-title bug)", () => {
+  const polluted = { ...product, title: "Code Su Arıtma Cihazı | Hikâye 1 | Hikâye | Hikâye" };
+  const draft = buildDraft(polluted, { format: "Gönderi", platforms: ["Instagram", "Facebook"], publishAt: "2026-08-20T10:00:00.000Z" });
+  assert.equal(draft.title, "Code Su Arıtma Cihazı | Gönderi");
+});
+
 test("content worker still flags risky claims coming from an AI caption override", () => {
   const draft = buildDraft(product, {
     format: "Gönderi",

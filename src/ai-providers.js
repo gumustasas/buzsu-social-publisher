@@ -1,3 +1,5 @@
+import { fetchProductContext } from "./lib/product-context.js";
+
 const reelSchema = `{"hook":"kısa açılış","voiceover":"Türkçe seslendirme metni","scenes":[{"seconds":3,"visual":"görsel açıklaması","on_screen_text":"ekran yazısı"}],"caption":"Instagram açıklaması","hashtags":["#Buzsu"],"cta":"kısa çağrı","disclaimer":"gerekirse sınırlama"}`;
 
 function prompt(product) {
@@ -23,49 +25,67 @@ export function availableProviders(env = process.env) {
   return ["openai", "anthropic", "gemini", "fal"].filter((provider) => Boolean(env[provider === "openai" ? "OPENAI_API_KEY" : provider === "anthropic" ? "ANTHROPIC_API_KEY" : provider === "gemini" ? "GEMINI_API_KEY" : "FAL_KEY"]));
 }
 
-function scenePlanPrompt(product) {
-  return `Buzsu için "${product.title}" ürününün sosyal medya sahne görseli üretiminde kullanılacak bir sahne açıklaması yaz. Aşağıdaki kurulum şablonunu birebir takip et, sadece küçük ayrıntıları (aile üyelerinin duruşu, ışık, dekor detayları) değiştirerek doğal bir varyasyon üret:
+function scenePlanPrompt(product, context) {
+  const grounding = context
+    ? `Ürün hakkında buzsu.com.tr'den alınan gerçek bilgi:\n"""\n${context}\n"""\n\nÖnce bu bilgiye göre ürünün GERÇEKTE ne olduğunu ve nerede/nasıl kullanıldığını anla.`
+    : `Ürün hakkında ek bilgi bulunamadı; ürün adından mantıklı bir çıkarım yap.`;
+  return `Buzsu için "${product.title}" ürününün sosyal medya sahne görseli üretiminde kullanılacak bir sahne açıklaması yaz.
 
+${grounding}
+
+Sahneyi ürünün gerçek kullanım ortamına göre kurgula. ÖRNEĞİN ürün mutfakta kullanılan, içme suyu veren bir cihazsa (mutfak altı/üstü su arıtma cihazı gibi) şu şablonu kullanabilirsin:
 - Cihaz, mutfak tezgahı ALTINDAKİ dolabın içinde; dolap kapakları açık, cihaz görünüyor.
 - Cihazın kendi üzerinde veya hemen yanında HİÇBİR musluk yok.
 - Tezgah ÜSTÜNDE, ayrı ve bağımsız 3 yollu bir su arıtma musluğu var; su bu musluktan akıyor.
 - Mutlu bir aile sahnesi: bir çocuk musluktan bardağa su dolduruyor, diğer çocuk suyunu içiyor, anne ve baba ellerinde berrak, duru su dolu bardaklarla gülümsüyor.
-- Sıcak, doğal mutfak ışığı; gerçekçi, reklam kalitesinde bir sahne.
 
-Yalnızca sahnenin kendisini tarif eden, 2-4 cümlelik tek bir Türkçe paragraf yaz — talimat cümlesi ("şunu koru" gibi) veya ürün marka adı/teknik özellik ekleme, sadece ortamı ve insanları tarif et. Başka açıklama, başlık veya tırnak işareti ekleme, yalnızca sahne metnini döndür.`;
+Ama ürün bu değilse (örneğin bina/apartman su girişine veya boruya takılan bir kireç önleyici, bir sayaç, bir filtre kartuşu, dışarıda kullanılan bir ekipman vb.) BU ŞABLONU ZORLAMA — ürünün gerçekte kurulduğu/kullanıldığı yeri (teknik oda, bodrum, su sayacı yanı, boru hattı, bahçe vb.) gerçekçi şekilde tarif et; mutfak veya aile sahnesi sadece ürün gerçekten mutfakta/içme suyunda kullanılıyorsa uygun olur.
+
+Her durumda: sıcak, doğal ışık; gerçekçi, reklam kalitesinde bir sahne olsun. Yalnızca sahnenin kendisini tarif eden, 2-4 cümlelik tek bir Türkçe paragraf yaz — talimat cümlesi ("şunu koru" gibi) veya ürün marka adı/teknik özellik ekleme, sadece ortamı ve (varsa) insanları tarif et. Başka açıklama, başlık veya tırnak işareti ekleme, yalnızca sahne metnini döndür.`;
 }
 
 export async function generateScenePlan(provider, product, env = process.env) {
-  const input = scenePlanPrompt(product);
+  if (provider !== "openai" && provider !== "gemini") throw new Error("Desteklenmeyen AI sağlayıcısı.");
+  const context = await fetchProductContext(product);
+  const input = scenePlanPrompt(product, context);
   let raw;
   if (provider === "openai") {
     const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: env.OPENAI_REEL_MODEL || "gpt-5.6", input, store: false }) });
     raw = textFromOpenAI(data);
-  } else if (provider === "gemini") {
+  } else {
     const model = env.GEMINI_REEL_MODEL || "gemini-3.5-flash";
     const data = await request(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, { method: "POST", headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: input }] }] }) });
     raw = textFromGemini(data);
-  } else throw new Error("Desteklenmeyen AI sağlayıcısı.");
+  }
   const plan = raw.trim();
   if (!plan) throw new Error("AI sahne planı boş döndü.");
   return plan;
 }
 
-function captionPrompt(product) {
-  return `Buzsu için "${product.title}" ürününün Instagram ve Facebook gönderisi için SEO ve satış odaklı, samimi bir Türkçe metin yaz. 2-4 emoji kullan, aşırıya kaçma. Ürünün genel faydasından bahset ama sağlık, tedavi, kesin sonuç, garanti gibi kanıtsız iddialar veya "en iyi" gibi abartılı üstünlük ifadeleri kullanma. Instagram ve Facebook için birbirine yakın ama ayrı iki versiyon yaz (Facebook biraz daha bilgilendirici olabilir). Ayrıca 4-6 adet ilgili Türkçe hashtag üret (# ile başlasın, aralarında boşluk, #Buzsu mutlaka olsun). Metinlerin sonuna link veya "Detaylar:" gibi bir bağlantı satırı EKLEME, link ayrıca otomatik eklenecek. Çıktıyı yalnızca şu JSON şemasına göre ver: {"instagramText":"...","facebookText":"...","hashtags":"#Buzsu #..."}`;
+function captionPrompt(product, context) {
+  const grounding = context
+    ? `Ürün hakkında buzsu.com.tr'den alınan gerçek bilgi:\n"""\n${context}\n"""\n\nMetni bu gerçek bilgiye dayandır, uydurma özellik ekleme.`
+    : `Ürün hakkında ek bilgi bulunamadı; yalnızca ürün adına dayanarak genel geçer bir metin yaz, uydurma teknik özellik ekleme.`;
+  return `Buzsu için "${product.title}" ürününün Instagram ve Facebook gönderisi için SEO ve satış odaklı, samimi bir Türkçe metin yaz.
+
+${grounding}
+
+2-4 emoji kullan, aşırıya kaçma. Ürünün genel faydasından bahset ama sağlık, tedavi, kesin sonuç, garanti gibi kanıtsız iddialar veya "en iyi" gibi abartılı üstünlük ifadeleri kullanma. Instagram ve Facebook için birbirine yakın ama ayrı iki versiyon yaz (Facebook biraz daha bilgilendirici olabilir). Ayrıca 4-6 adet ilgili Türkçe hashtag üret (# ile başlasın, aralarında boşluk, #Buzsu mutlaka olsun). Metinlerin sonuna link veya "Detaylar:" gibi bir bağlantı satırı EKLEME, link ayrıca otomatik eklenecek. Çıktıyı yalnızca şu JSON şemasına göre ver: {"instagramText":"...","facebookText":"...","hashtags":"#Buzsu #..."}`;
 }
 
 export async function generateCaption(provider, product, env = process.env) {
-  const input = captionPrompt(product);
+  if (provider !== "openai" && provider !== "gemini") throw new Error("Desteklenmeyen AI sağlayıcısı.");
+  const context = await fetchProductContext(product);
+  const input = captionPrompt(product, context);
   let raw;
   if (provider === "openai") {
     const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: env.OPENAI_REEL_MODEL || "gpt-5.6", input, store: false }) });
     raw = textFromOpenAI(data);
-  } else if (provider === "gemini") {
+  } else {
     const model = env.GEMINI_REEL_MODEL || "gemini-3.5-flash";
     const data = await request(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, { method: "POST", headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: input }] }], generationConfig: { responseMimeType: "application/json" } }) });
     raw = textFromGemini(data);
-  } else throw new Error("Desteklenmeyen AI sağlayıcısı.");
+  }
   const parsed = parseJson(raw);
   const instagramText = String(parsed.instagramText || "").trim();
   const facebookText = String(parsed.facebookText || "").trim();

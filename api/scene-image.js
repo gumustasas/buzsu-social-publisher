@@ -2,6 +2,7 @@ import "dotenv/config";
 import { put } from "@vercel/blob";
 import { getSession } from "../src/auth.js";
 import { availableSceneProviders, generateSceneImage } from "../src/scene-image.js";
+import { baseProductTitle } from "../src/lib/product-title.js";
 
 const baseId = process.env.AIRTABLE_BASE_ID || "apphVqbUQohAMIoWk";
 const tableId = process.env.AIRTABLE_TABLE_ID || "tblir7vlazMo8v532";
@@ -24,7 +25,7 @@ export default async function handler(request, response) {
     const fields = record?.fields || {};
     if (!record || !fields["Görsel URL"]) return response.status(400).json({ error: "Ürün görseli eksik." });
 
-    const product = { title: fields.Başlık || "Buzsu ürünü", imageUrl: fields["Görsel URL"] };
+    const product = { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", imageUrl: fields["Görsel URL"] };
     const scene = await generateSceneImage(product, body.sceneDescription, process.env, { removeFaucet: Boolean(body.removeFaucet), provider });
 
     if (process.env.BLOB_READ_WRITE_TOKEN) {

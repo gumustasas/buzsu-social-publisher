@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { getSession } from "../src/auth.js";
+import { baseProductTitle } from "../src/lib/product-title.js";
 
 const baseId = process.env.AIRTABLE_BASE_ID || "apphVqbUQohAMIoWk";
 const tableId = process.env.AIRTABLE_TABLE_ID || "tblir7vlazMo8v532";
@@ -70,7 +71,7 @@ export default async function handler(request, response) {
     const record = (data.records || []).find((item) => item.id === body.productId);
     const fields = record?.fields || {};
     if (!record || !fields["Kaynak URL"] || !fields["Görsel URL"]) return response.status(400).json({ error: "Ürün URL veya görsel bilgisi eksik." });
-    const product = { title: fields.Başlık || "Buzsu ürünü", url: fields["Kaynak URL"], imageUrl: fields["Görsel URL"] };
+    const product = { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", url: fields["Kaynak URL"], imageUrl: fields["Görsel URL"] };
     const render = await shotstack("/render", { method: "POST", body: JSON.stringify(editFor(product, body.reel || {})) });
     return response.status(200).json({ ok: true, render: render.response || render, product: product.title });
   } catch (error) { console.error(error); return response.status(500).json({ ok: false, error: error.message }); }

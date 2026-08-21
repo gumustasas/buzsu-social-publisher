@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { buildDraft } from "../src/content-worker.js";
 import { getSession } from "../src/auth.js";
+import { baseProductTitle } from "../src/lib/product-title.js";
 
 const baseId = process.env.AIRTABLE_BASE_ID || "apphVqbUQohAMIoWk";
 const tableId = process.env.AIRTABLE_TABLE_ID || "tblir7vlazMo8v532";
@@ -25,7 +26,7 @@ async function listProducts() {
   const seen = new Set();
   return (data.records || []).map((record) => {
     const fields = record.fields || {};
-    return { id: record.id, title: fields.Ba\u015fl\u0131k || "Ba\u015fl\u0131ks\u0131z", url: fields["Kaynak URL"] || "", imageUrl: fields["G\u00f6rsel URL"] || "", instagramText: fields["Instagram Metni"] || "", facebookText: fields["Facebook Metni"] || "" };
+    return { id: record.id, title: baseProductTitle(fields.Ba\u015fl\u0131k) || "Ba\u015fl\u0131ks\u0131z", url: fields["Kaynak URL"] || "", imageUrl: fields["G\u00f6rsel URL"] || "", instagramText: fields["Instagram Metni"] || "", facebookText: fields["Facebook Metni"] || "" };
   }).filter((product) => {
     const key = product.url || product.id;
     if (!product.url || !product.imageUrl || seen.has(key)) return false;

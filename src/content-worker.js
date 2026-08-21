@@ -1,4 +1,5 @@
 import { createContentVariant } from "./content-variants.js";
+import { baseProductTitle } from "./lib/product-title.js";
 
 const riskyClaims = [/en iyi/gi, /kesinlikle sağlıklı/gi, /tedavi/gi, /hastalığı/gi, /garanti eder/gi, /%100/gi];
 
@@ -6,7 +7,7 @@ export function buildDraft(product, { format = "Gönderi", platforms = ["Instagr
   const url = String(product.url || "").trim();
   const content = captionOverride
     ? {
-        title: String(product.title || "Buzsu ürünü").trim(),
+        title: baseProductTitle(product.title) || "Buzsu ürünü",
         sourceUrl: url,
         instagramText: `${captionOverride.instagramText}\n\nDetaylar: ${url}`,
         facebookText: `${captionOverride.facebookText}\n\nÜrünü inceleyin: ${url}`,
