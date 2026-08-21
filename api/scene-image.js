@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { put } from "@vercel/blob";
 import { getSession } from "../src/auth.js";
 import { availableSceneProviders, generateSceneImage } from "../src/scene-image.js";
 
@@ -25,6 +26,13 @@ export default async function handler(request, response) {
 
     const product = { title: fields.Başlık || "Buzsu ürünü", imageUrl: fields["Görsel URL"] };
     const scene = await generateSceneImage(product, body.sceneDescription, process.env, { removeFaucet: Boolean(body.removeFaucet), provider });
+
+    if (process.env.BLOB_READ_WRITE_TOKEN) {
+      const imageBuffer = Buffer.from(scene.dataUrl.split(",")[1], "base64");
+      const blob = await put(`ai-scenes/${record.id}-${Date.now()}.png`, imageBuffer, { access: "public", contentType: "image/png" });
+      scene.imageUrl = blob.url;
+    }
+
     return response.status(200).json({ ok: true, scene });
   } catch (error) {
     console.error(error);

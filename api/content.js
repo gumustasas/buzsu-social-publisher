@@ -43,7 +43,9 @@ export default async function handler(request, response) {
     if (request.method !== "POST") return response.status(405).json({ error: "Method not allowed" });
     const body = typeof request.body === "string" ? JSON.parse(request.body) : (request.body || {});
     const products = await listProducts();
-    const product = products.find((item) => item.id === body.productId);
+    const matchedProduct = products.find((item) => item.id === body.productId);
+    const sceneImageUrl = typeof body.imageUrl === "string" && /^https:\/\//i.test(body.imageUrl) ? body.imageUrl : "";
+    const product = matchedProduct && sceneImageUrl ? { ...matchedProduct, imageUrl: sceneImageUrl } : matchedProduct;
     const platforms = Array.isArray(body.platforms) ? body.platforms.filter((item) => ["Instagram", "Facebook"].includes(item)) : [];
     const format = ["Gönderi", "Hikâye"].includes(body.format) ? body.format : "Gönderi";
     if (!product) return response.status(400).json({ error: "Ürün seçilmedi veya görsel/URL eksik." });
@@ -65,7 +67,7 @@ export default async function handler(request, response) {
       "Yayın Biçimi": format,
       "Yayın Zamanı": body.publishAt,
       Durum: "Taslak",
-      Not: "Panelden oluşturuldu; önizleme ve kullanıcı onayı bekleniyor.",
+      Not: sceneImageUrl ? "Panelden oluşturuldu (AI ile üretilmiş sahne görseli); önizleme ve kullanıcı onayı bekleniyor." : "Panelden oluşturuldu; önizleme ve kullanıcı onayı bekleniyor.",
       "Deneme Sayısı": 0,
       "Hata Mesajı": ""
     } }) });
