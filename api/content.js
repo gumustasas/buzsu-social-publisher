@@ -51,7 +51,8 @@ export default async function handler(request, response) {
     if (!product) return response.status(400).json({ error: "Ürün seçilmedi veya görsel/URL eksik." });
     if (!platforms.length) return response.status(400).json({ error: "En az bir platform seçin." });
     if (!validDate(body.publishAt)) return response.status(400).json({ error: "Geçerli bir yayın zamanı seçin." });
-    const draft = buildDraft(product, { format, platforms, variant: Number(body.variant || 0), publishAt: body.publishAt });
+    const aiCaption = body.aiCaption && typeof body.aiCaption.instagramText === "string" && typeof body.aiCaption.facebookText === "string" ? body.aiCaption : null;
+    const draft = buildDraft(product, { format, platforms, variant: Number(body.variant || 0), publishAt: body.publishAt, captionOverride: aiCaption });
     if (body.action === "preview") return response.status(200).json({ ok: true, draft });
     if (!draft.valid) return response.status(400).json({ error: draft.warnings.join(" ") });
     const content = draft;
@@ -67,7 +68,12 @@ export default async function handler(request, response) {
       "Yayın Biçimi": format,
       "Yayın Zamanı": body.publishAt,
       Durum: "Taslak",
-      Not: sceneImageUrl ? "Panelden oluşturuldu (AI ile üretilmiş sahne görseli); önizleme ve kullanıcı onayı bekleniyor." : "Panelden oluşturuldu; önizleme ve kullanıcı onayı bekleniyor.",
+      Not: (() => {
+        const aiParts = [sceneImageUrl && "sahne görseli", aiCaption && "gönderi metni"].filter(Boolean);
+        return aiParts.length
+          ? `Panelden oluşturuldu (AI ile üretilmiş ${aiParts.join(" ve ")}); önizleme ve kullanıcı onayı bekleniyor.`
+          : "Panelden oluşturuldu; önizleme ve kullanıcı onayı bekleniyor.";
+      })(),
       "Deneme Sayısı": 0,
       "Hata Mesajı": ""
     } }) });

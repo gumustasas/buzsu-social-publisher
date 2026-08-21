@@ -2,8 +2,19 @@ import { createContentVariant } from "./content-variants.js";
 
 const riskyClaims = [/en iyi/gi, /kesinlikle sağlıklı/gi, /tedavi/gi, /hastalığı/gi, /garanti eder/gi, /%100/gi];
 
-export function buildDraft(product, { format = "Gönderi", platforms = ["Instagram", "Facebook"], variant = 0, publishAt } = {}) {
-  const content = createContentVariant({ ...product, format, platform: platforms }, variant);
+export function buildDraft(product, { format = "Gönderi", platforms = ["Instagram", "Facebook"], variant = 0, publishAt, captionOverride } = {}) {
+  const url = String(product.url || "").trim();
+  const content = captionOverride
+    ? {
+        title: String(product.title || "Buzsu ürünü").trim(),
+        sourceUrl: url,
+        instagramText: `${captionOverride.instagramText}\n\nDetaylar: ${url}`,
+        facebookText: `${captionOverride.facebookText}\n\nÜrünü inceleyin: ${url}`,
+        hashtags: captionOverride.hashtags || "#Buzsu",
+        format,
+        platform: platforms
+      }
+    : createContentVariant({ ...product, format, platform: platforms }, variant);
   const allText = `${content.instagramText}\n${content.facebookText}`;
   const warnings = [];
   if (!product.url || !isHttps(product.url)) warnings.push("Kaynak URL herkese açık HTTPS olmalı.");

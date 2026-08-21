@@ -51,6 +51,28 @@ export async function generateScenePlan(provider, product, env = process.env) {
   return plan;
 }
 
+function captionPrompt(product) {
+  return `Buzsu için "${product.title}" ürününün Instagram ve Facebook gönderisi için SEO ve satış odaklı, samimi bir Türkçe metin yaz. 2-4 emoji kullan, aşırıya kaçma. Ürünün genel faydasından bahset ama sağlık, tedavi, kesin sonuç, garanti gibi kanıtsız iddialar veya "en iyi" gibi abartılı üstünlük ifadeleri kullanma. Instagram ve Facebook için birbirine yakın ama ayrı iki versiyon yaz (Facebook biraz daha bilgilendirici olabilir). Ayrıca 4-6 adet ilgili Türkçe hashtag üret (# ile başlasın, aralarında boşluk, #Buzsu mutlaka olsun). Metinlerin sonuna link veya "Detaylar:" gibi bir bağlantı satırı EKLEME, link ayrıca otomatik eklenecek. Çıktıyı yalnızca şu JSON şemasına göre ver: {"instagramText":"...","facebookText":"...","hashtags":"#Buzsu #..."}`;
+}
+
+export async function generateCaption(provider, product, env = process.env) {
+  const input = captionPrompt(product);
+  let raw;
+  if (provider === "openai") {
+    const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: env.OPENAI_REEL_MODEL || "gpt-5.6", input, store: false }) });
+    raw = textFromOpenAI(data);
+  } else if (provider === "gemini") {
+    const model = env.GEMINI_REEL_MODEL || "gemini-3.5-flash";
+    const data = await request(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, { method: "POST", headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: input }] }], generationConfig: { responseMimeType: "application/json" } }) });
+    raw = textFromGemini(data);
+  } else throw new Error("Desteklenmeyen AI sağlayıcısı.");
+  const parsed = parseJson(raw);
+  const instagramText = String(parsed.instagramText || "").trim();
+  const facebookText = String(parsed.facebookText || "").trim();
+  if (!instagramText || !facebookText) throw new Error("AI metni boş döndü.");
+  return { instagramText, facebookText, hashtags: String(parsed.hashtags || "#Buzsu").trim() };
+}
+
 export async function generateReelPackage(provider, product, env = process.env) {
   const input = prompt(product);
   let raw;

@@ -157,6 +157,17 @@ veya serbest metin).
   yeniden üretilecek alana giriyor (kenar çentiği riski). Bu yüzden deneysel
   işaretlenmiştir; onaylanmadan yayında kullanılmamalıdır.
 
+## AI gönderi metni (SEO/pazarlama)
+
+"Yeni içerik oluştur" bölümünde **"Metin üret (AI)"** butonu, seçili ürüne göre
+SEO/satış odaklı, emoji'li Instagram ve Facebook metinleri ile hashtag üretir
+(`generateCaption`, `api/caption.js`). Sabit "Metin seçeneği 1/2/3" şablonları
+hâlâ yedek olarak duruyor (AI anahtarı yoksa kullanılabilir); AI metni
+üretildiğinde dropdown'daki seçim yok sayılır. Ürün bağlantısı ("Detaylar:" /
+"Ürünü inceleyin:") her zaman kod tarafında otomatik eklenir — AI'nin linki
+kendisi yazmasına güvenilmez. Aynı riskli iddia filtresi (sağlık/tedavi/kesin
+sonuç) AI metnine de uygulanır.
+
 ## Sonraki adım
 
 Dry-run doğru çalıştıktan sonra Meta API için ayrı gönderim scripti eklenir. O aşamada da önce test modu, sonra tek kayıtla kontrollü canlı paylaşım yapılmalıdır.
