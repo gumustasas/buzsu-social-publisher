@@ -110,7 +110,7 @@ async function buildMaskBuffer(sourceBuffer, { removeFaucet = false } = {}) {
 
 async function callGeminiImageEdit({ basePng, prompt }, env) {
   if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY Vercel Production ortamında tanımlı değil.");
-  const model = env.GEMINI_SCENE_MODEL || "gemini-2.5-flash-image";
+  const model = env.GEMINI_SCENE_MODEL || "gemini-3.1-flash-lite-image";
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: "POST",
     headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json" },
@@ -166,7 +166,7 @@ export async function generateSceneImage(product, sceneDescription, env = proces
   let b64, model, prompt;
   if (provider === "gemini") {
     prompt = geminiScenePrompt(sceneDescription, { removeFaucet });
-    model = env.GEMINI_SCENE_MODEL || "gemini-2.5-flash-image";
+    model = env.GEMINI_SCENE_MODEL || "gemini-3.1-flash-lite-image";
     b64 = await callGeminiImageEdit({ basePng, prompt }, env);
   } else if (provider === "openai") {
     prompt = sceneEditPrompt(sceneDescription, { removeFaucet });
