@@ -1,0 +1,23 @@
+{
+  "name": "buzsu-social-automation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node src/check-env.js",
+    "check:meta": "node src/check-meta.js",
+    "check:queue": "node src/validate-queue.js",
+    "bootstrap:page-token": "node src/bootstrap-page-token.js",
+    "exchange:long-lived": "node src/exchange-long-lived-token.js",
+    "dry-run": "node src/dry-run.js",
+    "publish:dry-run": "node src/publish-approved.js",
+    "publish": "node src/publish-approved.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "dejavu-fonts-ttf": "^2.37.3",
+    "dotenv": "^16.4.5",
+    "opentype.js": "^1.3.4",
+    "sharp": "^0.33.5"
+  }
+}

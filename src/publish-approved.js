@@ -1,0 +1,196 @@
+import "dotenv/config";
+import { fileURLToPath } from "node:url";
+import { publicationFormat, selectDueRecords, withUtm } from "./lib/schedule.js";
+import { buildLease, canProcess, clearLease } from "./lib/queue.js";
+
+const livePostingEnabled = process.env.ENABLE_LIVE_POSTING === "true";
+const facebookStoriesEnabled = process.env.ENABLE_FACEBOOK_STORIES === "true";
+const graphVersion = process.env.META_GRAPH_VERSION;
+const postLimit = Number.parseInt(process.env.SOCIAL_POST_LIMIT || "1", 10);
+const maxAttempts = Number.parseInt(process.env.MAX_PUBLISH_ATTEMPTS || "3", 10);
+const storyImageBaseUrl = process.env.STORY_IMAGE_BASE_URL || "";
+const airtableBaseId = process.env.AIRTABLE_BASE_ID || "apphVqbUQohAMIoWk";
+const airtableTableId = process.env.AIRTABLE_TABLE_ID || "tblir7vlazMo8v532";
+const required = ["META_ACCESS_TOKEN", "META_FACEBOOK_PAGE_ACCESS_TOKEN", "META_INSTAGRAM_ACCOUNT_ID", "META_FACEBOOK_PAGE_ID", "META_GRAPH_VERSION", "AIRTABLE_TOKEN"];
+const airtableFields = ["Başlık", "Kaynak URL", "Görsel URL", "Instagram Metni", "Facebook Metni", "Hashtagler", "Platform", "Yayın Biçimi", "Yayın Zamanı", "Durum", "Not", "Deneme Sayısı", "Instagram Yayın ID", "Facebook Yayın ID", "Hata Mesajı"];
+
+function assertConfiguration() {
+  if (!Number.isInteger(postLimit) || postLimit < 1) throw new Error("SOCIAL_POST_LIMIT en az 1 olmalı.");
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 1) throw new Error("MAX_PUBLISH_ATTEMPTS en az 1 olmalı.");
+  const missing = required.filter((name) => !process.env[name]);
+  if (missing.length) throw new Error(`Eksik ortam değişkenleri: ${missing.join(", ")}`);
+}
+
+function requireHttpsUrl(value, label) {
+  let url;
+  try { url = new URL(value); } catch { throw new Error(`${label} geçerli bir URL olmalı.`); }
+  if (url.protocol !== "https:") throw new Error(`${label} herkese açık HTTPS adresi olmalı.`);
+}
+
+const joinText = (...values) => values.filter(Boolean).join("\n\n").trim();
+
+function storyImageUrl(source, fields) {
+  requireHttpsUrl(source, "Görsel URL");
+  if (!storyImageBaseUrl) return source;
+  const url = new URL(storyImageBaseUrl);
+  url.searchParams.set("src", source);
+  const title = (fields["Başlık"] || "Buzsu Su Arıtma")
+    .replace(/^DENEME\s*\|\s*/i, "")
+    .split("|")[0]
+    .trim();
+  url.searchParams.set("title", title);
+  url.searchParams.set("subtitle", (fields["Instagram Metni"] || "").split("\n")[0].slice(0, 90) || "Ürün bilgileri için inceleyin.");
+  url.searchParams.set("footer", "www.buzsu.com.tr");
+  return url.toString();
+}
+
+async function graphPost(path, params, accessToken = process.env.META_ACCESS_TOKEN) {
+  const response = await fetch(`https://graph.facebook.com/${graphVersion}/${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(params)
+  });
+  const data = await response.json();
+  if (!response.ok || data.error) throw new Error(`Meta API: ${data.error?.message || `HTTP ${response.status}`}`);
+  return data;
+}
+
+async function graphGet(path, accessToken = process.env.META_ACCESS_TOKEN) {
+  const response = await fetch(`https://graph.facebook.com/${graphVersion}/${path}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const data = await response.json();
+  if (!response.ok || data.error) throw new Error(`Meta API: ${data.error?.message || `HTTP ${response.status}`}`);
+  return data;
+}
+
+const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+async function waitForInstagramContainer(containerId) {
+  for (let attempt = 1; attempt <= 12; attempt += 1) {
+    const state = await graphGet(`${containerId}?fields=status_code,status`);
+    if (state.status_code === "FINISHED") return;
+    if (state.status_code === "ERROR" || state.status_code === "EXPIRED") {
+      throw new Error(`Instagram medya işleme durumu: ${state.status_code}${state.status ? ` (${state.status})` : ""}`);
+    }
+    await sleep(3000);
+  }
+  throw new Error("Instagram medya konteyneri 36 saniye içinde hazır olmadı.");
+}
+
+async function airtableGetApproved() {
+  const records = [];
+  let offset = "";
+  do {
+    const params = new URLSearchParams({ pageSize: "100" });
+    airtableFields.forEach((field) => params.append("fields[]", field));
+    if (offset) params.set("offset", offset);
+    const response = await fetch(`https://api.airtable.com/v0/${airtableBaseId}/${airtableTableId}?${params}`, { headers: { Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}` } });
+    const data = await response.json();
+    if (!response.ok) throw new Error(`Airtable okunamadı: ${data.error?.message || `HTTP ${response.status}`}`);
+    records.push(...(data.records || []));
+    offset = data.offset || "";
+  } while (offset);
+  return records;
+}
+
+async function updateAirtable(recordId, fields) {
+  const response = await fetch(`https://api.airtable.com/v0/${airtableBaseId}/${airtableTableId}/${recordId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(`Airtable güncellenemedi: ${data.error?.message || `HTTP ${response.status}`}`);
+}
+
+async function publishInstagram(fields, format) {
+  requireHttpsUrl(fields["Görsel URL"], "Görsel URL");
+  if (format === "Reel") throw new Error("Reel için herkese açık video URL alanı henüz tanımlı değil.");
+  const params = { image_url: format === "Hikâye" ? storyImageUrl(fields["Görsel URL"], fields) : fields["Görsel URL"] };
+  if (format === "Hikâye") params.media_type = "STORIES";
+  else {
+    const caption = joinText(fields["Instagram Metni"], fields["Hashtagler"]);
+    if (!caption) throw new Error("Instagram metni boş.");
+    params.caption = caption;
+  }
+  const container = await graphPost(`${process.env.META_INSTAGRAM_ACCOUNT_ID}/media`, params);
+  await waitForInstagramContainer(container.id);
+  const published = await graphPost(`${process.env.META_INSTAGRAM_ACCOUNT_ID}/media_publish`, { creation_id: container.id });
+  return published.id;
+}
+
+async function publishFacebook(fields, format) {
+  requireHttpsUrl(fields["Görsel URL"], "Görsel URL");
+  const token = process.env.META_FACEBOOK_PAGE_ACCESS_TOKEN;
+  if (format === "Hikâye") {
+    if (!facebookStoriesEnabled) return null;
+    const uploaded = await graphPost(`${process.env.META_FACEBOOK_PAGE_ID}/photos`, { url: storyImageUrl(fields["Görsel URL"], fields), published: "false" }, token);
+    const story = await graphPost(`${process.env.META_FACEBOOK_PAGE_ID}/photo_stories`, { photo_id: uploaded.id }, token);
+    return story.post_id || story.id;
+  }
+  if (format === "Reel") throw new Error("Facebook Reel için video URL alanı henüz tanımlı değil.");
+  const trackedUrl = withUtm(fields["Kaynak URL"], { source: "facebook", title: fields["Başlık"] });
+  const message = joinText(fields["Facebook Metni"], fields["Hashtagler"], trackedUrl);
+  if (!message) throw new Error("Facebook metni boş.");
+  const published = await graphPost(`${process.env.META_FACEBOOK_PAGE_ID}/photos`, { url: fields["Görsel URL"], caption: message }, token);
+  return published.post_id || published.id;
+}
+
+export async function runPublisher() {
+  assertConfiguration();
+  const allRecords = await airtableGetApproved();
+  const now = new Date();
+  const eligible = allRecords.filter((record) => {
+    const fields = record.fields || {};
+    const platforms = Array.isArray(fields.Platform) ? fields.Platform : [];
+    const instagramNeeded = platforms.includes("Instagram") && !fields["Instagram Yayın ID"];
+    const facebookNeeded = platforms.includes("Facebook") && !fields["Facebook Yayın ID"];
+    return canProcess(fields, now.getTime()) && (instagramNeeded || facebookNeeded);
+  });
+  const records = selectDueRecords(eligible, now, postLimit);
+  console.log(`Kuyruk: ${allRecords.length}; zamanı gelmiş ve işlenecek: ${records.length}; canlı: ${livePostingEnabled}`);
+  const summary = { queued: allRecords.length, approved: eligible.length, due: records.length, published: 0, failed: 0, skipped: 0 };
+  for (const record of records) {
+    const fields = record.fields || {};
+    const format = publicationFormat(fields);
+    const platforms = fields["Platform"] || [];
+    console.log(`${fields["Başlık"] || record.id} | ${format} | ${platforms.join(", ")} | ${fields["Yayın Zamanı"]}`);
+    if (!livePostingEnabled) { summary.skipped += 1; continue; }
+    const attempts = Number(fields["Deneme Sayısı"] || 0);
+    if (attempts >= maxAttempts) {
+      await updateAirtable(record.id, { Durum: "Hata", "Hata Mesajı": `Maksimum deneme sayısına ulaşıldı (${maxAttempts}). Yeniden denemek için Durum alanını Onaylandı yapın.`, "Deneme Sayısı": attempts });
+      console.error(`${fields["Başlık"] || record.id}: maksimum deneme sayısı`);
+      continue;
+    }
+    const updates = {
+      Not: buildLease(fields, record.id),
+      "Hata Mesajı": "",
+      "Deneme Sayısı": attempts + 1
+    };
+    await updateAirtable(record.id, updates);
+    try {
+      if (platforms.includes("Instagram") && !fields["Instagram Yayın ID"]) updates["Instagram Yayın ID"] = await publishInstagram(fields, format);
+      if (platforms.includes("Facebook") && !fields["Facebook Yayın ID"]) {
+        const id = await publishFacebook(fields, format);
+        if (id) updates["Facebook Yayın ID"] = id;
+      }
+      if (!platforms.some((p) => p === "Instagram" || p === "Facebook")) throw new Error("Geçerli platform seçilmemiş.");
+      updates.Durum = "Paylaşıldı";
+      updates.Not = clearLease({ ...fields, Not: updates.Not }, { type: "published", platforms, format });
+      await updateAirtable(record.id, updates);
+      console.log(`${fields["Başlık"] || record.id}: başarılı`);
+      summary.published += 1;
+    } catch (error) {
+      updates.Durum = "Hata";
+      updates["Hata Mesajı"] = String(error.message).slice(0, 10000);
+      updates.Not = clearLease({ ...fields, Not: updates.Not }, { type: "failed", error: String(error.message).slice(0, 500) });
+      await updateAirtable(record.id, updates);
+      console.error(`${fields["Başlık"] || record.id}: ${error.message}`);
+      summary.failed += 1;
+    }
+  }
+  return summary;
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  runPublisher().catch((error) => { console.error(error.message); process.exit(1); });
+}
