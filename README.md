@@ -158,4 +158,4 @@ Dry-run doğru çalıştıktan sonra Meta API için ayrı gönderim scripti ekle
 
 GitHub Actions manuel doğrulama için kullanılabilir. Canlı otomatik çalışma, Windows Görev Zamanlayıcı üzerinden `run-publisher.ps1` ile 5 dakikada bir yapılır. Her çalışmada yalnızca `Onaylandı` durumundaki, yeni `Yayın Zamanı` alanı dolu ve zamanı gelmiş en eski tek kayıt yayınlanır.
 
-Vercel Pro kurulumu için proje kökü bu klasör, Build Command boş, Install Command `npm ci`, Output Directory boş ve Cron Secret `CRON_SECRET` olarak ayarlanır. Vercel Cron `/api/publish` adresini `Authorization: Bearer CRON_SECRET` ile çağırır.
+Vercel Pro kurulumu için proje kökü bu reponun kökü (Root Directory boş bırakılır), Build Command boş, Install Command `npm ci`, Output Directory boş ve Cron Secret `CRON_SECRET` olarak ayarlanır. Vercel Cron `/api/publish` adresini `Authorization: Bearer CRON_SECRET` ile çağırır.
