@@ -1,6 +1,6 @@
 # Buzsu Sosyal Medya Otomasyonu
 
-Bu klasör, Airtable'daki `Sosyal Medya Takvimi` tablosundan onaylı içerikleri okuyup Instagram/Facebook paylaşım sürecine hazırlamak için oluşturuldu.
+Airtable'daki `Sosyal Medya Takvimi` tablosundan onaylı içerikleri okuyup Instagram/Facebook paylaşım sürecine hazırlayan uygulama. Bağımsız bir repo (`gumustasas/buzsu-social-publisher`); Vercel projesi doğrudan bu reponun kökünü izler.
 
 ## Güvenli çalışma mantığı
 
@@ -15,10 +15,11 @@ Bu klasör, Airtable'daki `Sosyal Medya Takvimi` tablosundan onaylı içerikleri
 
 ## Kurulum
 
-1. Bu klasörde terminal açın:
+1. Repoyu klonlayıp klasöre girin:
 
 ```powershell
-cd "C:\Users\bulen\OneDrive\Masaüstü\bulentdisk\buzsu-ftp\content-production\social-automation"
+git clone https://github.com/gumustasas/buzsu-social-publisher
+cd buzsu-social-publisher
 ```
 
 2. Paketleri kurun:
