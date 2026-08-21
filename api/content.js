@@ -57,8 +57,10 @@ export default async function handler(request, response) {
     if (body.action === "preview") return response.status(200).json({ ok: true, draft });
     if (!draft.valid) return response.status(400).json({ error: draft.warnings.join(" ") });
     const content = draft;
+    // draft.title (from buildDraft) already ends with " | {format}" — do not
+    // append format again here, or the title doubles up on every save.
     const record = await airtable("", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fields: {
-      "Başlık": `${content.title} | ${format}`,
+      "Başlık": content.title,
       "İçerik Türü": "Ürün",
       "Kaynak URL": product.url,
       "Görsel URL": product.imageUrl,
