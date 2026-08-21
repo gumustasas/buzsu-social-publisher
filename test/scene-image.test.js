@@ -42,6 +42,12 @@ test("sceneEditPrompt embeds the scene description and the preservation instruct
   assert.match(prompt, /hiç değiştirme/);
 });
 
+test("sceneEditPrompt instructs the product to look physically installed, not floating or detached from a pipe", () => {
+  const prompt = sceneEditPrompt("mutfak");
+  assert.match(prompt, /boru hattının kendisinin bir parçası gibi göster|borunun kendisinin bir parçası gibi göster/);
+  assert.match(prompt, /havada asılı veya bağlantısız durmamalı/);
+});
+
 test("sceneEditPrompt falls back to a default scene when empty", () => {
   const prompt = sceneEditPrompt("   ");
   assert.match(prompt, /mutfak/);
@@ -60,6 +66,12 @@ test("geminiScenePrompt embeds the scene description and a strong preservation i
   assert.match(prompt, /modern mutfak, sabah ışığı/);
   assert.match(prompt, /birebir koru/);
   assert.doesNotMatch(prompt, /maskelenmemiş/);
+});
+
+test("geminiScenePrompt instructs the product to look physically installed, not floating or detached from a pipe", () => {
+  const prompt = geminiScenePrompt("teknik oda, boru hattı");
+  assert.match(prompt, /borunun kendisinin bir parçası gibi göster/);
+  assert.match(prompt, /havada asılı veya bağlantısız durmamalı/);
 });
 
 test("geminiScenePrompt forbids a faucet attached to the device but allows one elsewhere in the scene when removeFaucet is set", () => {
