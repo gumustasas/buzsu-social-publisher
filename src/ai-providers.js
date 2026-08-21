@@ -23,6 +23,34 @@ export function availableProviders(env = process.env) {
   return ["openai", "anthropic", "gemini", "fal"].filter((provider) => Boolean(env[provider === "openai" ? "OPENAI_API_KEY" : provider === "anthropic" ? "ANTHROPIC_API_KEY" : provider === "gemini" ? "GEMINI_API_KEY" : "FAL_KEY"]));
 }
 
+function scenePlanPrompt(product) {
+  return `Buzsu için "${product.title}" ürününün sosyal medya sahne görseli üretiminde kullanılacak bir sahne açıklaması yaz. Aşağıdaki kurulum şablonunu birebir takip et, sadece küçük ayrıntıları (aile üyelerinin duruşu, ışık, dekor detayları) değiştirerek doğal bir varyasyon üret:
+
+- Cihaz, mutfak tezgahı ALTINDAKİ dolabın içinde; dolap kapakları açık, cihaz görünüyor.
+- Cihazın kendi üzerinde veya hemen yanında HİÇBİR musluk yok.
+- Tezgah ÜSTÜNDE, ayrı ve bağımsız 3 yollu bir su arıtma musluğu var; su bu musluktan akıyor.
+- Mutlu bir aile sahnesi: bir çocuk musluktan bardağa su dolduruyor, diğer çocuk suyunu içiyor, anne ve baba ellerinde berrak, duru su dolu bardaklarla gülümsüyor.
+- Sıcak, doğal mutfak ışığı; gerçekçi, reklam kalitesinde bir sahne.
+
+Yalnızca sahnenin kendisini tarif eden, 2-4 cümlelik tek bir Türkçe paragraf yaz — talimat cümlesi ("şunu koru" gibi) veya ürün marka adı/teknik özellik ekleme, sadece ortamı ve insanları tarif et. Başka açıklama, başlık veya tırnak işareti ekleme, yalnızca sahne metnini döndür.`;
+}
+
+export async function generateScenePlan(provider, product, env = process.env) {
+  const input = scenePlanPrompt(product);
+  let raw;
+  if (provider === "openai") {
+    const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: env.OPENAI_REEL_MODEL || "gpt-5.6", input, store: false }) });
+    raw = textFromOpenAI(data);
+  } else if (provider === "gemini") {
+    const model = env.GEMINI_REEL_MODEL || "gemini-3.5-flash";
+    const data = await request(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, { method: "POST", headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: input }] }] }) });
+    raw = textFromGemini(data);
+  } else throw new Error("Desteklenmeyen AI sağlayıcısı.");
+  const plan = raw.trim();
+  if (!plan) throw new Error("AI sahne planı boş döndü.");
+  return plan;
+}
+
 export async function generateReelPackage(provider, product, env = process.env) {
   const input = prompt(product);
   let raw;

@@ -47,11 +47,12 @@ test("sceneEditPrompt falls back to a default scene when empty", () => {
   assert.match(prompt, /mutfak/);
 });
 
-test("sceneEditPrompt instructs not to add a new faucet when removeFaucet is set", () => {
+test("sceneEditPrompt forbids a faucet attached to the device but allows one elsewhere in the scene when removeFaucet is set", () => {
   const withoutRemoval = sceneEditPrompt("mutfak", { removeFaucet: false });
-  const withRemoval = sceneEditPrompt("mutfak", { removeFaucet: true });
-  assert.doesNotMatch(withoutRemoval, /yeni bir musluk/);
-  assert.match(withRemoval, /yeni bir musluk\/tap ekleme/);
+  const withRemoval = sceneEditPrompt("tezgah üstünde ayrı bir musluk", { removeFaucet: true });
+  assert.doesNotMatch(withoutRemoval, /bitişik yeni bir musluk/);
+  assert.match(withRemoval, /cihazın hemen yanına veya üzerine bitişik yeni bir musluk ekleme/);
+  assert.match(withRemoval, /Sahne açıklaması ayrı bir yerde/);
 });
 
 test("geminiScenePrompt embeds the scene description and a strong preservation instruction, without mask wording", () => {
@@ -61,9 +62,10 @@ test("geminiScenePrompt embeds the scene description and a strong preservation i
   assert.doesNotMatch(prompt, /maskelenmemiş/);
 });
 
-test("geminiScenePrompt instructs full faucet removal without a mask when removeFaucet is set", () => {
-  const withRemoval = geminiScenePrompt("mutfak", { removeFaucet: true });
-  assert.match(withRemoval, /Musluğu görselden tamamen kaldır/);
+test("geminiScenePrompt forbids a faucet attached to the device but allows one elsewhere in the scene when removeFaucet is set", () => {
+  const withRemoval = geminiScenePrompt("tezgah üstünde ayrı bir musluk", { removeFaucet: true });
+  assert.match(withRemoval, /Musluğu cihazın gövdesinden kaldır/);
+  assert.match(withRemoval, /Sahne açıklaması ayrı bir yerde/);
 });
 
 test("availableSceneProviders lists gemini before openai and only when keys are present", () => {

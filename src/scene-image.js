@@ -54,7 +54,7 @@ export function sceneEditPrompt(sceneDescription, { removeFaucet = false } = {})
     ? "şeklini, oranlarını, logosunu ve etiketini birebir aynı koru"
     : "şeklini, oranlarını, logosunu, etiketini, musluğunu ve tüm detaylarını birebir aynı koru";
   const faucetInstruction = removeFaucet
-    ? " Musluk maskelenerek kaldırıldı; onun yerine veya sahnenin başka bir yerine yeni bir musluk/tap ekleme, cihazın yanı boş/temiz görünsün."
+    ? " Musluk maskelenerek kaldırıldı; cihazın hemen yanına veya üzerine bitişik yeni bir musluk ekleme, cihazın yanı boş/temiz görünsün. Sahne açıklaması ayrı bir yerde (örn. tezgah üstünde) bağımsız bir musluk tarif ediyorsa, o musluğu sahnenin tarif edilen yerine ekle."
     : "";
   return `Maskelenmemiş (opak) alandaki ürünü hiç değiştirme; ${preserved}. Yalnızca şeffaf/maskelenmiş arka plan alanını şu sahneyle doldur: ${scene}.${faucetInstruction} Gerçekçi, reklam kalitesinde, yüksek çözünürlüklü bir fotoğraf üret. Ürünün üzerine yeni metin, logo veya filigran ekleme.`;
 }
@@ -68,7 +68,7 @@ export function geminiScenePrompt(sceneDescription, { removeFaucet = false } = {
     ? "tasarımını, oranlarını, rengini, logosunu ve etiketini birebir koru — cihazın kendisinde hiçbir değişiklik yapma, yeniden tasarlama"
     : "tasarımını, oranlarını, rengini, krom musluğunu, logosunu ve tüm detaylarını birebir koru — cihazın kendisinde hiçbir değişiklik yapma, yeniden tasarlama";
   const faucetInstruction = removeFaucet
-    ? " Musluğu görselden tamamen kaldır; yerine veya sahnenin başka bir yerine yeni bir musluk/tap ekleme, cihazın yanı boş/temiz görünsün."
+    ? " Musluğu cihazın gövdesinden kaldır; cihazın hemen yanına veya üzerine bitişik yeni bir musluk ekleme, cihazın yanı boş/temiz görünsün. Sahne açıklaması ayrı bir yerde (örn. tezgah üstünde) bağımsız bir musluk tarif ediyorsa, o musluğu sahnenin tarif edilen yerine ekle."
     : "";
   return `Bu görseldeki su arıtma cihazının ${preserved}. Sadece arka planı ve sahneyi değiştir: ${scene}.${faucetInstruction} Fotoğraf gerçekçi, reklam/katalog kalitesinde, yüksek çözünürlüklü olsun. Ürünün üzerine hiçbir yeni metin, logo veya filigran ekleme; etiket üzerindeki mevcut metni bulanıklaştırma veya değiştirme, olduğu gibi koru.`;
 }
