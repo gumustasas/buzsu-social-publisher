@@ -132,16 +132,23 @@ Panelde "AI Sahne Görseli" bölümü, seçilen ürünün gerçek fotoğrafını
 sadece arka planı/sahneyi AI ile değiştirir (mutfak, aile, ofis gibi hazır sahneler
 veya serbest metin).
 
-- Ürünün kendisi (şekli, logosu, musluğu, etiketi) prompt'a güvenilerek değil,
-  **piksel maskesiyle** korunur: `src/scene-image.js` beyaz/açık renkli arka planı
-  kenarlardan taşma (flood fill) ile tespit edip yalnızca o bölgeyi OpenAI
-  `images.edit` uç noktasına "değiştirilebilir" olarak işaretler. Ürün alanı API'ye
-  hiç gönderilmeden aynen korunur.
-- `OPENAI_API_KEY` (ve isteğe bağlı `OPENAI_SCENE_MODEL`, varsayılan `gpt-image-1`)
-  Vercel Production'da tanımlı olmalı; tanımlı değilse panel bunu bildirir.
-- Üretilen görsel şu an yalnızca önizleme amaçlıdır (tarayıcıda gösterilir),
-  Airtable kaydına veya yayın kuyruğuna otomatik eklenmez. Kuyruğa/etikete bağlama
-  ve çoklu format (gönderi/hikâye) türetme sonraki aşamadadır.
+- İki sağlayıcı desteklenir: **Gemini** (`gemini-3.1-flash-lite-image`, "Nano
+  Banana") ve **OpenAI** (`gpt-image-1`). Panelde ikisi de tanımlıysa Gemini
+  varsayılan seçilir. Gemini'de maskeleme API'si olmadığı için ürünün korunması
+  yalnızca güçlü bir prompt talimatına dayanır (`geminiScenePrompt`); OpenAI'de
+  ise `src/scene-image.js` beyaz/açık arka planı kenarlardan taşma (flood fill)
+  ile tespit edip yalnızca o bölgeyi `images.edit` uç noktasına "değiştirilebilir"
+  olarak işaretler, ürün alanı API'ye hiç gönderilmeden piksel düzeyinde korunur.
+- `OPENAI_API_KEY` veya `GEMINI_API_KEY` (en az biri) Vercel Production'da
+  tanımlı olmalı; hiçbiri yoksa panel bunu bildirir. İkisi de kendi
+  platformunda ödeme/billing aktif olmadan (ücretsiz kota sıfır) görsel
+  üretmez — anahtarın varlığı yeterli değildir.
+- Üretilen görsel `BLOB_READ_WRITE_TOKEN` tanımlıysa (Vercel projesine bir
+  Blob store bağlanınca otomatik eklenir) kalıcı bir public URL'e yüklenir;
+  panelde "Bu sahneyi kullan" butonu bu URL'i "Yeni içerik oluştur" akışına
+  aktarır (`api/content.js`'in `imageUrl` override'ı). Token tanımlı değilse
+  görsel yalnızca tarayıcıda önizlenir, kuyruğa eklenemez. Çoklu format
+  (gönderi/hikâye) türetme henüz eklenmedi.
 - "Musluğu cihazın yanından kaldır" seçeneği **varsayılan olarak kapalı** —
   cihaz musluğuyla birlikte, olduğu gibi korunur. İşaretlenirse musluk bölgesi
   de maskeye eklenir (`FAUCET_REMOVE_BOX`, `src/scene-image.js`); bu kutu
