@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { floodFillBackgroundMask, sceneEditPrompt, applyRemoveBox } from "../src/scene-image.js";
+import { floodFillBackgroundMask, sceneEditPrompt, geminiScenePrompt, applyRemoveBox, availableSceneProviders } from "../src/scene-image.js";
 
 test("floodFillBackgroundMask marks border-connected near-white pixels as background", () => {
   const width = 4, height = 4, channels = 3;
@@ -52,6 +52,24 @@ test("sceneEditPrompt instructs not to add a new faucet when removeFaucet is set
   const withRemoval = sceneEditPrompt("mutfak", { removeFaucet: true });
   assert.doesNotMatch(withoutRemoval, /yeni bir musluk/);
   assert.match(withRemoval, /yeni bir musluk\/tap ekleme/);
+});
+
+test("geminiScenePrompt embeds the scene description and a strong preservation instruction, without mask wording", () => {
+  const prompt = geminiScenePrompt("modern mutfak, sabah ışığı");
+  assert.match(prompt, /modern mutfak, sabah ışığı/);
+  assert.match(prompt, /birebir koru/);
+  assert.doesNotMatch(prompt, /maskelenmemiş/);
+});
+
+test("geminiScenePrompt instructs full faucet removal without a mask when removeFaucet is set", () => {
+  const withRemoval = geminiScenePrompt("mutfak", { removeFaucet: true });
+  assert.match(withRemoval, /Musluğu görselden tamamen kaldır/);
+});
+
+test("availableSceneProviders lists gemini before openai and only when keys are present", () => {
+  assert.deepEqual(availableSceneProviders({ GEMINI_API_KEY: "g", OPENAI_API_KEY: "o" }), ["gemini", "openai"]);
+  assert.deepEqual(availableSceneProviders({ OPENAI_API_KEY: "o" }), ["openai"]);
+  assert.deepEqual(availableSceneProviders({}), []);
 });
 
 test("applyRemoveBox marks only the pixels inside the given box as background, leaving pixels outside untouched", () => {

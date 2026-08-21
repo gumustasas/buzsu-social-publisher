@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { getSession } from "../src/auth.js";
-import { generateSceneImage } from "../src/scene-image.js";
+import { availableSceneProviders, generateSceneImage } from "../src/scene-image.js";
 
 const baseId = process.env.AIRTABLE_BASE_ID || "apphVqbUQohAMIoWk";
 const tableId = process.env.AIRTABLE_TABLE_ID || "tblir7vlazMo8v532";
@@ -10,18 +10,21 @@ async function airtable(path = "") { const response = await fetch(`https://api.a
 export default async function handler(request, response) {
   if (!authorized(request)) return response.status(401).json({ error: "Unauthorized" });
   try {
-    if (request.method === "GET") return response.status(200).json({ ok: true, available: Boolean(process.env.OPENAI_API_KEY) });
+    const providers = availableSceneProviders();
+    if (request.method === "GET") return response.status(200).json({ ok: true, providers });
     if (request.method !== "POST") return response.status(405).json({ error: "Method not allowed" });
-    if (!process.env.OPENAI_API_KEY) return response.status(400).json({ error: "OPENAI_API_KEY Vercel Production ortamında tanımlı değil." });
 
     const body = typeof request.body === "string" ? JSON.parse(request.body) : (request.body || {});
+    const provider = providers.includes(body.provider) ? body.provider : providers[0];
+    if (!provider) return response.status(400).json({ error: "OPENAI_API_KEY veya GEMINI_API_KEY Vercel Production ortamında tanımlı değil." });
+
     const data = await airtable();
     const record = (data.records || []).find((item) => item.id === body.productId);
     const fields = record?.fields || {};
     if (!record || !fields["Görsel URL"]) return response.status(400).json({ error: "Ürün görseli eksik." });
 
     const product = { title: fields.Başlık || "Buzsu ürünü", imageUrl: fields["Görsel URL"] };
-    const scene = await generateSceneImage(product, body.sceneDescription, process.env, { removeFaucet: Boolean(body.removeFaucet) });
+    const scene = await generateSceneImage(product, body.sceneDescription, process.env, { removeFaucet: Boolean(body.removeFaucet), provider });
     return response.status(200).json({ ok: true, scene });
   } catch (error) {
     console.error(error);

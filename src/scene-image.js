@@ -59,6 +59,20 @@ export function sceneEditPrompt(sceneDescription, { removeFaucet = false } = {})
   return `Maskelenmemiş (opak) alandaki ürünü hiç değiştirme; ${preserved}. Yalnızca şeffaf/maskelenmiş arka plan alanını şu sahneyle doldur: ${scene}.${faucetInstruction} Gerçekçi, reklam kalitesinde, yüksek çözünürlüklü bir fotoğraf üret. Ürünün üzerine yeni metin, logo veya filigran ekleme.`;
 }
 
+// Gemini'nin images/edits benzeri bir maske uç noktası yok; referans görsel +
+// metin talimatıyla çalışıyor. Maskeleme olmadığı için "koru" talimatı prompt
+// içinde daha güçlü vurgulanıyor (bkz. AI Studio'da elle doğrulanan sürüm).
+export function geminiScenePrompt(sceneDescription, { removeFaucet = false } = {}) {
+  const scene = String(sceneDescription || "").trim() || DEFAULT_SCENE;
+  const preserved = removeFaucet
+    ? "tasarımını, oranlarını, rengini, logosunu ve etiketini birebir koru — cihazın kendisinde hiçbir değişiklik yapma, yeniden tasarlama"
+    : "tasarımını, oranlarını, rengini, krom musluğunu, logosunu ve tüm detaylarını birebir koru — cihazın kendisinde hiçbir değişiklik yapma, yeniden tasarlama";
+  const faucetInstruction = removeFaucet
+    ? " Musluğu görselden tamamen kaldır; yerine veya sahnenin başka bir yerine yeni bir musluk/tap ekleme, cihazın yanı boş/temiz görünsün."
+    : "";
+  return `Bu görseldeki su arıtma cihazının ${preserved}. Sadece arka planı ve sahneyi değiştir: ${scene}.${faucetInstruction} Fotoğraf gerçekçi, reklam/katalog kalitesinde, yüksek çözünürlüklü olsun. Ürünün üzerine hiçbir yeni metin, logo veya filigran ekleme; etiket üzerindeki mevcut metni bulanıklaştırma veya değiştirme, olduğu gibi koru.`;
+}
+
 export function applyRemoveBox(isBackground, info, box) {
   const { width, height } = info;
   const left = Math.max(0, box.left);
@@ -94,6 +108,25 @@ async function buildMaskBuffer(sourceBuffer, { removeFaucet = false } = {}) {
   return { basePng, maskPng };
 }
 
+async function callGeminiImageEdit({ basePng, prompt }, env) {
+  if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY Vercel Production ortamında tanımlı değil.");
+  const model = env.GEMINI_SCENE_MODEL || "gemini-2.5-flash-image";
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+    method: "POST",
+    headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: basePng.toString("base64") } }] }],
+      generationConfig: { responseModalities: ["IMAGE"] }
+    })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error?.message || `Gemini HTTP ${response.status}`);
+  const parts = data.candidates?.[0]?.content?.parts || [];
+  const imagePart = parts.find((part) => part.inlineData?.data);
+  if (!imagePart) throw new Error("Gemini görsel yanıtı boş döndü.");
+  return imagePart.inlineData.data;
+}
+
 async function callOpenAIImageEdit({ basePng, maskPng, prompt }, env) {
   if (!env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY Vercel Production ortamında tanımlı değil.");
   const model = env.OPENAI_SCENE_MODEL || "gpt-image-1";
@@ -116,7 +149,11 @@ async function callOpenAIImageEdit({ basePng, maskPng, prompt }, env) {
   return item.b64_json;
 }
 
-export async function generateSceneImage(product, sceneDescription, env = process.env, { removeFaucet = false } = {}) {
+export function availableSceneProviders(env = process.env) {
+  return ["gemini", "openai"].filter((provider) => Boolean(env[provider === "gemini" ? "GEMINI_API_KEY" : "OPENAI_API_KEY"]));
+}
+
+export async function generateSceneImage(product, sceneDescription, env = process.env, { removeFaucet = false, provider = "gemini" } = {}) {
   const imageUrl = String(product?.imageUrl || "").trim();
   if (!/^https:\/\//i.test(imageUrl)) throw new Error("Ürün görseli herkese açık HTTPS URL olmalı.");
 
@@ -125,13 +162,25 @@ export async function generateSceneImage(product, sceneDescription, env = proces
   const sourceBuffer = Buffer.from(await upstream.arrayBuffer());
 
   const { basePng, maskPng } = await buildMaskBuffer(sourceBuffer, { removeFaucet });
-  const prompt = sceneEditPrompt(sceneDescription, { removeFaucet });
-  const b64 = await callOpenAIImageEdit({ basePng, maskPng, prompt }, env);
+
+  let b64, model, prompt;
+  if (provider === "gemini") {
+    prompt = geminiScenePrompt(sceneDescription, { removeFaucet });
+    model = env.GEMINI_SCENE_MODEL || "gemini-2.5-flash-image";
+    b64 = await callGeminiImageEdit({ basePng, prompt }, env);
+  } else if (provider === "openai") {
+    prompt = sceneEditPrompt(sceneDescription, { removeFaucet });
+    model = env.OPENAI_SCENE_MODEL || "gpt-image-1";
+    b64 = await callOpenAIImageEdit({ basePng, maskPng, prompt }, env);
+  } else {
+    throw new Error("Desteklenmeyen sahne üretim sağlayıcısı.");
+  }
 
   return {
     dataUrl: `data:image/png;base64,${b64}`,
     prompt,
-    model: env.OPENAI_SCENE_MODEL || "gpt-image-1",
+    provider,
+    model,
     product: product.title || "",
     generatedAt: new Date().toISOString()
   };
