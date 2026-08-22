@@ -38,6 +38,17 @@ test("content worker does not compound an already-suffixed product title (regres
   assert.equal(draft.title, "Code Su Arıtma Cihazı | Gönderi");
 });
 
+test("content worker requires an HTTPS video URL for the Reel format", () => {
+  const draft = buildDraft(product, { format: "Reel", platforms: ["Instagram", "Facebook"], publishAt: "2026-08-20T10:00:00.000Z" });
+  assert.equal(draft.valid, false);
+  assert.match(draft.warnings.join(" "), /Reel için herkese açık HTTPS video URL/);
+});
+
+test("content worker accepts a Reel draft once a valid video URL is provided", () => {
+  const draft = buildDraft({ ...product, videoUrl: "https://blob.vercel-storage.com/video.mp4" }, { format: "Reel", platforms: ["Instagram", "Facebook"], publishAt: "2026-08-20T10:00:00.000Z" });
+  assert.equal(draft.valid, true);
+});
+
 test("content worker still flags risky claims coming from an AI caption override", () => {
   const draft = buildDraft(product, {
     format: "Gönderi",

@@ -12,7 +12,7 @@ const storyImageBaseUrl = process.env.STORY_IMAGE_BASE_URL || "";
 const airtableBaseId = process.env.AIRTABLE_BASE_ID || "apphVqbUQohAMIoWk";
 const airtableTableId = process.env.AIRTABLE_TABLE_ID || "tblir7vlazMo8v532";
 const required = ["META_ACCESS_TOKEN", "META_FACEBOOK_PAGE_ACCESS_TOKEN", "META_INSTAGRAM_ACCOUNT_ID", "META_FACEBOOK_PAGE_ID", "META_GRAPH_VERSION", "AIRTABLE_TOKEN"];
-const airtableFields = ["Başlık", "Kaynak URL", "Görsel URL", "Instagram Metni", "Facebook Metni", "Hashtagler", "Platform", "Yayın Biçimi", "Yayın Zamanı", "Durum", "Not", "Deneme Sayısı", "Instagram Yayın ID", "Facebook Yayın ID", "Hata Mesajı"];
+const airtableFields = ["Başlık", "Kaynak URL", "Görsel URL", "Video URL", "Instagram Metni", "Facebook Metni", "Hashtagler", "Platform", "Yayın Biçimi", "Yayın Zamanı", "Durum", "Not", "Deneme Sayısı", "Instagram Yayın ID", "Facebook Yayın ID", "Hata Mesajı"];
 
 function assertConfiguration() {
   if (!Number.isInteger(postLimit) || postLimit < 1) throw new Error("SOCIAL_POST_LIMIT en az 1 olmalı.");
@@ -64,16 +64,20 @@ async function graphGet(path, accessToken = process.env.META_ACCESS_TOKEN) {
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-async function waitForInstagramContainer(containerId) {
-  for (let attempt = 1; attempt <= 12; attempt += 1) {
+// Fotoğraf/hikâye konteynerleri saniyeler içinde hazır olur (varsayılan 12
+// deneme × 3sn = 36sn yeterli). Reel videoları Meta'ya göre 30 saniye ile
+// birkaç dakika arasında işlenebiliyor; bu yüzden Reel için çok daha uzun
+// bir zaman aşımı (60 deneme × 5sn = 5 dakika) kullanılıyor.
+async function waitForInstagramContainer(containerId, { attempts = 12, intervalMs = 3000 } = {}) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const state = await graphGet(`${containerId}?fields=status_code,status`);
     if (state.status_code === "FINISHED") return;
     if (state.status_code === "ERROR" || state.status_code === "EXPIRED") {
       throw new Error(`Instagram medya işleme durumu: ${state.status_code}${state.status ? ` (${state.status})` : ""}`);
     }
-    await sleep(3000);
+    await sleep(intervalMs);
   }
-  throw new Error("Instagram medya konteyneri 36 saniye içinde hazır olmadı.");
+  throw new Error(`Instagram medya konteyneri ${Math.round((attempts * intervalMs) / 1000)} saniye içinde hazır olmadı.`);
 }
 
 async function airtableGetApproved() {
@@ -102,9 +106,23 @@ async function updateAirtable(recordId, fields) {
   if (!response.ok) throw new Error(`Airtable güncellenemedi: ${data.error?.message || `HTTP ${response.status}`}`);
 }
 
+async function publishInstagramReel(fields) {
+  requireHttpsUrl(fields["Video URL"], "Video URL");
+  const caption = joinText(fields["Instagram Metni"], fields["Hashtagler"]);
+  if (!caption) throw new Error("Instagram metni boş.");
+  // share_to_feed: Reel hem Reels sekmesinde hem ana akışta görünsün —
+  // "Gönderi" formatındaki normal paylaşımlarla aynı görünürlük mantığı.
+  const container = await graphPost(`${process.env.META_INSTAGRAM_ACCOUNT_ID}/media`, { media_type: "REELS", video_url: fields["Video URL"], caption, share_to_feed: "true" });
+  // Video işleme fotoğraftan çok daha uzun sürebiliyor (Meta: 30sn - birkaç
+  // dakika); 60 deneme × 5sn = 5 dakikaya kadar bekleniyor.
+  await waitForInstagramContainer(container.id, { attempts: 60, intervalMs: 5000 });
+  const published = await graphPost(`${process.env.META_INSTAGRAM_ACCOUNT_ID}/media_publish`, { creation_id: container.id });
+  return published.id;
+}
+
 async function publishInstagram(fields, format) {
+  if (format === "Reel") return publishInstagramReel(fields);
   requireHttpsUrl(fields["Görsel URL"], "Görsel URL");
-  if (format === "Reel") throw new Error("Reel için herkese açık video URL alanı henüz tanımlı değil.");
   const params = { image_url: format === "Hikâye" ? storyImageUrl(fields["Görsel URL"], fields) : fields["Görsel URL"] };
   if (format === "Hikâye") params.media_type = "STORIES";
   else {
@@ -118,7 +136,36 @@ async function publishInstagram(fields, format) {
   return published.id;
 }
 
+// Facebook Reel yayınlama üç adımlı: (1) video_reels?upload_phase=start ile
+// bir video_id alınır, (2) rupload.facebook.com'a file_url header'ıyla
+// (barındırılan URL'den) video "yüklenir" — Meta bunu kendi tarafında
+// indirir, biz bayt göndermiyoruz, (3) upload_phase=finish ile description
+// ve video_state=PUBLISHED verilip yayına alınır. Resmi Meta Postman
+// koleksiyonundaki akışla birebir aynı.
+async function publishFacebookReel(fields) {
+  requireHttpsUrl(fields["Video URL"], "Video URL");
+  const token = process.env.META_FACEBOOK_PAGE_ACCESS_TOKEN;
+  const pageId = process.env.META_FACEBOOK_PAGE_ID;
+  const description = joinText(fields["Facebook Metni"], fields["Hashtagler"]);
+  if (!description) throw new Error("Facebook metni boş.");
+
+  const started = await graphPost(`${pageId}/video_reels`, { upload_phase: "start" }, token);
+  if (!started.video_id) throw new Error("Facebook Reel video_id alınamadı.");
+
+  const uploadResponse = await fetch(`https://rupload.facebook.com/video-upload/${graphVersion}/${started.video_id}`, {
+    method: "POST",
+    headers: { Authorization: `OAuth ${token}`, file_url: fields["Video URL"], "Content-Type": "application/octet-stream" }
+  });
+  const uploadData = await uploadResponse.json().catch(() => ({}));
+  if (!uploadResponse.ok || uploadData.success === false) throw new Error(`Facebook Reel video yüklenemedi: ${uploadData.error?.message || `HTTP ${uploadResponse.status}`}`);
+
+  const finished = await graphPost(`${pageId}/video_reels`, { upload_phase: "finish", video_id: started.video_id, video_state: "PUBLISHED", description }, token);
+  if (finished.success === false) throw new Error("Facebook Reel yayınlanamadı.");
+  return started.video_id;
+}
+
 async function publishFacebook(fields, format) {
+  if (format === "Reel") return publishFacebookReel(fields);
   requireHttpsUrl(fields["Görsel URL"], "Görsel URL");
   const token = process.env.META_FACEBOOK_PAGE_ACCESS_TOKEN;
   if (format === "Hikâye") {
@@ -127,7 +174,6 @@ async function publishFacebook(fields, format) {
     const story = await graphPost(`${process.env.META_FACEBOOK_PAGE_ID}/photo_stories`, { photo_id: uploaded.id }, token);
     return story.post_id || story.id;
   }
-  if (format === "Reel") throw new Error("Facebook Reel için video URL alanı henüz tanımlı değil.");
   const trackedUrl = withUtm(fields["Kaynak URL"], { source: "facebook", title: fields["Başlık"] });
   const message = joinText(fields["Facebook Metni"], fields["Hashtagler"], trackedUrl);
   if (!message) throw new Error("Facebook metni boş.");

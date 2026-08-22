@@ -19,9 +19,10 @@ export default async function handler(request, response) {
     const products = await listProducts();
     const matchedProduct = products.find((item) => item.id === body.productId);
     const sceneImageUrl = typeof body.imageUrl === "string" && /^https:\/\//i.test(body.imageUrl) ? body.imageUrl : "";
-    const product = matchedProduct && sceneImageUrl ? { ...matchedProduct, imageUrl: sceneImageUrl } : matchedProduct;
+    const videoUrl = typeof body.videoUrl === "string" && /^https:\/\//i.test(body.videoUrl) ? body.videoUrl : "";
+    const product = matchedProduct && (sceneImageUrl || videoUrl) ? { ...matchedProduct, ...(sceneImageUrl ? { imageUrl: sceneImageUrl } : {}), ...(videoUrl ? { videoUrl } : {}) } : matchedProduct;
     const platforms = Array.isArray(body.platforms) ? body.platforms.filter((item) => ["Instagram", "Facebook"].includes(item)) : [];
-    const format = ["Gönderi", "Hikâye"].includes(body.format) ? body.format : "Gönderi";
+    const format = ["Gönderi", "Hikâye", "Reel"].includes(body.format) ? body.format : "Gönderi";
     if (!product) return response.status(400).json({ error: "Ürün seçilmedi veya görsel/URL eksik." });
     if (!platforms.length) return response.status(400).json({ error: "En az bir platform seçin." });
     if (!validDate(body.publishAt)) return response.status(400).json({ error: "Geçerli bir yayın zamanı seçin." });
@@ -30,7 +31,7 @@ export default async function handler(request, response) {
     if (body.action === "preview") return response.status(200).json({ ok: true, draft });
     if (!draft.valid) return response.status(400).json({ error: draft.warnings.join(" ") });
     const note = (() => {
-      const aiParts = [sceneImageUrl && "sahne görseli", aiCaption && "gönderi metni"].filter(Boolean);
+      const aiParts = [sceneImageUrl && "sahne görseli", videoUrl && "Reel videosu", aiCaption && "gönderi metni"].filter(Boolean);
       return aiParts.length
         ? `Panelden oluşturuldu (AI ile üretilmiş ${aiParts.join(" ve ")}); önizleme ve kullanıcı onayı bekleniyor.`
         : "Panelden oluşturuldu; önizleme ve kullanıcı onayı bekleniyor.";

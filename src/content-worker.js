@@ -20,6 +20,7 @@ export function buildDraft(product, { format = "Gönderi", platforms = ["Instagr
   const warnings = [];
   if (!product.url || !isHttps(product.url)) warnings.push("Kaynak URL herkese açık HTTPS olmalı.");
   if (!product.imageUrl || !isHttps(product.imageUrl)) warnings.push("Görsel URL herkese açık HTTPS olmalı.");
+  if (format === "Reel" && (!product.videoUrl || !isHttps(product.videoUrl))) warnings.push("Reel için herkese açık HTTPS video URL'i gerekli.");
   if (!platforms.length) warnings.push("En az bir platform seçilmeli.");
   if (riskyClaims.some((pattern) => pattern.test(allText))) warnings.push("Kanıtsız sağlık veya üstünlük iddiası bulundu.");
   if (format === "Hikâye" && platforms.includes("Instagram")) warnings.push("Instagram hikâyesinde ürün bağlantı etiketi API tarafından otomatik eklenmez.");

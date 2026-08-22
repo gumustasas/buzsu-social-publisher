@@ -59,6 +59,7 @@ export async function createDraftRecord({ product, draft, format, platforms, pub
     "İçerik Türü": "Ürün",
     "Kaynak URL": product.url,
     "Görsel URL": product.imageUrl,
+    ...(product.videoUrl ? { "Video URL": product.videoUrl } : {}),
     "Instagram Metni": draft.instagramText,
     "Facebook Metni": draft.facebookText,
     Hashtagler: draft.hashtags,
