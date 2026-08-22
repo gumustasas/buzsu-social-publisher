@@ -2,6 +2,7 @@ import "dotenv/config";
 import { getSession } from "../src/auth.js";
 import { availableProviders, generateReelPackage } from "../src/ai-providers.js";
 import { submitFalVideo } from "../src/fal-video.js";
+import { submitVeoVideo } from "../src/veo-video.js";
 import { baseProductTitle } from "../src/lib/product-title.js";
 
 const baseId = process.env.AIRTABLE_BASE_ID || "apphVqbUQohAMIoWk";
@@ -20,6 +21,7 @@ export default async function handler(request, response) {
     if (!record || !fields["Kaynak URL"] || !fields["Görsel URL"]) return response.status(400).json({ error: "Ürün URL veya görsel bilgisi eksik." });
     const product = { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", url: fields["Kaynak URL"], imageUrl: fields["Görsel URL"] };
     if (body.provider === "fal") return response.status(200).json({ ok: true, fal: await submitFalVideo(product) });
+    if (body.provider === "veo") return response.status(200).json({ ok: true, veo: await submitVeoVideo(product) });
     const reel = await generateReelPackage(body.provider, product);
     return response.status(200).json({ ok: true, reel });
   } catch (error) { console.error(error); return response.status(500).json({ ok: false, error: error.message }); }

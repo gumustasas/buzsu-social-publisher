@@ -22,7 +22,7 @@ async function request(url, options) {
 }
 
 export function availableProviders(env = process.env) {
-  return ["openai", "anthropic", "gemini", "fal"].filter((provider) => Boolean(env[provider === "openai" ? "OPENAI_API_KEY" : provider === "anthropic" ? "ANTHROPIC_API_KEY" : provider === "gemini" ? "GEMINI_API_KEY" : "FAL_KEY"]));
+  return ["openai", "anthropic", "gemini", "fal", "veo"].filter((provider) => Boolean(env[provider === "openai" ? "OPENAI_API_KEY" : provider === "anthropic" ? "ANTHROPIC_API_KEY" : provider === "gemini" || provider === "veo" ? "GEMINI_API_KEY" : "FAL_KEY"]));
 }
 
 function scenePlanPrompt(product, context) {
