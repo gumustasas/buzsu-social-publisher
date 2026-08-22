@@ -184,6 +184,18 @@ doldurur; hiçbir şey bu adımda kaydedilmez — kullanıcı her zamanki gibi
 önizleyip onaylamalıdır. OPENAI_API_KEY, ANTHROPIC_API_KEY veya GEMINI_API_KEY
 üçünden biri yeterlidir.
 
+## Etkileşim verisi (Insights)
+
+"Genel Bakış" bölümündeki **Haftalık etkileşim** artık gerçek bir sayı —
+`GET /api/insights` (`src/lib/insights.js`), son 7 günde `Paylaşıldı` durumundaki
+kayıtların Instagram/Facebook yayın ID'lerini kullanıp Meta Graph API'den
+`like_count`/`comments_count`/`shares` okur ve toplar. Bilinçli olarak yalnızca
+bu temel, her zaman erişilebilir alanlar kullanılır — ayrıntılı
+"impressions/reach" metrikleri ek izin gerektirir ve API sürümüne göre sık
+değiştiği için dahil edilmedi. Tek bir gönderinin okunması başarısız olursa
+diğerlerini etkilemez (`failures` sayacında görünür). META_ACCESS_TOKEN
+tanımlı değilse kart "bağlı değil" der, hata vermez.
+
 ## Otomatik Pilot (deneysel)
 
 Panelin "Hızlı ayarlar" bölümündeki **Otomatik Pilot** açık/kapalı düğmesi,
