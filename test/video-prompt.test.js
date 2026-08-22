@@ -17,3 +17,14 @@ test("buildVideoPrompt ignores blank/whitespace-only scene descriptions", () => 
   const prompt = buildVideoPrompt("Code Advantage", "   ");
   assert.doesNotMatch(prompt, /Sahne:/);
 });
+
+test("buildVideoPrompt also folds in the original free-text user intent when it differs from the scene description", () => {
+  const prompt = buildVideoPrompt("Code Advantage", "modern bir mutfak tezgahı", "aile birlikte su içiyor, sıcak bir an");
+  assert.match(prompt, /Sahne: modern bir mutfak tezgahı\./);
+  assert.match(prompt, /Kullanıcının orijinal isteği: aile birlikte su içiyor, sıcak bir an\./);
+});
+
+test("buildVideoPrompt does not repeat the user intent when it is identical to the scene description", () => {
+  const prompt = buildVideoPrompt("Code Advantage", "aile mutfakta su içiyor", "aile mutfakta su içiyor");
+  assert.equal((prompt.match(/aile mutfakta su içiyor/g) || []).length, 1);
+});

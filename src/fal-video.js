@@ -14,11 +14,11 @@ async function readJson(response) {
 
 export function falModel(env = process.env) { return env.FAL_VIDEO_MODEL || DEFAULT_MODEL; }
 
-export async function submitFalVideo(product, env = process.env, { sceneDescription } = {}) {
+export async function submitFalVideo(product, env = process.env, { sceneDescription, userIntent } = {}) {
   if (!env.FAL_KEY) throw new Error("FAL_KEY Vercel Production ortamında tanımlı değil.");
   const imageUrl = String(product.imageUrl || "").trim();
   if (!/^https:\/\//i.test(imageUrl)) throw new Error("fal.ai için ürün görseli herkese açık HTTPS URL olmalı.");
-  const prompt = buildVideoPrompt(product.title, sceneDescription);
+  const prompt = buildVideoPrompt(product.title, sceneDescription, userIntent);
   const model = falModel(env);
   const response = await fetch(`https://queue.fal.run/${model}`, { method: "POST", headers: falHeaders(env), body: JSON.stringify({ prompt, image_url: imageUrl }) });
   const data = await readJson(response);
