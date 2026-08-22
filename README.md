@@ -168,6 +168,22 @@ hâlâ yedek olarak duruyor (AI anahtarı yoksa kullanılabilir); AI metni
 kendisi yazmasına güvenilmez. Aynı riskli iddia filtresi (sağlık/tedavi/kesin
 sonuç) AI metnine de uygulanır.
 
+## Tek cümleyle içerik isteği (deneysel)
+
+"Yeni içerik oluştur" bölümünün en üstünde, altı ayrı alanı tek tek doldurmak
+yerine doğal dille tek bir cümle yazılabilir (örn. *"UltraMag için apartman
+tesisatına takılı, teknik oda sahnesi; yarın 10:00'da Instagram gönderisi"*).
+**"Anla"** butonu bu cümleyi `POST /api/intent`'e gönderir; `parseIntent`
+(`src/lib/intent-parser.js`) AI ile ürün adı, biçim, platform, yayın zamanı ve
+sahne isteğini yapılandırılmış alanlara ayrıştırır. Ürün eşleştirmesi AI'ye
+bırakılmaz — dönen `productQuery`, bilinen ürün listesiyle (`src/lib/products.js`,
+Airtable + llms-full.txt kataloğu) JS tarafında deterministik olarak eşleştirilir,
+böylece AI'nin var olmayan bir ürün uydurma riski olmaz. Sonuç, composer'daki
+mevcut alanları (ürün, biçim, zaman, platform, sahne açıklaması) otomatik
+doldurur; hiçbir şey bu adımda kaydedilmez — kullanıcı her zamanki gibi
+önizleyip onaylamalıdır. OPENAI_API_KEY, ANTHROPIC_API_KEY veya GEMINI_API_KEY
+üçünden biri yeterlidir.
+
 ## Sonraki adım
 
 Dry-run doğru çalıştıktan sonra Meta API için ayrı gönderim scripti eklenir. O aşamada da önce test modu, sonra tek kayıtla kontrollü canlı paylaşım yapılmalıdır.
