@@ -13,7 +13,11 @@ export default async function handler(request, response) {
   if (!authorized(request)) return response.status(401).json({ error: "Unauthorized" });
   try {
     if (request.method !== "POST") return response.status(405).json({ error: "Method not allowed" });
-    const providers = availableProviders().filter((provider) => provider === "openai" || provider === "gemini");
+    // Gemini önce denenir: bir sağlayıcının anahtarı tanımlı olması kredisi
+    // olduğu anlamına gelmez, ve kullanıcının kredisi Gemini'de (bkz.
+    // availableSceneProviders, api/intent.js).
+    const configured = availableProviders();
+    const providers = ["gemini", "openai"].filter((provider) => configured.includes(provider));
     const body = typeof request.body === "string" ? JSON.parse(request.body) : (request.body || {});
     const provider = providers.includes(body.provider) ? body.provider : providers[0];
     if (!provider) return response.status(400).json({ error: "OPENAI_API_KEY veya GEMINI_API_KEY Vercel Production ortamında tanımlı değil." });

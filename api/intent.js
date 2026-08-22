@@ -6,8 +6,13 @@ import { listProducts } from "../src/lib/products.js";
 
 function authorized(request) { return Boolean(getSession(request)); }
 
+// availableProviders() sabit bir sırayla döner (openai önce); ama bir
+// sağlayıcının anahtarı tanımlı olması kredisi olduğu anlamına gelmez.
+// Sahne görselinde olduğu gibi (bkz. availableSceneProviders), burada da
+// Gemini önce denenir — kullanıcının kredisi bu sağlayıcıda.
 function intentProviders(env = process.env) {
-  return availableProviders(env).filter((provider) => provider === "openai" || provider === "anthropic" || provider === "gemini");
+  const configured = availableProviders(env);
+  return ["gemini", "anthropic", "openai"].filter((provider) => configured.includes(provider));
 }
 
 export default async function handler(request, response) {
