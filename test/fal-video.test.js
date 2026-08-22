@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { falModel, submitFalVideo } from "../src/fal-video.js";
+import { falModel, submitFalVideo, MAX_FAL_PROMPT_LENGTH } from "../src/fal-video.js";
 
 test("falModel defaults to fal-ai/minimax-video/image-to-video and respects FAL_VIDEO_MODEL override", () => {
   assert.equal(falModel({}), "fal-ai/minimax-video/image-to-video");
@@ -18,6 +18,14 @@ test("submitFalVideo rejects a non-HTTPS product image URL", async () => {
   await assert.rejects(
     () => submitFalVideo({ title: "Code Advantage", imageUrl: "not-a-url" }, { FAL_KEY: "test" }),
     /HTTPS/
+  );
+});
+
+test("submitFalVideo rejects a finalizedPrompt longer than fal.ai's own limit, before any network call", async () => {
+  const finalizedPrompt = "a".repeat(MAX_FAL_PROMPT_LENGTH + 1);
+  await assert.rejects(
+    () => submitFalVideo({ title: "Code Advantage", imageUrl: "https://example.com/x.jpg" }, { FAL_KEY: "test" }, { finalizedPrompt }),
+    /Prompt çok uzun/
   );
 });
 

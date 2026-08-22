@@ -2,10 +2,10 @@ import "dotenv/config";
 import { getSession } from "../src/auth.js";
 import { availableProviders, generateReelPackage, generateMotionPlan } from "../src/ai-providers.js";
 import { availableSceneProviders } from "../src/scene-image.js";
-import { submitFalVideo } from "../src/fal-video.js";
+import { submitFalVideo, MAX_FAL_PROMPT_LENGTH } from "../src/fal-video.js";
 import { submitVeoVideo } from "../src/veo-video.js";
 import { baseProductTitle } from "../src/lib/product-title.js";
-import { buildVideoPromptSections, renderVideoPrompt, hashVideoPrompt, MAX_VIDEO_PROMPT_LENGTH } from "../src/lib/video-prompt.js";
+import { buildVideoPromptSections, renderVideoPrompt, hashVideoPrompt } from "../src/lib/video-prompt.js";
 
 const baseId = process.env.AIRTABLE_BASE_ID || "apphVqbUQohAMIoWk";
 const tableId = process.env.AIRTABLE_TABLE_ID || "tblir7vlazMo8v532";
@@ -39,12 +39,14 @@ export default async function handler(request, response) {
       }
       const sections = buildVideoPromptSections({ productTitle: title, motion });
       const prompt = renderVideoPrompt(sections);
-      // fal.ai prompt alanını 2000 karakterle sınırlıyor (gerçek denemede
-      // görülen hata: "String should have at most 2000 characters"). Bunu
-      // burada, ücretli API'ye hiç gitmeden, açık bir Türkçe mesajla
-      // yakalıyoruz.
-      if (prompt.length > MAX_VIDEO_PROMPT_LENGTH) {
-        return response.status(400).json({ error: `Video hareketi metni çok uzun (toplam prompt ${prompt.length}/${MAX_VIDEO_PROMPT_LENGTH} karakter). Hareket açıklamasını kısaltıp tekrar önizle.` });
+      // Bu, sadece fal.ai'nin kendi API sınırı (fal-ai/minimax-video/
+      // image-to-video prompt alanı en fazla 2000 karakter kabul ediyor,
+      // gerçek denemede görülen hata: "String should have at most 2000
+      // characters"). Veo'nun böyle bir sınırı yok, bu yüzden yalnızca
+      // provider fal iken erkenden (ücretsiz önizleme sırasında) uyarıyoruz;
+      // asıl koruma src/fal-video.js:submitFalVideo içinde.
+      if (body.provider === "fal" && prompt.length > MAX_FAL_PROMPT_LENGTH) {
+        return response.status(400).json({ error: `Video hareketi metni çok uzun (toplam prompt ${prompt.length}/${MAX_FAL_PROMPT_LENGTH} karakter, fal.ai sınırı). Hareket açıklamasını kısaltıp tekrar önizle.` });
       }
       const promptId = hashVideoPrompt(prompt);
       return response.status(200).json({ ok: true, preview: { promptId, prompt, motion, motionSource } });

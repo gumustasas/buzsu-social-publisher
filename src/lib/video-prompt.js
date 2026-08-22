@@ -10,13 +10,6 @@ import { createHash } from "node:crypto";
 // olduğunu bilmez, sadece hazır bir motion string'i bekler.
 const GENERIC_MOTION = "Kamera hafifçe yaklaşsın, ürün ve sahnedeki her şey doğal biçimde sabit kalsın; ani veya abartılı hareket olmasın.";
 
-// fal.ai (fal-ai/minimax-video/image-to-video) prompt alanını 2000 karakterle
-// sınırlıyor ("Error validating the input: String should have at most 2000
-// characters" — gerçek bir denemede görüldü). Bu sınır provider'a bağlı
-// gibi görünse de fal.ai ile Veo aynı finalizedPrompt'u kullandığından, bu
-// katmanda ikisi için de ortak, güvenli bir üst sınır olarak uygulanıyor.
-export const MAX_VIDEO_PROMPT_LENGTH = 1990;
-
 export function buildVideoPromptSections({ productTitle, motion } = {}) {
   const title = String(productTitle || "Buzsu ürünü").trim();
   return {

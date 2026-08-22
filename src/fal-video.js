@@ -2,6 +2,13 @@ import { buildVideoPrompt } from "./lib/video-prompt.js";
 
 const DEFAULT_MODEL = "fal-ai/minimax-video/image-to-video";
 
+// Yalnızca fal.ai'nin kendi API sınırı — fal-ai/minimax-video/image-to-video
+// prompt alanını 2000 karakterle sınırlıyor (gerçek denemede görülen hata:
+// "Error validating the input: String should have at most 2000 characters").
+// Veo'da böyle bir sınır yok; bu yüzden bu değer video-prompt.js'teki ortak
+// katmanda değil, burada, fal.ai'ye özgü olarak tutuluyor.
+export const MAX_FAL_PROMPT_LENGTH = 1990;
+
 function falHeaders(env) {
   return { Authorization: `Key ${env.FAL_KEY}`, "Content-Type": "application/json" };
 }
@@ -23,6 +30,7 @@ export async function submitFalVideo(product, env = process.env, { finalizedProm
   const imageUrl = String(product.imageUrl || "").trim();
   if (!/^https:\/\//i.test(imageUrl)) throw new Error("fal.ai için ürün görseli herkese açık HTTPS URL olmalı.");
   const prompt = String(finalizedPrompt || "").trim() || buildVideoPrompt(product.title);
+  if (prompt.length > MAX_FAL_PROMPT_LENGTH) throw new Error(`Prompt çok uzun (${prompt.length}/${MAX_FAL_PROMPT_LENGTH} karakter, fal.ai sınırı). "Video hareketi" metnini kısaltıp tekrar önizle.`);
   const model = falModel(env);
   const response = await fetch(`https://queue.fal.run/${model}`, { method: "POST", headers: falHeaders(env), body: JSON.stringify({ prompt, image_url: imageUrl }) });
   const data = await readJson(response);

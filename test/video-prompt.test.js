@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildVideoPromptSections, renderVideoPrompt, hashVideoPrompt, buildVideoPrompt, MAX_VIDEO_PROMPT_LENGTH } from "../src/lib/video-prompt.js";
+import { buildVideoPromptSections, renderVideoPrompt, hashVideoPrompt, buildVideoPrompt } from "../src/lib/video-prompt.js";
 
 test("buildVideoPromptSections falls back to a generic MOTION when none is given", () => {
   const sections = buildVideoPromptSections({ productTitle: "Code Advantage" });
@@ -39,16 +39,4 @@ test("hashVideoPrompt is deterministic for identical input and changes when the 
 test("buildVideoPrompt is a thin convenience wrapper around sections+render", () => {
   const prompt = buildVideoPrompt("Code Advantage", "hareket metni");
   assert.equal(prompt, renderVideoPrompt(buildVideoPromptSections({ productTitle: "Code Advantage", motion: "hareket metni" })));
-});
-
-test("a 1200-character motion (the dashboard textarea's maxlength) stays under fal.ai's MAX_VIDEO_PROMPT_LENGTH", () => {
-  const motion = "a".repeat(1200);
-  const prompt = renderVideoPrompt(buildVideoPromptSections({ productTitle: "Code Su Arıtma Cihazı", motion }));
-  assert.ok(prompt.length <= MAX_VIDEO_PROMPT_LENGTH, `prompt was ${prompt.length} chars, expected <= ${MAX_VIDEO_PROMPT_LENGTH}`);
-});
-
-test("an excessively long motion pushes the rendered prompt past MAX_VIDEO_PROMPT_LENGTH (api/reels.js rejects this before calling fal.ai/Veo)", () => {
-  const motion = "a".repeat(2000);
-  const prompt = renderVideoPrompt(buildVideoPromptSections({ productTitle: "Code Advantage", motion }));
-  assert.ok(prompt.length > MAX_VIDEO_PROMPT_LENGTH);
 });
