@@ -19,7 +19,11 @@ export default async function handler(request, response) {
     if (!providers.includes(body.provider)) return response.status(400).json({ error: "Seçilen AI sağlayıcısının API anahtarı Vercel'de tanımlı değil." });
     const data = await airtable(); const record = (data.records || []).find((item) => item.id === body.productId); const fields = record?.fields || {};
     if (!record || !fields["Kaynak URL"] || !fields["Görsel URL"]) return response.status(400).json({ error: "Ürün URL veya görsel bilgisi eksik." });
-    const product = { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", url: fields["Kaynak URL"], imageUrl: fields["Görsel URL"] };
+    // Kompozerde önceden bir AI sahne görseli üretilip kalıcı bir URL aldıysa
+    // (bkz. api/scene-image.js), video bunun üzerinden üretilsin — kullanıcı
+    // önizlediği sahneyi baz almak istiyor, ham ürün fotoğrafını değil.
+    const sceneImageUrl = typeof body.sceneImageUrl === "string" && /^https:\/\//i.test(body.sceneImageUrl) ? body.sceneImageUrl : null;
+    const product = { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", url: fields["Kaynak URL"], imageUrl: sceneImageUrl || fields["Görsel URL"] };
     if (body.provider === "fal") return response.status(200).json({ ok: true, fal: await submitFalVideo(product) });
     if (body.provider === "veo") return response.status(200).json({ ok: true, veo: await submitVeoVideo(product) });
     const reel = await generateReelPackage(body.provider, product);
