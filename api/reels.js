@@ -6,11 +6,29 @@ import { submitFalVideo, MAX_FAL_PROMPT_LENGTH } from "../src/fal-video.js";
 import { submitVeoVideo } from "../src/veo-video.js";
 import { baseProductTitle } from "../src/lib/product-title.js";
 import { buildVideoPromptSections, renderVideoPrompt, hashVideoPrompt } from "../src/lib/video-prompt.js";
+import { findCatalogProduct, isCatalogProductId } from "../src/lib/product-catalog.js";
 
 const baseId = process.env.AIRTABLE_BASE_ID || "apphVqbUQohAMIoWk";
 const tableId = process.env.AIRTABLE_TABLE_ID || "tblir7vlazMo8v532";
 function authorized(request) { return Boolean(getSession(request)); }
 async function airtable(path = "") { const response = await fetch(`https://api.airtable.com/v0/${baseId}/${tableId}${path}?pageSize=100`, { headers: { Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}` } }); const data = await response.json(); if (!response.ok) throw new Error(data.error?.message || `Airtable HTTP ${response.status}`); return data; }
+
+// llms-full.txt kataloğundan gelen (henüz Airtable kaydı olmayan) ürünler
+// için Kaynak URL/Görsel URL Airtable'da yok — bkz. api/scene-image.js'teki
+// aynı desen. Dönen imageUrl boş olabilir (katalog ürünlerinin fotoğrafı
+// yok); çağıran taraf sceneImageUrl/manualImageUrl ile tamamlamalı.
+async function resolveProduct(productId) {
+  if (isCatalogProductId(productId)) {
+    const catalogProduct = await findCatalogProduct(productId);
+    if (!catalogProduct) return null;
+    return { title: baseProductTitle(catalogProduct.title) || "Buzsu ürünü", url: catalogProduct.url, imageUrl: "" };
+  }
+  const data = await airtable();
+  const record = (data.records || []).find((item) => item.id === productId);
+  if (!record) return null;
+  const fields = record.fields || {};
+  return { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", url: fields["Kaynak URL"] || "", imageUrl: fields["Görsel URL"] || "" };
+}
 
 export default async function handler(request, response) {
   if (!authorized(request)) return response.status(401).json({ error: "Unauthorized" });
@@ -26,9 +44,9 @@ export default async function handler(request, response) {
     // üretir. Provider'dan bağımsızdır — ikisi de aynı promptu kullanır.
     if (body.action === "preview") {
       if (body.provider !== "fal" && body.provider !== "veo") return response.status(400).json({ error: "Önizleme yalnızca fal.ai veya Veo için kullanılabilir." });
-      const data = await airtable(); const record = (data.records || []).find((item) => item.id === body.productId); const fields = record?.fields || {};
-      if (!record) return response.status(400).json({ error: "Ürün bulunamadı." });
-      const title = baseProductTitle(fields.Başlık) || "Buzsu ürünü";
+      const previewProduct = await resolveProduct(body.productId);
+      if (!previewProduct) return response.status(400).json({ error: "Ürün bulunamadı." });
+      const title = previewProduct.title;
       let motion = typeof body.motion === "string" ? body.motion.trim() : "";
       let motionSource = "user";
       if (!motion) {
@@ -53,13 +71,17 @@ export default async function handler(request, response) {
     }
 
     if (!providers.includes(body.provider)) return response.status(400).json({ error: "Seçilen AI sağlayıcısının API anahtarı Vercel'de tanımlı değil." });
-    const data = await airtable(); const record = (data.records || []).find((item) => item.id === body.productId); const fields = record?.fields || {};
-    if (!record || !fields["Kaynak URL"] || !fields["Görsel URL"]) return response.status(400).json({ error: "Ürün URL veya görsel bilgisi eksik." });
+    const resolvedProduct = await resolveProduct(body.productId);
+    if (!resolvedProduct || !resolvedProduct.url) return response.status(400).json({ error: "Ürün URL bilgisi eksik." });
     // Kompozerde önceden bir AI sahne görseli üretilip kalıcı bir URL aldıysa
     // (bkz. api/scene-image.js), video bunun üzerinden üretilsin — kullanıcı
-    // önizlediği sahneyi baz almak istiyor, ham ürün fotoğrafını değil.
+    // önizlediği sahneyi baz almak istiyor, ham ürün fotoğrafını değil. Bu,
+    // fotoğrafı Airtable'da olmayan (katalog) ürünler için TEK görsel
+    // kaynağıdır — onlarda resolvedProduct.imageUrl boştur.
     const sceneImageUrl = typeof body.sceneImageUrl === "string" && /^https:\/\//i.test(body.sceneImageUrl) ? body.sceneImageUrl : null;
-    const product = { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", url: fields["Kaynak URL"], imageUrl: sceneImageUrl || fields["Görsel URL"] };
+    const imageUrl = sceneImageUrl || resolvedProduct.imageUrl;
+    if (!imageUrl) return response.status(400).json({ error: "Ürün görseli eksik — önce üstte bir AI sahne görseli üretip \"Sahneyi baz alarak video üret\" kutusunu işaretleyin." });
+    const product = { title: resolvedProduct.title, url: resolvedProduct.url, imageUrl };
 
     if (body.provider === "fal" || body.provider === "veo") {
       // Video üretimi her zaman önce "preview" ile kurulmuş bir snapshot

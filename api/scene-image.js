@@ -3,6 +3,7 @@ import { put } from "@vercel/blob";
 import { getSession } from "../src/auth.js";
 import { availableSceneProviders, generateSceneImage } from "../src/scene-image.js";
 import { baseProductTitle } from "../src/lib/product-title.js";
+import { findCatalogProduct, isCatalogProductId } from "../src/lib/product-catalog.js";
 
 const baseId = process.env.AIRTABLE_BASE_ID || "apphVqbUQohAMIoWk";
 const tableId = process.env.AIRTABLE_TABLE_ID || "tblir7vlazMo8v532";
@@ -20,17 +21,36 @@ export default async function handler(request, response) {
     const provider = providers.includes(body.provider) ? body.provider : providers[0];
     if (!provider) return response.status(400).json({ error: "OPENAI_API_KEY veya GEMINI_API_KEY Vercel Production ortamında tanımlı değil." });
 
-    const data = await airtable();
-    const record = (data.records || []).find((item) => item.id === body.productId);
-    const fields = record?.fields || {};
-    if (!record || !fields["Görsel URL"]) return response.status(400).json({ error: "Ürün görseli eksik." });
+    // llms-full.txt kataloğundan gelen (henüz Airtable kaydı olmayan)
+    // ürünlerin fotoğrafı yok; panelde elle girilen görsel URL'i (bkz.
+    // dashboard.html #product-imageurl) burada tek kaynak olur. Airtable
+    // kaydı olan ama "Görsel URL" alanı boş bırakılmış ürünler için de aynı
+    // elle-girilen URL bir yedek (fallback) olarak kabul edilir.
+    const manualImageUrl = typeof body.imageUrl === "string" && /^https:\/\//i.test(body.imageUrl) ? body.imageUrl : "";
+    let product, recordId;
+    if (isCatalogProductId(body.productId)) {
+      const catalogProduct = await findCatalogProduct(body.productId);
+      if (!catalogProduct) return response.status(400).json({ error: "Ürün bulunamadı." });
+      if (!manualImageUrl) return response.status(400).json({ error: "Bu ürünün Airtable'da fotoğrafı yok. Üstteki \"Görsel URL\" alanına ürünün gerçek fotoğraf bağlantısını girin (ör. https://www.buzsu.com.tr/wp-content/uploads/.../urun.jpg) — ürün sayfasının linkini değil." });
+      product = { title: baseProductTitle(catalogProduct.title) || "Buzsu ürünü", imageUrl: manualImageUrl };
+      recordId = body.productId;
+    } else {
+      const data = await airtable();
+      const record = (data.records || []).find((item) => item.id === body.productId);
+      const fields = record?.fields || {};
+      if (!record) return response.status(400).json({ error: "Ürün bulunamadı." });
+      const resolvedImageUrl = fields["Görsel URL"] || manualImageUrl;
+      if (!resolvedImageUrl) return response.status(400).json({ error: "Ürün görseli eksik." });
+      product = { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", imageUrl: resolvedImageUrl };
+      recordId = record.id;
+    }
 
-    const product = { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", imageUrl: fields["Görsel URL"] };
     const scene = await generateSceneImage(product, body.sceneDescription, process.env, { removeFaucet: Boolean(body.removeFaucet), provider });
 
     if (process.env.BLOB_READ_WRITE_TOKEN) {
       const imageBuffer = Buffer.from(scene.dataUrl.split(",")[1], "base64");
-      const blob = await put(`ai-scenes/${record.id}-${Date.now()}.png`, imageBuffer, { access: "public", contentType: "image/png" });
+      const safeId = String(recordId).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80);
+      const blob = await put(`ai-scenes/${safeId}-${Date.now()}.png`, imageBuffer, { access: "public", contentType: "image/png" });
       scene.imageUrl = blob.url;
     }
 
