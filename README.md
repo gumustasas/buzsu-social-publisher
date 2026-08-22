@@ -184,6 +184,26 @@ doldurur; hiçbir şey bu adımda kaydedilmez — kullanıcı her zamanki gibi
 önizleyip onaylamalıdır. OPENAI_API_KEY, ANTHROPIC_API_KEY veya GEMINI_API_KEY
 üçünden biri yeterlidir.
 
+## Otomatik Pilot (deneysel)
+
+Panelin "Hızlı ayarlar" bölümündeki **Otomatik Pilot** açık/kapalı düğmesi,
+Airtable'daki ayrı bir `Ayarlar` tablosundaki tek satırı okur/yazar
+(`src/lib/settings.js`, `api/settings.js`). Açıkken, `vercel.json`'daki
+`/api/autopilot` cron'u günde bir kez (06:00 UTC) çalışır ve:
+
+1. Ürün kataloğunda **en uzun süredir (hiç veya en eski) öne çıkarılmamış**,
+   gerçek bir referans fotoğrafı olan ürünü seçer (`src/lib/autopilot.js`,
+   `pickNextProduct` — ayrı bir "sıradaki ürün" alanı tutmak yerine mevcut
+   kayıtların `Kaynak URL` + oluşturma zamanından çıkarım yapar).
+2. O ürün için AI ile sahne planı, sahne görseli ve gönderi metni üretir
+   (mevcut `generateScenePlan` / `generateSceneImage` / `generateCaption`
+   ile aynı kod yolu).
+3. Sonucu bir **Taslak** olarak Airtable'a yazar.
+
+Otomatik Pilot **hiçbir zaman kendi kendine onaylamaz veya yayınlamaz** —
+oluşan taslak, panelde her zamanki gibi incelenip "Onayla" ile onaylanmalı.
+Kapalıyken cron hemen çıkar, hiçbir AI/Airtable çağrısı yapmaz.
+
 ## Sonraki adım
 
 Dry-run doğru çalıştıktan sonra Meta API için ayrı gönderim scripti eklenir. O aşamada da önce test modu, sonra tek kayıtla kontrollü canlı paylaşım yapılmalıdır.

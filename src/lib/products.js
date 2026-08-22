@@ -14,6 +14,11 @@ export async function airtableRequest(path = "", options = {}) {
   return data;
 }
 
+export async function listRawRecords() {
+  const data = await airtableRequest("?pageSize=100");
+  return data.records || [];
+}
+
 // Ürün listesi iki kaynağın birleşimidir: (1) Airtable'daki mevcut Sosyal
 // Medya Takvimi kayıtları — bunlar daha önce paylaşılmış/taslak ürünlerdir
 // ve genelde bir Görsel URL'e sahiptir; (2) buzsu.com.tr'nin llms-full.txt
@@ -26,9 +31,9 @@ export async function airtableRequest(path = "", options = {}) {
 // api/content.js (composer) ve api/intent.js (tek cümlelik istek ayrıştırma)
 // aynı listeyi kullanır — tek kaynak burasıdır.
 export async function listProducts() {
-  const data = await airtableRequest("?pageSize=100");
+  const records = await listRawRecords();
   const seen = new Set();
-  const airtableProducts = (data.records || []).map((record) => {
+  const airtableProducts = records.map((record) => {
     const fields = record.fields || {};
     return { id: record.id, title: baseProductTitle(fields.Başlık) || "Başlıksız", url: fields["Kaynak URL"] || "", imageUrl: fields["Görsel URL"] || "", instagramText: fields["Instagram Metni"] || "", facebookText: fields["Facebook Metni"] || "" };
   }).filter((product) => {
@@ -44,4 +49,25 @@ export async function listProducts() {
     return true;
   });
   return [...airtableProducts, ...catalogProducts];
+}
+
+// api/content.js (composer) ve api/autopilot.js (otomatik pilot) aynı alan
+// eşlemesiyle taslak kaydı oluşturur — tek kaynak burasıdır.
+export async function createDraftRecord({ product, draft, format, platforms, publishAt, note }) {
+  return airtableRequest("", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fields: {
+    "Başlık": draft.title,
+    "İçerik Türü": "Ürün",
+    "Kaynak URL": product.url,
+    "Görsel URL": product.imageUrl,
+    "Instagram Metni": draft.instagramText,
+    "Facebook Metni": draft.facebookText,
+    Hashtagler: draft.hashtags,
+    Platform: platforms,
+    "Yayın Biçimi": format,
+    "Yayın Zamanı": publishAt,
+    Durum: "Taslak",
+    Not: note,
+    "Deneme Sayısı": 0,
+    "Hata Mesajı": ""
+  } }) });
 }

@@ -3,6 +3,10 @@
     {
       "path": "/api/publish",
       "schedule": "0 */2 * * *"
+    },
+    {
+      "path": "/api/autopilot",
+      "schedule": "0 6 * * *"
     }
   ]
 }

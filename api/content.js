@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { buildDraft } from "../src/content-worker.js";
 import { getSession } from "../src/auth.js";
-import { airtableRequest, listProducts } from "../src/lib/products.js";
+import { listProducts, createDraftRecord } from "../src/lib/products.js";
 
 function authorized(request) {
   const expected = process.env.CRON_SECRET;
@@ -29,30 +29,13 @@ export default async function handler(request, response) {
     const draft = buildDraft(product, { format, platforms, variant: Number(body.variant || 0), publishAt: body.publishAt, captionOverride: aiCaption });
     if (body.action === "preview") return response.status(200).json({ ok: true, draft });
     if (!draft.valid) return response.status(400).json({ error: draft.warnings.join(" ") });
-    const content = draft;
-    // draft.title (from buildDraft) already ends with " | {format}" — do not
-    // append format again here, or the title doubles up on every save.
-    const record = await airtableRequest("", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fields: {
-      "Başlık": content.title,
-      "İçerik Türü": "Ürün",
-      "Kaynak URL": product.url,
-      "Görsel URL": product.imageUrl,
-      "Instagram Metni": content.instagramText,
-      "Facebook Metni": content.facebookText,
-      Hashtagler: content.hashtags,
-      Platform: platforms,
-      "Yayın Biçimi": format,
-      "Yayın Zamanı": body.publishAt,
-      Durum: "Taslak",
-      Not: (() => {
-        const aiParts = [sceneImageUrl && "sahne görseli", aiCaption && "gönderi metni"].filter(Boolean);
-        return aiParts.length
-          ? `Panelden oluşturuldu (AI ile üretilmiş ${aiParts.join(" ve ")}); önizleme ve kullanıcı onayı bekleniyor.`
-          : "Panelden oluşturuldu; önizleme ve kullanıcı onayı bekleniyor.";
-      })(),
-      "Deneme Sayısı": 0,
-      "Hata Mesajı": ""
-    } }) });
+    const note = (() => {
+      const aiParts = [sceneImageUrl && "sahne görseli", aiCaption && "gönderi metni"].filter(Boolean);
+      return aiParts.length
+        ? `Panelden oluşturuldu (AI ile üretilmiş ${aiParts.join(" ve ")}); önizleme ve kullanıcı onayı bekleniyor.`
+        : "Panelden oluşturuldu; önizleme ve kullanıcı onayı bekleniyor.";
+    })();
+    const record = await createDraftRecord({ product, draft, format, platforms, publishAt: body.publishAt, note });
     return response.status(201).json({ ok: true, id: record.id, status: record.fields?.Durum || "Taslak" });
   } catch (error) { console.error(error); return response.status(500).json({ ok: false, error: error.message }); }
 }
