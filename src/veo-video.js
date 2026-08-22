@@ -1,3 +1,5 @@
+import { buildVideoPrompt } from "./lib/video-prompt.js";
+
 const DEFAULT_MODEL = "veo-3.1-fast-generate-preview";
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
@@ -18,7 +20,7 @@ export function veoModel(env = process.env) { return env.VEO_VIDEO_MODEL || DEFA
 
 // fal.ai'nin aksine Veo, görsel URL'i değil ham baytları (base64) kabul
 // ediyor; bu yüzden ürün görselini burada indirip gövdeye gömüyoruz.
-export async function submitVeoVideo(product, env = process.env) {
+export async function submitVeoVideo(product, env = process.env, { sceneDescription } = {}) {
   if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY Vercel Production ortamında tanımlı değil.");
   const imageUrl = String(product.imageUrl || "").trim();
   if (!/^https:\/\//i.test(imageUrl)) throw new Error("Veo için ürün görseli herkese açık HTTPS URL olmalı.");
@@ -26,7 +28,7 @@ export async function submitVeoVideo(product, env = process.env) {
   if (!upstream.ok) throw new Error("Ürün görseli alınamadı.");
   const mimeType = upstream.headers.get("content-type") || "image/jpeg";
   const imageBytes = Buffer.from(await upstream.arrayBuffer()).toString("base64");
-  const prompt = `Buzsu ${product.title} ürünü için 9:16 sosyal medya Reels videosu. Ürünün şeklini, logosunu ve renklerini koru; kamera hafifçe yaklaşsın ve ürün doğal bir ortamda sabit kalsın. Metin, fiyat, kampanya veya yeni ürün detayı ekleme. Sağlık ve kesin sonuç iddiası kullanma.`;
+  const prompt = buildVideoPrompt(product.title, sceneDescription);
   const model = veoModel(env);
   const response = await fetch(`${API_BASE}/models/${model}:predictLongRunning`, {
     method: "POST",

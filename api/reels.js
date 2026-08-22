@@ -23,9 +23,10 @@ export default async function handler(request, response) {
     // (bkz. api/scene-image.js), video bunun üzerinden üretilsin — kullanıcı
     // önizlediği sahneyi baz almak istiyor, ham ürün fotoğrafını değil.
     const sceneImageUrl = typeof body.sceneImageUrl === "string" && /^https:\/\//i.test(body.sceneImageUrl) ? body.sceneImageUrl : null;
+    const sceneDescription = sceneImageUrl && typeof body.sceneDescription === "string" ? body.sceneDescription : undefined;
     const product = { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", url: fields["Kaynak URL"], imageUrl: sceneImageUrl || fields["Görsel URL"] };
-    if (body.provider === "fal") return response.status(200).json({ ok: true, fal: await submitFalVideo(product) });
-    if (body.provider === "veo") return response.status(200).json({ ok: true, veo: await submitVeoVideo(product) });
+    if (body.provider === "fal") return response.status(200).json({ ok: true, fal: await submitFalVideo(product, process.env, { sceneDescription }) });
+    if (body.provider === "veo") return response.status(200).json({ ok: true, veo: await submitVeoVideo(product, process.env, { sceneDescription }) });
     const reel = await generateReelPackage(body.provider, product);
     return response.status(200).json({ ok: true, reel });
   } catch (error) { console.error(error); return response.status(500).json({ ok: false, error: error.message }); }
