@@ -48,6 +48,12 @@ test("sceneEditPrompt instructs the product to look physically installed, not fl
   assert.match(prompt, /havada asılı veya bağlantısız durmamalı/);
 });
 
+test("sceneEditPrompt instructs the AI to keep the product's thickness/proportions identical to the reference photo", () => {
+  const prompt = sceneEditPrompt("teknik oda");
+  assert.match(prompt, /kalınlığını, çapını ve boyunu referans görseldeki orijinal orantılarıyla BİREBİR aynı tut/);
+  assert.match(prompt, /daha kalın, daha ince/);
+});
+
 test("sceneEditPrompt falls back to a default scene when empty", () => {
   const prompt = sceneEditPrompt("   ");
   assert.match(prompt, /mutfak/);
@@ -72,6 +78,12 @@ test("geminiScenePrompt instructs the product to look physically installed, not 
   const prompt = geminiScenePrompt("teknik oda, boru hattı");
   assert.match(prompt, /borunun kendisinin bir parçası gibi göster/);
   assert.match(prompt, /havada asılı veya bağlantısız durmamalı/);
+});
+
+test("geminiScenePrompt instructs the AI to keep the product's thickness/proportions identical to the reference photo", () => {
+  const prompt = geminiScenePrompt("teknik oda, boru hattı");
+  assert.match(prompt, /kalınlığını, çapını ve boyunu referans görseldeki orijinal orantılarıyla BİREBİR aynı tut/);
+  assert.match(prompt, /boru çapına kıyasla cihazın gövde çapı/);
 });
 
 test("geminiScenePrompt forbids a faucet attached to the device but allows one elsewhere in the scene when removeFaucet is set", () => {
