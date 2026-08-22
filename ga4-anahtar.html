@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GA4 Servis Hesabı Anahtarı</title>
+<style>
+  :root{font-family:Inter,Segoe UI,Arial,sans-serif;color:#172b3a;background:#f5f7f9}
+  body{max-width:640px;margin:0 auto;padding:24px 18px 60px}
+  h1{font-size:22px;margin:0 0 6px}
+  p.lead{color:#5d6f7b;font-size:14px;line-height:1.5;margin:0 0 22px}
+  .panel{background:#fff;border:1px solid #dfe5e9;border-radius:12px;padding:16px;margin:0 0 16px;box-shadow:0 2px 8px #163b4d0b}
+  input[type=file]{width:100%;padding:12px;border:1px dashed #b9c7d1;border-radius:8px;background:#fafcfd}
+  .field{margin-top:16px}
+  .field label{display:block;font-size:13px;font-weight:700;color:#334;margin-bottom:6px}
+  .row{display:flex;gap:8px;align-items:flex-start}
+  textarea,input[type=text]{flex:1;font:13px/1.4 ui-monospace,Menlo,monospace;padding:10px;border:1px solid #b9c7d1;border-radius:7px;background:#fbfbfb;resize:vertical}
+  textarea{min-height:120px}
+  button{flex:none;padding:10px 14px;border:0;border-radius:7px;background:#087ea4;color:#fff;font:inherit;font-weight:600;cursor:pointer}
+  button.copied{background:#159b35}
+  .error{color:#b42318;font-size:14px}
+  .hint{font-size:12px;color:#5d6f7b;margin-top:6px}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+  <h1>GA4 Servis Hesabı Anahtarı Hazırlayıcı</h1>
+  <p class="lead">Google Cloud'dan indirdiğin <code>.json</code> anahtar dosyasını aşağıdan seç. Bu araç dosyayı hiçbir yere göndermez — her şey telefonunda, tarayıcının içinde işlenir. Amacı: elle metin seçip kopyalarken oluşan hataları (eksik karakter, bozulan tire vb.) tamamen ortadan kaldırmak — her alanı "Kopyala" butonuyla birebir, hatasız kopyalayabilirsin.</p>
+
+  <div class="panel">
+    <input type="file" id="file" accept="application/json,.json">
+    <p id="file-error" class="error hidden"></p>
+  </div>
+
+  <div id="result" class="hidden">
+    <div class="panel field">
+      <label>GA4_PROPERTY_ID</label>
+      <div class="row"><input type="text" id="out-property" readonly value="289526828"><button data-copy="out-property">Kopyala</button></div>
+      <p class="hint">Bu değer sabit — Google Analytics'te BUZSU COM TR - GA4 mülkünün ID'si.</p>
+    </div>
+    <div class="panel field">
+      <label>GA4_CLIENT_EMAIL</label>
+      <div class="row"><input type="text" id="out-email" readonly><button data-copy="out-email">Kopyala</button></div>
+    </div>
+    <div class="panel field">
+      <label>GA4_PRIVATE_KEY</label>
+      <div class="row"><textarea id="out-key" readonly></textarea><button data-copy="out-key">Kopyala</button></div>
+      <p class="hint">Bu değeri Vercel'deki GA4_PRIVATE_KEY alanına yapıştır — hiçbir şeyi elle düzenleme.</p>
+    </div>
+  </div>
+
+  <script>
+    const fileInput = document.querySelector('#file');
+    const fileError = document.querySelector('#file-error');
+    const result = document.querySelector('#result');
+
+    fileInput.addEventListener('change', () => {
+      fileError.classList.add('hidden');
+      result.classList.add('hidden');
+      const file = fileInput.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const data = JSON.parse(String(reader.result));
+          if (!data.client_email || !data.private_key) throw new Error('Bu dosyada client_email veya private_key alanı bulunamadı. Doğru servis hesabı JSON dosyasını seçtiğinden emin ol.');
+          document.querySelector('#out-email').value = data.client_email;
+          document.querySelector('#out-key').value = data.private_key;
+          result.classList.remove('hidden');
+        } catch (e) {
+          fileError.textContent = e.message.includes('JSON') ? 'Bu dosya geçerli bir JSON değil. Google Cloud\'dan indirdiğin .json anahtar dosyasını seçtiğinden emin ol.' : e.message;
+          fileError.classList.remove('hidden');
+        }
+      };
+      reader.onerror = () => { fileError.textContent = 'Dosya okunamadı.'; fileError.classList.remove('hidden'); };
+      reader.readAsText(file);
+    });
+
+    document.querySelectorAll('button[data-copy]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const field = document.querySelector(`#${button.dataset.copy}`);
+        try {
+          await navigator.clipboard.writeText(field.value);
+          const original = button.textContent;
+          button.textContent = 'Kopyalandı ✓';
+          button.classList.add('copied');
+          setTimeout(() => { button.textContent = original; button.classList.remove('copied'); }, 1800);
+        } catch {
+          field.removeAttribute('readonly');
+          field.focus();
+          field.select();
+          fileError.textContent = 'Otomatik kopyalama çalışmadı — metin seçili, sen elle kopyala (Kopyala menüsü çıkacak).';
+          fileError.classList.remove('hidden');
+        }
+      });
+    });
+  </script>
+</body>
+</html>
