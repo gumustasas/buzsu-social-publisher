@@ -15,7 +15,7 @@ const GENERIC_MOTION = "Kamera hafifçe yaklaşsın, ürün ve sahnedeki her şe
 // characters" — gerçek bir denemede görüldü). Bu sınır provider'a bağlı
 // gibi görünse de fal.ai ile Veo aynı finalizedPrompt'u kullandığından, bu
 // katmanda ikisi için de ortak, güvenli bir üst sınır olarak uygulanıyor.
-export const MAX_VIDEO_PROMPT_LENGTH = 2000;
+export const MAX_VIDEO_PROMPT_LENGTH = 1990;
 
 export function buildVideoPromptSections({ productTitle, motion } = {}) {
   const title = String(productTitle || "Buzsu ürünü").trim();
