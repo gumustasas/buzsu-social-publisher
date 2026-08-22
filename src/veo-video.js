@@ -20,7 +20,11 @@ export function veoModel(env = process.env) { return env.VEO_VIDEO_MODEL || DEFA
 
 // fal.ai'nin aksine Veo, görsel URL'i değil ham baytları (base64) kabul
 // ediyor; bu yüzden ürün görselini burada indirip gövdeye gömüyoruz.
-export async function submitVeoVideo(product, env = process.env, { sceneDescription, userIntent } = {}) {
+// finalizedPrompt, önizleme adımında (bkz. api/reels.js) kurulup snapshot
+// alınmış promptun aynısıdır — burada yeniden kurulmaz, olduğu gibi
+// kullanılır. Verilmezse (örn. ileride başka bir çağıran) generic bir
+// prompt'a düşer.
+export async function submitVeoVideo(product, env = process.env, { finalizedPrompt } = {}) {
   if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY Vercel Production ortamında tanımlı değil.");
   const imageUrl = String(product.imageUrl || "").trim();
   if (!/^https:\/\//i.test(imageUrl)) throw new Error("Veo için ürün görseli herkese açık HTTPS URL olmalı.");
@@ -28,7 +32,7 @@ export async function submitVeoVideo(product, env = process.env, { sceneDescript
   if (!upstream.ok) throw new Error("Ürün görseli alınamadı.");
   const mimeType = upstream.headers.get("content-type") || "image/jpeg";
   const imageBytes = Buffer.from(await upstream.arrayBuffer()).toString("base64");
-  const prompt = buildVideoPrompt(product.title, sceneDescription, userIntent);
+  const prompt = String(finalizedPrompt || "").trim() || buildVideoPrompt(product.title);
   const model = veoModel(env);
   const response = await fetch(`${API_BASE}/models/${model}:predictLongRunning`, {
     method: "POST",

@@ -93,6 +93,32 @@ export async function generateCaption(provider, product, env = process.env) {
   return { instagramText, facebookText, hashtags: String(parsed.hashtags || "#Buzsu").trim() };
 }
 
+function motionPlanPrompt(sceneDescription) {
+  const scene = String(sceneDescription || "").trim();
+  const context = scene ? `Sahne: "${scene}".` : `Sahne açıklaması verilmedi; genel bir ürün sahnesi olduğunu varsay.`;
+  return `${context} Bu sahnenin fotoğrafından 9:16 dikey bir reklam videosu üretilecek. Bu sahne için 1-2 cümlelik, doğal ve sinematik bir KAMERA/HAREKET planı yaz (kimin ne yaptığı, kameranın nasıl hareket ettiği gibi). Sahneyi yeniden tarif etme, sadece hareketi anlat. Türkçe yaz, yalnızca hareket cümlesini döndür — başka açıklama, tırnak işareti veya başlık ekleme.`;
+}
+
+// Kullanıcı "Video hareketi" alanını boş bırakırsa, sahne açıklamasından bu
+// fonksiyonla kısa bir hareket planı türetilir (bkz. api/reels.js önizleme
+// dalı). generateScenePlan ile aynı openai/gemini deseni kullanılıyor.
+export async function generateMotionPlan(provider, sceneDescription, env = process.env) {
+  if (provider !== "openai" && provider !== "gemini") throw new Error("Desteklenmeyen AI sağlayıcısı.");
+  const input = motionPlanPrompt(sceneDescription);
+  let raw;
+  if (provider === "openai") {
+    const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: env.OPENAI_REEL_MODEL || "gpt-5.6", input, store: false }) });
+    raw = textFromOpenAI(data);
+  } else {
+    const model = env.GEMINI_REEL_MODEL || "gemini-3.5-flash";
+    const data = await request(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, { method: "POST", headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: input }] }] }) });
+    raw = textFromGemini(data);
+  }
+  const motion = raw.trim();
+  if (!motion) throw new Error("AI hareket planı boş döndü.");
+  return motion;
+}
+
 export async function generateReelPackage(provider, product, env = process.env) {
   const input = prompt(product);
   let raw;

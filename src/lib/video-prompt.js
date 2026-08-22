@@ -1,16 +1,43 @@
-// fal.ai ve Veo aynı Reels video prompt'unu kullanıyor; kullanıcı önceden bir
-// AI sahne görseli ürettiyse (bkz. src/scene-image.js), o sahnenin AI
-// açıklaması burada videoya da aktarılır — video, gönderi için önizlenen
-// sahneyle tutarlı olsun diye. userIntent, "Tek cümleyle anlat" kutusuna
-// yazılan HAM cümledir; sceneDescription bunun AI tarafından çıkarılmış
-// (özetlenmiş) sahne kısmıdır. İkisi çoğu zaman örtüşür ama userIntent, AI'ın
-// çıkarım sırasında atlayabileceği ton/ilişki detaylarını (örn. "aile"
-// vurgusu) yedekte tutar; sceneDescription ile birebir aynıysa tekrar
-// eklenmez.
-export function buildVideoPrompt(title, sceneDescription, userIntent) {
-  const scene = String(sceneDescription || "").trim();
-  const intent = String(userIntent || "").trim();
-  const sceneClause = scene ? ` Sahne: ${scene}.` : "";
-  const intentClause = intent && intent !== scene ? ` Kullanıcının orijinal isteği: ${intent}.` : "";
-  return `Buzsu ${title} ürünü için 9:16 sosyal medya Reels videosu.${sceneClause}${intentClause} Ürünün şeklini, logosunu ve renklerini koru; kamera hafifçe yaklaşsın ve ürün doğal bir ortamda sabit kalsın. Metin, fiyat, kampanya veya yeni ürün detayı ekleme. Sağlık ve kesin sonuç iddiası kullanma.`;
+import { createHash } from "node:crypto";
+
+// fal.ai ve Veo aynı, provider-bağımsız prompt modelini kullanır. İkisine de
+// onaylanmış sahne görseli referans olarak veriliyor, bu yüzden PRESERVE/
+// CONSTRAINTS metinde sahnedeki nesneleri (dolap, musluk, aile vb.) tek tek
+// saymaya çalışmıyor — model zaten görseli görüyor; metnin işi "gördüğünü
+// koru" demek. Ürüne özgü tek değişken ürün adı. MOTION ise kullanıcının
+// yazdığı serbest metin ya da (boşsa) AI'ın sahne açıklamasından türettiği
+// kısa bir hareket planı olabilir; bu prompt modelinin kendisi hangisi
+// olduğunu bilmez, sadece hazır bir motion string'i bekler.
+const GENERIC_MOTION = "Kamera hafifçe yaklaşsın, ürün ve sahnedeki her şey doğal biçimde sabit kalsın; ani veya abartılı hareket olmasın.";
+
+export function buildVideoPromptSections({ productTitle, motion } = {}) {
+  const title = String(productTitle || "Buzsu ürünü").trim();
+  return {
+    reference: "Onaylanmış sahne görselini temel al; sahneyi baştan oluşturma, görseldeki her şeyi koru.",
+    preserve: `Referans görseldeki tüm kişiler, nesneler, mobilyalar, ışık, kamera açısı ve kompozisyon birebir korunsun. ${title} ürününün tasarımı, logosu ve rengi değişmesin.`,
+    motion: String(motion || "").trim() || GENERIC_MOTION,
+    camera: "Yavaş ve sinematik kamera hareketleri kullan; gereksiz hızlı veya ani hareketlerden kaçın.",
+    constraints: "Yeni kişi, nesne, cihaz veya filtre ekleme. Kişilerin yüz ve kimliğini değiştirme. Görüntü fotogerçekçi, premium reklam filmi estetiğinde olsun. Metin, fiyat, kampanya veya filigran ekleme."
+  };
+}
+
+export function renderVideoPrompt(sections) {
+  return [
+    `REFERENCE:\n${sections.reference}`,
+    `PRESERVE:\n${sections.preserve}`,
+    `MOTION:\n${sections.motion}`,
+    `CAMERA:\n${sections.camera}`,
+    `CONSTRAINTS:\n${sections.constraints}`
+  ].join("\n\n");
+}
+
+// Preview ve gerçek üretim aynı promptu kullanmalı: preview anında bu hash
+// bir promptId olarak döner, üretim isteği finalizedPrompt'u aynen gönderir,
+// sunucu sadece hash'in eşleştiğini doğrular — promptu yeniden kurmaz.
+export function hashVideoPrompt(renderedPrompt) {
+  return createHash("sha256").update(String(renderedPrompt || "")).digest("hex").slice(0, 16);
+}
+
+export function buildVideoPrompt(productTitle, motion) {
+  return renderVideoPrompt(buildVideoPromptSections({ productTitle, motion }));
 }

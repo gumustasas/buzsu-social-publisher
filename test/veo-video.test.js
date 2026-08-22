@@ -34,3 +34,21 @@ test("veoVideoStatus rejects when job has no operationName", async () => {
     /iş bilgisi eksik/
   );
 });
+
+test("submitVeoVideo sends a preview-approved finalizedPrompt to Veo byte-identical, without rebuilding it", async () => {
+  const originalFetch = global.fetch;
+  let capturedBody = null;
+  global.fetch = async (url, options) => {
+    if (!options) return { ok: true, headers: { get: () => "image/jpeg" }, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer };
+    capturedBody = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ name: "operations/test-op" }) };
+  };
+  try {
+    const finalizedPrompt = "REFERENCE:\ntest\n\nPRESERVE:\ntest\n\nMOTION:\nözel hareket metni\n\nCAMERA:\ntest\n\nCONSTRAINTS:\ntest";
+    const job = await submitVeoVideo({ title: "Code Advantage", imageUrl: "https://example.com/image.jpg" }, { GEMINI_API_KEY: "test" }, { finalizedPrompt });
+    assert.equal(capturedBody.instances[0].prompt, finalizedPrompt);
+    assert.equal(job.prompt, finalizedPrompt);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

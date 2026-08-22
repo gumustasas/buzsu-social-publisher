@@ -1,30 +1,42 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildVideoPrompt } from "../src/lib/video-prompt.js";
+import { buildVideoPromptSections, renderVideoPrompt, hashVideoPrompt, buildVideoPrompt } from "../src/lib/video-prompt.js";
 
-test("buildVideoPrompt uses a generic scene when no sceneDescription is given", () => {
-  const prompt = buildVideoPrompt("Code Advantage", undefined);
-  assert.match(prompt, /^Buzsu Code Advantage ürünü için 9:16 sosyal medya Reels videosu\. Ürünün şeklini/);
-  assert.doesNotMatch(prompt, /Sahne:/);
+test("buildVideoPromptSections falls back to a generic MOTION when none is given", () => {
+  const sections = buildVideoPromptSections({ productTitle: "Code Advantage" });
+  assert.match(sections.motion, /Kamera hafifçe yaklaşsın/);
 });
 
-test("buildVideoPrompt folds in the AI scene description when given", () => {
-  const prompt = buildVideoPrompt("Code Advantage", "modern bir mutfak tezgahı, sabah gün ışığı");
-  assert.match(prompt, /Sahne: modern bir mutfak tezgahı, sabah gün ışığı\./);
+test("buildVideoPromptSections uses the given motion verbatim", () => {
+  const sections = buildVideoPromptSections({ productTitle: "Code Advantage", motion: "Baba sürahiye su doldursun, kamera yavaşça yaklaşsın." });
+  assert.equal(sections.motion, "Baba sürahiye su doldursun, kamera yavaşça yaklaşsın.");
 });
 
-test("buildVideoPrompt ignores blank/whitespace-only scene descriptions", () => {
-  const prompt = buildVideoPrompt("Code Advantage", "   ");
-  assert.doesNotMatch(prompt, /Sahne:/);
+test("buildVideoPromptSections does not hardcode scene-specific nouns (dolap/musluk/aile) — only the product title is a variable", () => {
+  const sections = buildVideoPromptSections({ productTitle: "Kartuşlu Filtre" });
+  assert.match(sections.preserve, /Kartuşlu Filtre/);
+  assert.doesNotMatch(sections.preserve, /dolap|musluk|aile/i);
+  assert.doesNotMatch(sections.constraints, /dolap|musluk|aile/i);
 });
 
-test("buildVideoPrompt also folds in the original free-text user intent when it differs from the scene description", () => {
-  const prompt = buildVideoPrompt("Code Advantage", "modern bir mutfak tezgahı", "aile birlikte su içiyor, sıcak bir an");
-  assert.match(prompt, /Sahne: modern bir mutfak tezgahı\./);
-  assert.match(prompt, /Kullanıcının orijinal isteği: aile birlikte su içiyor, sıcak bir an\./);
+test("renderVideoPrompt produces labeled REFERENCE/PRESERVE/MOTION/CAMERA/CONSTRAINTS blocks", () => {
+  const sections = buildVideoPromptSections({ productTitle: "Code Advantage", motion: "test hareketi" });
+  const prompt = renderVideoPrompt(sections);
+  for (const label of ["REFERENCE:", "PRESERVE:", "MOTION:", "CAMERA:", "CONSTRAINTS:"]) {
+    assert.match(prompt, new RegExp(label));
+  }
+  assert.match(prompt, /test hareketi/);
 });
 
-test("buildVideoPrompt does not repeat the user intent when it is identical to the scene description", () => {
-  const prompt = buildVideoPrompt("Code Advantage", "aile mutfakta su içiyor", "aile mutfakta su içiyor");
-  assert.equal((prompt.match(/aile mutfakta su içiyor/g) || []).length, 1);
+test("hashVideoPrompt is deterministic for identical input and changes when the prompt changes", () => {
+  const a = renderVideoPrompt(buildVideoPromptSections({ productTitle: "Code Advantage", motion: "A" }));
+  const b = renderVideoPrompt(buildVideoPromptSections({ productTitle: "Code Advantage", motion: "A" }));
+  const c = renderVideoPrompt(buildVideoPromptSections({ productTitle: "Code Advantage", motion: "B" }));
+  assert.equal(hashVideoPrompt(a), hashVideoPrompt(b));
+  assert.notEqual(hashVideoPrompt(a), hashVideoPrompt(c));
+});
+
+test("buildVideoPrompt is a thin convenience wrapper around sections+render", () => {
+  const prompt = buildVideoPrompt("Code Advantage", "hareket metni");
+  assert.equal(prompt, renderVideoPrompt(buildVideoPromptSections({ productTitle: "Code Advantage", motion: "hareket metni" })));
 });
