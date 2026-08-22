@@ -8,6 +8,21 @@ function base64url(input) {
   return Buffer.from(input).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+// Bu değişken genelde bir telefonda, bir JSON dosyasından elle kopyala-
+// yapıştır ile giriliyor. Bu yolda iki yaygın bozulma oluyor: (1) "\n" kaçış
+// dizisi gerçek satır sonuna çevrilmemiş kalıyor, (2) iOS/Safari'nin "akıllı
+// noktalama" özelliği PEM başlığındaki "-----" gibi art arda tireleri em/en
+// dash'e (—/–) çevirip anahtarı okunamaz hale getiriyor. İkisini de burada
+// düzeltiyoruz ki kullanıcı ortam değişkenini elle "temizlemek" zorunda
+// kalmasın.
+export function normalizePrivateKey(raw) {
+  return String(raw || "")
+    .trim()
+    .replace(/^"|"$/g, "")
+    .replace(/\\n/g, "\n")
+    .replace(/[‐-―]/g, "-");
+}
+
 async function getAccessToken(env) {
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: "RS256", typ: "JWT" };
@@ -19,10 +34,7 @@ async function getAccessToken(env) {
     exp: now + 3600
   };
   const unsigned = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(claims))}`;
-  // Vercel'in ortam değişkeni arayüzüne satır sonlarıyla yapıştırılan
-  // private key genelde "\n" kaçış dizisi olarak saklanır; gerçek satır
-  // sonuna çeviriyoruz.
-  const privateKey = String(env.GA4_PRIVATE_KEY || "").replace(/\\n/g, "\n");
+  const privateKey = normalizePrivateKey(env.GA4_PRIVATE_KEY);
   const signature = createSign("RSA-SHA256").update(unsigned).sign(privateKey, "base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   const jwt = `${unsigned}.${signature}`;
 
