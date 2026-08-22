@@ -196,6 +196,32 @@ değiştiği için dahil edilmedi. Tek bir gönderinin okunması başarısız ol
 diğerlerini etkilemez (`failures` sayacında görünür). META_ACCESS_TOKEN
 tanımlı değilse kart "bağlı değil" der, hata vermez.
 
+## Site Analitiği (GA4)
+
+Genel Bakış'taki **Site Analitiği (GA4)** paneli, buzsu.com.tr'nin zaten
+kurulu olan Google Analytics 4 mülkünden (Property ID `289526828`) okur:
+şu an aktif ziyaretçi (Realtime API), son 7 günde en çok görüntülenen ürün
+sayfaları, ve — kuruluysa — GA4'ün geliştirilmiş e-ticaret olaylarından
+(`add_to_cart`) en çok sepete eklenen ürünler (`src/lib/ga4.js`,
+`GET /api/analytics`).
+
+Bu, siteye **hiçbir yeni script eklemeden** yapılır — mevcut GA4 kurulumunu
+salt-okunur bir servis hesabıyla okur:
+
+1. [Google Cloud Console](https://console.cloud.google.com) → proje seç/oluştur
+   → "Google Analytics Data API"yi etkinleştir.
+2. IAM ve Yönetim → Hizmet Hesapları → yeni bir hizmet hesabı oluştur (proje
+   düzeyinde rol gerekmez) → Anahtarlar sekmesi → JSON anahtar oluştur/indir.
+3. Google Analytics → Yönetici → ilgili GA4 mülkü → Mülk Erişim Yönetimi →
+   hizmet hesabının e-postasını **Görüntüleyici** rolüyle ekle.
+4. Vercel Production ortamına indirilen JSON'daki `client_email` ve
+   `private_key` değerlerini `GA4_CLIENT_EMAIL` / `GA4_PRIVATE_KEY` olarak,
+   mülk ID'sini `GA4_PROPERTY_ID` olarak ekle.
+
+Üçü de tanımlı değilse panel sessizce "bağlı değil" gösterir, hata vermez.
+`add_to_cart` olayı GA4'te kurulu değilse "en çok sepete eklenenler" bölümü
+boş kalır (görüntüleme verisini etkilemez).
+
 ## Otomatik Pilot (deneysel)
 
 Panelin "Hızlı ayarlar" bölümündeki **Otomatik Pilot** açık/kapalı düğmesi,
