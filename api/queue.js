@@ -83,9 +83,19 @@ export default async function handler(request, response) {
       }
 
       // Varsayılan: kalıcı silme değil, çöp kutusuna taşıma (soft delete).
-      // Yalnızca taslaklar için — arşivlenmiş/paylaşılmış kayıtlar bu yoldan
-      // silinemez.
-      const deletable = records.every((record) => record.fields?.Durum === "Taslak" && !record.fields?.["Silinme Tarihi"]);
+      // Panelin "Taslaklar" sekmesi hem gerçek taslakları (Durum=Taslak) hem
+      // de henüz yayın zamanı atanmamış onaylı kayıtları taslak gibi
+      // gösterir (bkz. dashboard.html render() — wanted==='drafts' filtresi);
+      // bu kontrol o tanımla birebir eşleşmeli, yoksa böyle bir kayıt
+      // seçildiğinde tüm toplu işlem reddedilir. Arşivlenmiş/paylaşılmış
+      // kayıtlar bu yoldan silinemez.
+      const deletable = records.every((record) => {
+        const fields = record.fields || {};
+        if (fields["Silinme Tarihi"]) return false;
+        const isPublished = fields.Durum === "Paylaşıldı" || Boolean(fields["Instagram Yayın ID"] || fields["Facebook Yayın ID"]);
+        if (isPublished) return false;
+        return fields.Durum === "Taslak" || (fields.Durum === "Onaylandı" && !fields["Yayın Zamanı"]);
+      });
       if (!deletable) return response.status(409).json({ error: "Yalnızca taslak kayıtlar çöp kutusuna taşınabilir." });
       const deletedAt = new Date().toISOString();
       await Promise.all(ids.map((id) => airtable(`/${encodeURIComponent(id)}`, {
