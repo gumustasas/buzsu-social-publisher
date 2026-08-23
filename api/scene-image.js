@@ -22,17 +22,18 @@ export default async function handler(request, response) {
     const provider = providers.includes(body.provider) ? body.provider : providers[0];
     if (!provider) return response.status(400).json({ error: "OPENAI_API_KEY veya GEMINI_API_KEY Vercel Production ortamında tanımlı değil." });
 
-    // llms-full.txt kataloğundan gelen (henüz Airtable kaydı olmayan)
-    // ürünlerin fotoğrafı yok; panelde elle girilen görsel URL'i (bkz.
-    // dashboard.html #product-imageurl) burada tek kaynak olur. Airtable
-    // kaydı olan ama "Görsel URL" alanı boş bırakılmış ürünler için de aynı
-    // elle-girilen URL bir yedek (fallback) olarak kabul edilir.
+    // Panelde elle girilen/yüklenen görsel URL'i (bkz. dashboard.html
+    // #product-imageurl, #product-image-upload) her zaman önceliklidir —
+    // kullanıcı bunu bilinçli olarak girer/yükler, ürünün Airtable'daki
+    // veya katalogdaki kayıtlı fotoğrafını (yanlış/pazarlama görseli
+    // olabilir) BİLEREK geçersiz kılmak istiyor olabilir. Kayıtlı fotoğraf
+    // yalnızca elle bir şey girilmediğinde yedek (fallback) olarak kullanılır.
     const manualImageUrl = typeof body.imageUrl === "string" && /^https:\/\//i.test(body.imageUrl) ? body.imageUrl : "";
     let product, recordId;
     if (isCatalogProductId(body.productId)) {
       const catalogProduct = await findCatalogProduct(body.productId);
       if (!catalogProduct) return response.status(400).json({ error: "Ürün bulunamadı." });
-      const resolvedImageUrl = catalogProduct.imageUrl || manualImageUrl;
+      const resolvedImageUrl = manualImageUrl || catalogProduct.imageUrl;
       if (!resolvedImageUrl) return response.status(400).json({ error: "Bu ürünün bilinen bir fotoğrafı yok. Üstteki \"Görsel URL\" alanına ürünün gerçek fotoğraf bağlantısını girin (ör. https://www.buzsu.com.tr/wp-content/uploads/.../urun.jpg) — ürün sayfasının linkini değil." });
       product = { title: baseProductTitle(catalogProduct.title) || "Buzsu ürünü", imageUrl: resolvedImageUrl };
       recordId = body.productId;
@@ -41,7 +42,7 @@ export default async function handler(request, response) {
       const record = (data.records || []).find((item) => item.id === body.productId);
       const fields = record?.fields || {};
       if (!record) return response.status(400).json({ error: "Ürün bulunamadı." });
-      const resolvedImageUrl = fields["Görsel URL"] || manualImageUrl;
+      const resolvedImageUrl = manualImageUrl || fields["Görsel URL"];
       if (!resolvedImageUrl) return response.status(400).json({ error: "Ürün görseli eksik." });
       product = { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", imageUrl: resolvedImageUrl };
       recordId = record.id;
