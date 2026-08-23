@@ -21,17 +21,6 @@ async function request(url, options) {
   return data;
 }
 
-// "gemini-2.5-flash" (bkz. src/scene-image.js) yalnızca sahne GÖRSELİ
-// üretiminde kullanılan, ayrı bir ücretsiz anahtarla çalışabilen bir
-// seçenektir. Panelde AI sağlayıcısı dropdown'u görsel ve metin (sahne
-// planı/başlık/hareket) çağrıları arasında paylaşıldığından, metin
-// fonksiyonları bu değeri görmeden önce sıradan "gemini"ye eşler — metin
-// üretimi zaten her zaman GEMINI_API_KEY'i kullanır, görsel modeli seçimiyle
-// ilgisi yoktur.
-function normalizeTextProvider(provider) {
-  return provider === "gemini-2.5-flash" ? "gemini" : provider;
-}
-
 export function availableProviders(env = process.env) {
   return ["openai", "anthropic", "gemini", "fal", "veo"].filter((provider) => Boolean(env[provider === "openai" ? "OPENAI_API_KEY" : provider === "anthropic" ? "ANTHROPIC_API_KEY" : provider === "gemini" || provider === "veo" ? "GEMINI_API_KEY" : "FAL_KEY"]));
 }
@@ -56,7 +45,6 @@ Her durumda: sıcak, doğal ışık; gerçekçi, reklam kalitesinde bir sahne ol
 }
 
 export async function generateScenePlan(provider, product, env = process.env) {
-  provider = normalizeTextProvider(provider);
   if (provider !== "openai" && provider !== "gemini") throw new Error("Desteklenmeyen AI sağlayıcısı.");
   const context = await fetchProductContext(product);
   const input = scenePlanPrompt(product, context);
@@ -86,7 +74,6 @@ ${grounding}
 }
 
 export async function generateCaption(provider, product, env = process.env) {
-  provider = normalizeTextProvider(provider);
   if (provider !== "openai" && provider !== "gemini") throw new Error("Desteklenmeyen AI sağlayıcısı.");
   const context = await fetchProductContext(product);
   const input = captionPrompt(product, context);
@@ -116,7 +103,6 @@ function motionPlanPrompt(sceneDescription) {
 // fonksiyonla kısa bir hareket planı türetilir (bkz. api/reels.js önizleme
 // dalı). generateScenePlan ile aynı openai/gemini deseni kullanılıyor.
 export async function generateMotionPlan(provider, sceneDescription, env = process.env) {
-  provider = normalizeTextProvider(provider);
   if (provider !== "openai" && provider !== "gemini") throw new Error("Desteklenmeyen AI sağlayıcısı.");
   const input = motionPlanPrompt(sceneDescription);
   let raw;
