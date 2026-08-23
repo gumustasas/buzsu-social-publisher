@@ -100,6 +100,10 @@ test("availableSceneProviders lists gemini, the free gemini-2.5-flash option, th
   assert.deepEqual(availableSceneProviders({}), []);
 });
 
+test("availableSceneProviders offers gemini-2.5-flash from a standalone GEMINI_FREE_API_KEY even without the paid GEMINI_API_KEY", () => {
+  assert.deepEqual(availableSceneProviders({ GEMINI_FREE_API_KEY: "free" }), ["gemini-2.5-flash"]);
+});
+
 test("generateSceneImage pins provider 'gemini-2.5-flash' to the free gemini-2.5-flash-image model, regardless of GEMINI_SCENE_MODEL", async () => {
   const originalFetch = global.fetch;
   let calledModel = null;
@@ -122,6 +126,58 @@ test("generateSceneImage pins provider 'gemini-2.5-flash' to the free gemini-2.5
     );
     assert.equal(calledModel, "gemini-2.5-flash-image");
     assert.equal(result.model, "gemini-2.5-flash-image");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateSceneImage sends the standalone GEMINI_FREE_API_KEY (not the paid GEMINI_API_KEY) for provider 'gemini-2.5-flash' when both are set", async () => {
+  const originalFetch = global.fetch;
+  let calledApiKey = null;
+  const tinyPng = await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer();
+  global.fetch = async (url, options) => {
+    const u = String(url);
+    if (u.includes("example.com")) return { ok: true, arrayBuffer: async () => tinyPng };
+    if (u.includes("generativelanguage.googleapis.com")) {
+      calledApiKey = options.headers["x-goog-api-key"];
+      return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { data: "AAAA" } }] } }] }) };
+    }
+    throw new Error(`unexpected fetch: ${u}`);
+  };
+  try {
+    await generateSceneImage(
+      { title: "Test Ürün", imageUrl: "https://example.com/photo.png" },
+      "mutfak",
+      { GEMINI_API_KEY: "paid-key", GEMINI_FREE_API_KEY: "free-key" },
+      { provider: "gemini-2.5-flash" }
+    );
+    assert.equal(calledApiKey, "free-key");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateSceneImage keeps provider 'gemini' on the paid GEMINI_API_KEY even when a separate GEMINI_FREE_API_KEY is set", async () => {
+  const originalFetch = global.fetch;
+  let calledApiKey = null;
+  const tinyPng = await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer();
+  global.fetch = async (url, options) => {
+    const u = String(url);
+    if (u.includes("example.com")) return { ok: true, arrayBuffer: async () => tinyPng };
+    if (u.includes("generativelanguage.googleapis.com")) {
+      calledApiKey = options.headers["x-goog-api-key"];
+      return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { data: "AAAA" } }] } }] }) };
+    }
+    throw new Error(`unexpected fetch: ${u}`);
+  };
+  try {
+    await generateSceneImage(
+      { title: "Test Ürün", imageUrl: "https://example.com/photo.png" },
+      "mutfak",
+      { GEMINI_API_KEY: "paid-key", GEMINI_FREE_API_KEY: "free-key" },
+      { provider: "gemini" }
+    );
+    assert.equal(calledApiKey, "paid-key");
   } finally {
     global.fetch = originalFetch;
   }

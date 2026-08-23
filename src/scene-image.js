@@ -122,11 +122,11 @@ async function buildMaskBuffer(sourceBuffer, { removeFaucet = false } = {}) {
   return { basePng, maskPng };
 }
 
-async function callGeminiImageEdit({ basePng, prompt, model }, env) {
-  if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY Vercel Production ortamında tanımlı değil.");
+async function callGeminiImageEdit({ basePng, prompt, model, apiKey }, env) {
+  if (!apiKey) throw new Error("GEMINI_API_KEY Vercel Production ortamında tanımlı değil.");
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: "POST",
-    headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json" },
+    headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: basePng.toString("base64") } }] }],
       generationConfig: { responseModalities: ["IMAGE"] }
@@ -162,18 +162,31 @@ async function callOpenAIImageEdit({ basePng, maskPng, prompt }, env) {
   return item.b64_json;
 }
 
-// "gemini" güncel/varsayılan modeli kullanır (GEMINI_SCENE_MODEL ile
-// override edilebilir). "gemini-2.5-flash" ise bilinçli olarak sabit bir
-// modele (gemini-2.5-flash-image, "Nano Banana") kilitli: Google'ın kredi
-// kartsız, günde 500 istek/gün ücretsiz kotası bu modele ait — panelde
-// gönderileri önce ücretsiz test etmek için ayrı, öngörülebilir bir seçenek.
-// Aynı GEMINI_API_KEY her iki model için de geçerlidir, ayrı bir anahtar
-// gerekmez.
+// "gemini" güncel/varsayılan modeli (GEMINI_SCENE_MODEL ile override
+// edilebilir) ve mevcut ücretli GEMINI_API_KEY'i kullanır — diğer tüm Gemini
+// tabanlı özellikler (Veo, altyazı/sahne planı, motion metni) de aynı
+// anahtarı kullanmaya devam eder, burada değiştirilmez.
+//
+// "gemini-2.5-flash" ise ayrı, isteğe bağlı bir anahtarla (GEMINI_FREE_API_KEY)
+// çalışacak şekilde tasarlandı: kredi kartsız/faturasız bir Google hesabından
+// alınan ayrı bir API anahtarı buraya konursa, panel gönderileri önce o
+// ücretsiz kotayla (Google'ın günde 500 istek/gün sınırı) test edebilir,
+// "gemini" seçeneği ve geri kalan her şey ücretli anahtarda kalmaya devam
+// eder. GEMINI_FREE_API_KEY tanımlı değilse GEMINI_API_KEY'e (ücretli
+// anahtar) düşer — böylece bu seçenek ayrı anahtar eklenmeden de çalışır,
+// sadece o zaman gerçek ücretsiz kota garantisi olmaz.
 const GEMINI_FREE_MODEL = "gemini-2.5-flash-image";
 
+function freeGeminiApiKey(env) {
+  return env.GEMINI_FREE_API_KEY || env.GEMINI_API_KEY;
+}
+
 export function availableSceneProviders(env = process.env) {
-  const hasGemini = Boolean(env.GEMINI_API_KEY);
-  return [hasGemini && "gemini", hasGemini && "gemini-2.5-flash", env.OPENAI_API_KEY && "openai"].filter(Boolean);
+  return [
+    env.GEMINI_API_KEY && "gemini",
+    freeGeminiApiKey(env) && "gemini-2.5-flash",
+    env.OPENAI_API_KEY && "openai"
+  ].filter(Boolean);
 }
 
 export async function generateSceneImage(product, sceneDescription, env = process.env, { removeFaucet = false, provider = "gemini" } = {}) {
@@ -189,8 +202,10 @@ export async function generateSceneImage(product, sceneDescription, env = proces
   let b64, model, prompt;
   if (provider === "gemini" || provider === "gemini-2.5-flash") {
     prompt = geminiScenePrompt(sceneDescription, { removeFaucet });
-    model = provider === "gemini-2.5-flash" ? GEMINI_FREE_MODEL : (env.GEMINI_SCENE_MODEL || "gemini-3.1-flash-lite-image");
-    b64 = await callGeminiImageEdit({ basePng, prompt, model }, env);
+    const isFree = provider === "gemini-2.5-flash";
+    model = isFree ? GEMINI_FREE_MODEL : (env.GEMINI_SCENE_MODEL || "gemini-3.1-flash-lite-image");
+    const apiKey = isFree ? freeGeminiApiKey(env) : env.GEMINI_API_KEY;
+    b64 = await callGeminiImageEdit({ basePng, prompt, model, apiKey }, env);
   } else if (provider === "openai") {
     prompt = sceneEditPrompt(sceneDescription, { removeFaucet });
     model = env.OPENAI_SCENE_MODEL || "gpt-image-1";
