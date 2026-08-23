@@ -133,7 +133,7 @@ sadece arka planı/sahneyi AI ile değiştirir (mutfak, aile, ofis gibi hazır s
 veya serbest metin).
 
 - İki sağlayıcı desteklenir: **Gemini** (`gemini-3.1-flash-lite-image`, "Nano
-  Banana") ve **OpenAI** (`gpt-image-1`). Panelde ikisi de tanımlıysa Gemini
+  Banana") ve **OpenAI** (`gpt-image-2`). Panelde ikisi de tanımlıysa Gemini
   varsayılan seçilir. Gemini'de maskeleme API'si olmadığı için ürünün korunması
   yalnızca güçlü bir prompt talimatına dayanır (`geminiScenePrompt`); OpenAI'de
   ise `src/scene-image.js` beyaz/açık arka planı kenarlardan taşma (flood fill)

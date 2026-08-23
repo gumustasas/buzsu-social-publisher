@@ -152,7 +152,7 @@ function openaiImageApiKey(env) {
 
 async function callOpenAIImageEdit({ basePng, maskPng, prompt, apiKey }, env) {
   if (!apiKey) throw new Error("OPENAI_API_KEY Vercel Production ortamında tanımlı değil.");
-  const model = env.OPENAI_SCENE_MODEL || "gpt-image-1";
+  const model = env.OPENAI_SCENE_MODEL || "gpt-image-2";
   const form = new FormData();
   form.append("model", model);
   form.append("prompt", prompt);
@@ -193,7 +193,7 @@ export async function generateSceneImage(product, sceneDescription, env = proces
     b64 = await callGeminiImageEdit({ basePng, prompt }, env);
   } else if (provider === "openai") {
     prompt = sceneEditPrompt(sceneDescription, { removeFaucet });
-    model = env.OPENAI_SCENE_MODEL || "gpt-image-1";
+    model = env.OPENAI_SCENE_MODEL || "gpt-image-2";
     b64 = await callOpenAIImageEdit({ basePng, maskPng, prompt, apiKey: openaiImageApiKey(env) }, env);
   } else {
     throw new Error("Desteklenmeyen sahne üretim sağlayıcısı.");
