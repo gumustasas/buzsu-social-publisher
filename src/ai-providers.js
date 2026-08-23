@@ -50,7 +50,14 @@ export async function generateScenePlan(provider, product, env = process.env) {
   const input = scenePlanPrompt(product, context);
   let raw;
   if (provider === "openai") {
-    const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: env.OPENAI_REEL_MODEL || "gpt-5.6", input, store: false }) });
+    // Sahne görseli için kredili OPENAI_IMAGE_API_KEY zaten çalıştığı
+    // doğrulandı (bkz. src/scene-image.js) — sahne planı metni de aynı
+    // kredili anahtarı kullanır, ayrı bir metin anahtarına gerek yok.
+    // Model, düşük maliyetli ama stabil gpt-5.4-nano'ya sabit (bu kısa
+    // sahne açıklaması için gpt-5.6 gibi daha pahalı bir model gerekmez).
+    const apiKey = env.OPENAI_IMAGE_API_KEY || env.OPENAI_API_KEY;
+    const model = env.OPENAI_SCENE_PLAN_MODEL || "gpt-5.4-nano";
+    const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model, input, store: false }) });
     raw = textFromOpenAI(data);
   } else {
     const model = env.GEMINI_REEL_MODEL || "gemini-3.5-flash";
