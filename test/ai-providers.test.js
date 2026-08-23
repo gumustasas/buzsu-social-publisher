@@ -109,3 +109,19 @@ test("generateReelPackage uses the working OPENAI_IMAGE_API_KEY over the deplete
     global.fetch = originalFetch;
   }
 });
+
+// "openai-low" yalnızca sahne GÖRSELİ kalitesi içindir (bkz. src/scene-image.js)
+// — panelin paylaşılan sağlayıcı dropdown'undan sahne planı/başlık METNİ
+// fonksiyonlarına ulaştığında "Desteklenmeyen AI sağlayıcısı." ile
+// reddedilmemeli, "openai" ile aynı şekilde çalışmalı (daha önce
+// gemini-2.5-flash'ta yaşanan bug'ın aynısı burada tekrarlanmasın diye).
+test("generateScenePlan treats provider 'openai-low' the same as 'openai' instead of rejecting it", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, json: async () => ({ output_text: "test sahne planı" }) });
+  try {
+    const plan = await generateScenePlan("openai-low", { title: "Code Advantage" }, { OPENAI_API_KEY: "key" });
+    assert.equal(plan, "test sahne planı");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

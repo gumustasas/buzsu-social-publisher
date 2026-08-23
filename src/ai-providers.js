@@ -28,6 +28,14 @@ function openaiTextApiKey(env) {
   return env.OPENAI_IMAGE_API_KEY || env.OPENAI_API_KEY;
 }
 
+// Panelde AI sağlayıcısı dropdown'u sahne GÖRSELİ (gemini/openai/openai-low
+// — bkz. src/scene-image.js) ile sahne planı/başlık METNİ arasında
+// paylaşılıyor. "openai-low" yalnızca görsel kalite ayarı içindir, metin
+// üretiminde "openai" ile aynı şekilde çalışmalı.
+function normalizeTextProvider(provider) {
+  return provider === "openai-low" ? "openai" : provider;
+}
+
 export function availableProviders(env = process.env) {
   return [
     openaiTextApiKey(env) && "openai",
@@ -58,6 +66,7 @@ Her durumda: sıcak, doğal ışık; gerçekçi, reklam kalitesinde bir sahne ol
 }
 
 export async function generateScenePlan(provider, product, env = process.env) {
+  provider = normalizeTextProvider(provider);
   if (provider !== "openai" && provider !== "gemini") throw new Error("Desteklenmeyen AI sağlayıcısı.");
   const context = await fetchProductContext(product);
   const input = scenePlanPrompt(product, context);
@@ -90,6 +99,7 @@ ${grounding}
 }
 
 export async function generateCaption(provider, product, env = process.env) {
+  provider = normalizeTextProvider(provider);
   if (provider !== "openai" && provider !== "gemini") throw new Error("Desteklenmeyen AI sağlayıcısı.");
   const context = await fetchProductContext(product);
   const input = captionPrompt(product, context);
@@ -119,6 +129,7 @@ function motionPlanPrompt(sceneDescription) {
 // fonksiyonla kısa bir hareket planı türetilir (bkz. api/reels.js önizleme
 // dalı). generateScenePlan ile aynı openai/gemini deseni kullanılıyor.
 export async function generateMotionPlan(provider, sceneDescription, env = process.env) {
+  provider = normalizeTextProvider(provider);
   if (provider !== "openai" && provider !== "gemini") throw new Error("Desteklenmeyen AI sağlayıcısı.");
   const input = motionPlanPrompt(sceneDescription);
   let raw;

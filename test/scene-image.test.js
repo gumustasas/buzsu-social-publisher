@@ -93,14 +93,14 @@ test("geminiScenePrompt forbids a faucet attached to the device but allows one e
   assert.match(withRemoval, /Sahne açıklaması ayrı bir yerde/);
 });
 
-test("availableSceneProviders lists gemini before openai and only when keys are present", () => {
-  assert.deepEqual(availableSceneProviders({ GEMINI_API_KEY: "g", OPENAI_API_KEY: "o" }), ["gemini", "openai"]);
-  assert.deepEqual(availableSceneProviders({ OPENAI_API_KEY: "o" }), ["openai"]);
+test("availableSceneProviders lists gemini, openai, then the cheap openai-low variant, only when keys are present", () => {
+  assert.deepEqual(availableSceneProviders({ GEMINI_API_KEY: "g", OPENAI_API_KEY: "o" }), ["gemini", "openai", "openai-low"]);
+  assert.deepEqual(availableSceneProviders({ OPENAI_API_KEY: "o" }), ["openai", "openai-low"]);
   assert.deepEqual(availableSceneProviders({}), []);
 });
 
-test("availableSceneProviders offers openai from a standalone OPENAI_IMAGE_API_KEY even without OPENAI_API_KEY", () => {
-  assert.deepEqual(availableSceneProviders({ OPENAI_IMAGE_API_KEY: "img" }), ["openai"]);
+test("availableSceneProviders offers openai/openai-low from a standalone OPENAI_IMAGE_API_KEY even without OPENAI_API_KEY", () => {
+  assert.deepEqual(availableSceneProviders({ OPENAI_IMAGE_API_KEY: "img" }), ["openai", "openai-low"]);
 });
 
 test("generateSceneImage sends the standalone OPENAI_IMAGE_API_KEY (not the text OPENAI_API_KEY) for provider 'openai' when both are set", async () => {
@@ -124,6 +124,32 @@ test("generateSceneImage sends the standalone OPENAI_IMAGE_API_KEY (not the text
       { provider: "openai" }
     );
     assert.equal(calledAuth, "Bearer image-key");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateSceneImage sends quality 'low' for provider 'openai-low' but omits quality entirely for plain 'openai' (keeps current default quality/cost)", async () => {
+  const originalFetch = global.fetch;
+  let capturedFormHasQuality = null, capturedQualityValue = null;
+  const tinyPng = await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer();
+  global.fetch = async (url, options) => {
+    const u = String(url);
+    if (u.includes("example.com")) return { ok: true, arrayBuffer: async () => tinyPng };
+    if (u.includes("api.openai.com")) {
+      capturedFormHasQuality = options.body.has("quality");
+      capturedQualityValue = options.body.get("quality");
+      return { ok: true, json: async () => ({ data: [{ b64_json: "AAAA" }] }) };
+    }
+    throw new Error(`unexpected fetch: ${u}`);
+  };
+  try {
+    await generateSceneImage({ title: "Test Ürün", imageUrl: "https://example.com/photo.png" }, "mutfak", { OPENAI_API_KEY: "key" }, { provider: "openai-low" });
+    assert.equal(capturedFormHasQuality, true);
+    assert.equal(capturedQualityValue, "low");
+
+    await generateSceneImage({ title: "Test Ürün", imageUrl: "https://example.com/photo.png" }, "mutfak", { OPENAI_API_KEY: "key" }, { provider: "openai" });
+    assert.equal(capturedFormHasQuality, false);
   } finally {
     global.fetch = originalFetch;
   }

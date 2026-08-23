@@ -150,13 +150,14 @@ function openaiImageApiKey(env) {
   return env.OPENAI_IMAGE_API_KEY || env.OPENAI_API_KEY;
 }
 
-async function callOpenAIImageEdit({ basePng, maskPng, prompt, apiKey }, env) {
+async function callOpenAIImageEdit({ basePng, maskPng, prompt, apiKey, quality }, env) {
   if (!apiKey) throw new Error("OPENAI_API_KEY Vercel Production ortamında tanımlı değil.");
   const model = env.OPENAI_SCENE_MODEL || "gpt-image-2";
   const form = new FormData();
   form.append("model", model);
   form.append("prompt", prompt);
   form.append("size", `${CANVAS_SIZE}x${CANVAS_SIZE}`);
+  if (quality) form.append("quality", quality);
   form.append("image", new Blob([basePng], { type: "image/png" }), "product.png");
   form.append("mask", new Blob([maskPng], { type: "image/png" }), "mask.png");
 
@@ -173,7 +174,7 @@ async function callOpenAIImageEdit({ basePng, maskPng, prompt, apiKey }, env) {
 }
 
 export function availableSceneProviders(env = process.env) {
-  return [env.GEMINI_API_KEY && "gemini", openaiImageApiKey(env) && "openai"].filter(Boolean);
+  return [env.GEMINI_API_KEY && "gemini", openaiImageApiKey(env) && "openai", openaiImageApiKey(env) && "openai-low"].filter(Boolean);
 }
 
 export async function generateSceneImage(product, sceneDescription, env = process.env, { removeFaucet = false, provider = "gemini" } = {}) {
@@ -191,10 +192,11 @@ export async function generateSceneImage(product, sceneDescription, env = proces
     prompt = geminiScenePrompt(sceneDescription, { removeFaucet });
     model = env.GEMINI_SCENE_MODEL || "gemini-3.1-flash-lite-image";
     b64 = await callGeminiImageEdit({ basePng, prompt }, env);
-  } else if (provider === "openai") {
+  } else if (provider === "openai" || provider === "openai-low") {
     prompt = sceneEditPrompt(sceneDescription, { removeFaucet });
     model = env.OPENAI_SCENE_MODEL || "gpt-image-2";
-    b64 = await callOpenAIImageEdit({ basePng, maskPng, prompt, apiKey: openaiImageApiKey(env) }, env);
+    const quality = provider === "openai-low" ? "low" : undefined;
+    b64 = await callOpenAIImageEdit({ basePng, maskPng, prompt, apiKey: openaiImageApiKey(env), quality }, env);
   } else {
     throw new Error("Desteklenmeyen sahne üretim sağlayıcısı.");
   }
