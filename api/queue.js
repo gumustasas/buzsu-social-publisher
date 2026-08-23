@@ -94,7 +94,12 @@ export default async function handler(request, response) {
         if (fields["Silinme Tarihi"]) return false;
         const isPublished = fields.Durum === "Paylaşıldı" || Boolean(fields["Instagram Yayın ID"] || fields["Facebook Yayın ID"]);
         if (isPublished) return false;
-        return fields.Durum === "Taslak" || (fields.Durum === "Onaylandı" && !fields["Yayın Zamanı"]);
+        // Durum alanı hiç ayarlanmamış eski/boş kayıtlarda panel (bkz.
+        // publicRecord()) bunu "Taslak" varsayar — bu kontrol de aynı
+        // varsayılanı kullanmalı, yoksa panelde taslak gibi görünen bir
+        // kayıt burada reddedilip tüm toplu işlemi düşürür.
+        const durum = fields.Durum || "Taslak";
+        return durum === "Taslak" || (durum === "Onaylandı" && !fields["Yayın Zamanı"]);
       });
       if (!deletable) return response.status(409).json({ error: "Yalnızca taslak kayıtlar çöp kutusuna taşınabilir." });
       const deletedAt = new Date().toISOString();
