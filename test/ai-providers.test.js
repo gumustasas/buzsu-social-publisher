@@ -125,3 +125,17 @@ test("generateScenePlan treats provider 'openai-low' the same as 'openai' instea
     global.fetch = originalFetch;
   }
 });
+
+// "composite" (bkz. src/scene-composite.js) yalnızca sahne GÖRSELİ üretim
+// yöntemidir (Gemini tabanlı kırpma+arka plan) — metin fonksiyonlarına
+// ulaştığında "gemini" ile aynı şekilde çalışmalı, reddedilmemeli.
+test("generateScenePlan treats provider 'composite' the same as 'gemini' instead of rejecting it", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: "test sahne planı" }] } }] }) });
+  try {
+    const plan = await generateScenePlan("composite", { title: "Code Advantage" }, { GEMINI_API_KEY: "key" });
+    assert.equal(plan, "test sahne planı");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

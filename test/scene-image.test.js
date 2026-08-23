@@ -93,8 +93,8 @@ test("geminiScenePrompt forbids a faucet attached to the device but allows one e
   assert.match(withRemoval, /Sahne açıklaması ayrı bir yerde/);
 });
 
-test("availableSceneProviders lists gemini, openai, then the cheap openai-low variant, only when keys are present", () => {
-  assert.deepEqual(availableSceneProviders({ GEMINI_API_KEY: "g", OPENAI_API_KEY: "o" }), ["gemini", "openai", "openai-low"]);
+test("availableSceneProviders lists gemini, openai, openai-low, then the experimental composite variant, only when keys are present", () => {
+  assert.deepEqual(availableSceneProviders({ GEMINI_API_KEY: "g", OPENAI_API_KEY: "o" }), ["gemini", "openai", "openai-low", "composite"]);
   assert.deepEqual(availableSceneProviders({ OPENAI_API_KEY: "o" }), ["openai", "openai-low"]);
   assert.deepEqual(availableSceneProviders({}), []);
 });

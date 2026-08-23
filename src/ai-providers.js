@@ -28,12 +28,15 @@ function openaiTextApiKey(env) {
   return env.OPENAI_IMAGE_API_KEY || env.OPENAI_API_KEY;
 }
 
-// Panelde AI sağlayıcısı dropdown'u sahne GÖRSELİ (gemini/openai/openai-low
-// — bkz. src/scene-image.js) ile sahne planı/başlık METNİ arasında
-// paylaşılıyor. "openai-low" yalnızca görsel kalite ayarı içindir, metin
-// üretiminde "openai" ile aynı şekilde çalışmalı.
+// Panelde AI sağlayıcısı dropdown'u sahne GÖRSELİ (gemini/openai/openai-low/
+// composite — bkz. src/scene-image.js, src/scene-composite.js) ile sahne
+// planı/başlık METNİ arasında paylaşılıyor. "openai-low" ve "composite"
+// yalnızca görsel üretim seçenekleridir (composite Gemini tabanlı), metin
+// üretiminde sırasıyla "openai"/"gemini" ile aynı şekilde çalışmalı.
 function normalizeTextProvider(provider) {
-  return provider === "openai-low" ? "openai" : provider;
+  if (provider === "openai-low") return "openai";
+  if (provider === "composite") return "gemini";
+  return provider;
 }
 
 export function availableProviders(env = process.env) {

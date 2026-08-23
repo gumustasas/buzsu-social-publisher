@@ -174,7 +174,15 @@ async function callOpenAIImageEdit({ basePng, maskPng, prompt, apiKey, quality }
 }
 
 export function availableSceneProviders(env = process.env) {
-  return [env.GEMINI_API_KEY && "gemini", openaiImageApiKey(env) && "openai", openaiImageApiKey(env) && "openai-low"].filter(Boolean);
+  return [
+    env.GEMINI_API_KEY && "gemini",
+    openaiImageApiKey(env) && "openai",
+    openaiImageApiKey(env) && "openai-low",
+    // "composite": ürünü gerçek fotoğraftan piksel birebir kesip AI sadece
+    // arka planı üretiyor (bkz. src/scene-composite.js) — deneysel ikinci
+    // yöntem, aynı GEMINI_API_KEY ile çalışır.
+    env.GEMINI_API_KEY && "composite"
+  ].filter(Boolean);
 }
 
 export async function generateSceneImage(product, sceneDescription, env = process.env, { removeFaucet = false, provider = "gemini" } = {}) {
