@@ -9,9 +9,18 @@
 import { findKnownProductPhoto } from "./product-photos.js";
 
 const LLMS_FULL_URL = "https://www.buzsu.com.tr/llms-full.txt";
+const SITE_ORIGIN = "https://www.buzsu.com.tr";
 const CACHE_TTL_MS = 30 * 60 * 1000;
-const PRODUCT_URL_PATTERN = /https:\/\/www\.buzsu\.com\.tr\/[a-z0-9-]+\/?/gi;
 const EXCLUDED_SLUGS = new Set(["", "iletisim", "hakkimizda", "blog", "sepet", "hesabim", "kategori"]);
+// llms-full.txt iki sabit kalıpla ürün listeler (canlı dosyadan doğrulandı):
+//   1) "#### ⭐ Ana Ürün: <başlık>" satırını izleyen "**URL:** <mutlak url>" satırı.
+//   2) Bir "| Ürün | URL |" tablo başlığını izleyen "| <başlık> | /göreli-yol/ |" satırları.
+// Kategori/alt-kategori tabloları ("| Alt Kategori | URL |") ve bilgi
+// tabloları (URL sütunu olmayan) kasıtlı olarak eşleşmez — bunlar ürün değil.
+const ANA_URUN_PATTERN = /^####\s*⭐\s*Ana Ürün:\s*(.+)$/;
+const URL_FIELD_PATTERN = /^\*\*URL:\*\*\s*(\S+)/;
+const PRODUCT_TABLE_HEADER_PATTERN = /^\|\s*Ürün\s*\|\s*URL\s*\|/i;
+const PRODUCT_TABLE_ROW_PATTERN = /^\|\s*(.+?)\s*\|\s*(\/\S*|https?:\/\/\S*)\s*\|/i;
 
 let cached = null; // { catalog, fetchedAt }
 
@@ -30,34 +39,51 @@ function slugFromUrl(url) {
   }
 }
 
-// llms-full.txt'in tam biçimini bilmediğimiz için (bu ortamdan erişilemiyor),
-// her URL'nin hemen öncesindeki satırı olası bir başlık adayı olarak dener;
-// makul görünmüyorsa (çok uzun/kısa, başka bir URL içeriyor) slug'dan
-// okunabilir bir başlık türetir. Format farklı çıkarsa bu sezgisel yöntem
-// canlıda gözden geçirilip ayarlanmalı.
-function extractCatalog(text) {
+function resolveProductUrl(rawUrl) {
+  const absolute = /^https?:\/\//i.test(rawUrl) ? rawUrl : `${SITE_ORIGIN}${rawUrl.startsWith("/") ? rawUrl : `/${rawUrl}`}`;
+  let parsed;
+  try {
+    parsed = new URL(absolute);
+  } catch {
+    return null;
+  }
+  if (parsed.hostname !== "www.buzsu.com.tr") return null;
+  return `${SITE_ORIGIN}${parsed.pathname.replace(/\/+$/, "")}/`;
+}
+
+export function extractCatalog(text) {
   const seen = new Set();
   const catalog = [];
   const lines = text.split("\n");
-  const lineStarts = [];
-  let offset = 0;
-  for (const line of lines) { lineStarts.push(offset); offset += line.length + 1; }
 
-  let match;
-  PRODUCT_URL_PATTERN.lastIndex = 0;
-  while ((match = PRODUCT_URL_PATTERN.exec(text))) {
-    const url = match[0].replace(/\/?$/, "/");
+  function addProduct(rawTitle, rawUrl) {
+    const title = String(rawTitle || "").replace(/^#+\s*/, "").trim();
+    const url = resolveProductUrl(String(rawUrl || "").trim());
+    if (!title || !url) return;
     const slug = slugFromUrl(url);
-    if (!slug || EXCLUDED_SLUGS.has(slug) || seen.has(url)) continue;
+    if (!slug || EXCLUDED_SLUGS.has(slug) || seen.has(url)) return;
     seen.add(url);
+    catalog.push({ title, url });
+  }
 
-    let lineIndex = lineStarts.findIndex((start, i) => match.index >= start && match.index < (lineStarts[i + 1] ?? Infinity));
-    let title = "";
-    for (let i = lineIndex - 1; i >= Math.max(0, lineIndex - 3) && !title; i--) {
-      const candidate = lines[i].replace(/^#+\s*/, "").trim();
-      if (candidate && candidate.length <= 120 && !/https?:\/\//.test(candidate)) title = candidate;
+  for (let i = 0; i < lines.length; i++) {
+    const anaUrunMatch = lines[i].match(ANA_URUN_PATTERN);
+    if (anaUrunMatch) {
+      for (let j = i + 1; j < lines.length && j <= i + 2; j++) {
+        const urlMatch = lines[j].match(URL_FIELD_PATTERN);
+        if (urlMatch) { addProduct(anaUrunMatch[1], urlMatch[1]); break; }
+      }
+      continue;
     }
-    catalog.push({ title: title || titleFromSlug(slug), url });
+    if (PRODUCT_TABLE_HEADER_PATTERN.test(lines[i])) {
+      let j = i + 1;
+      if (lines[j] && /^\|[\s|-]+\|$/.test(lines[j].trim())) j++;
+      for (; j < lines.length; j++) {
+        const rowMatch = lines[j].match(PRODUCT_TABLE_ROW_PATTERN);
+        if (!rowMatch) break;
+        addProduct(rowMatch[1], rowMatch[2]);
+      }
+    }
   }
   return catalog;
 }
