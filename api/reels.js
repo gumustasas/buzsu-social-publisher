@@ -21,7 +21,7 @@ async function resolveProduct(productId) {
   if (isCatalogProductId(productId)) {
     const catalogProduct = await findCatalogProduct(productId);
     if (!catalogProduct) return null;
-    return { title: baseProductTitle(catalogProduct.title) || "Buzsu ürünü", url: catalogProduct.url, imageUrl: "" };
+    return { title: baseProductTitle(catalogProduct.title) || "Buzsu ürünü", url: catalogProduct.url, imageUrl: catalogProduct.imageUrl || "" };
   }
   const data = await airtable();
   const record = (data.records || []).find((item) => item.id === productId);

@@ -21,3 +21,15 @@ test("findCatalogProduct falls back to a slug-derived title when the catalog can
   assert.equal(product.url, url);
   assert.equal(product.title, "Ultramag Apartman Tipi");
 });
+
+test("findCatalogProduct fills imageUrl from the verified product-photos map even when the live catalog fetch fails", async () => {
+  const url = "https://www.buzsu.com.tr/manyetik-kombi-filtresi/";
+  const product = await findCatalogProduct(catalogProductId(url));
+  assert.equal(product.imageUrl, "https://www.buzsu.com.tr/upload/small/rivermag-1-inc-manyetik-kombi-filtresi-endustriyel-kombi-filtresi-buzsu.jpg");
+});
+
+test("findCatalogProduct leaves imageUrl empty for a product with no verified photo", async () => {
+  const url = "https://www.buzsu.com.tr/hic-boyle-bir-urun-yok/";
+  const product = await findCatalogProduct(catalogProductId(url));
+  assert.equal(product.imageUrl, "");
+});

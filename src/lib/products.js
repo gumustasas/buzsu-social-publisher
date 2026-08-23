@@ -43,7 +43,7 @@ export async function listProducts() {
     return true;
   });
   const catalog = await listCatalogProducts();
-  const catalogProducts = catalog.map((item) => ({ id: catalogProductId(item.url), title: item.title, url: item.url, imageUrl: "", instagramText: "", facebookText: "" })).filter((product) => {
+  const catalogProducts = catalog.map((item) => ({ id: catalogProductId(item.url), title: item.title, url: item.url, imageUrl: item.imageUrl || "", instagramText: "", facebookText: "" })).filter((product) => {
     if (seen.has(product.url)) return false;
     seen.add(product.url);
     return true;

@@ -3,8 +3,11 @@
 // hiç paylaşılmamış bir ürün listede hiç görünmüyordu. Bu modül,
 // buzsu.com.tr'nin yayınladığı llms-full.txt dosyasından ürün adı+URL
 // çiftlerini çıkarıp listeyi genişletir. Bu dosya fotoğraf URL'si içermez;
-// bu yüzden buradan gelen ürünlerin imageUrl'i boş kalır ve panelde elle
+// bilinen ürünler için imageUrl product-photos.js'teki doğrulanmış eşleme
+// listesinden doldurulur — listede olmayanlar boş kalır ve panelde elle
 // girilmesi gerekir (bkz. dashboard.html).
+import { findKnownProductPhoto } from "./product-photos.js";
+
 const LLMS_FULL_URL = "https://www.buzsu.com.tr/llms-full.txt";
 const CACHE_TTL_MS = 30 * 60 * 1000;
 const PRODUCT_URL_PATTERN = /https:\/\/www\.buzsu\.com\.tr\/[a-z0-9-]+\/?/gi;
@@ -73,7 +76,8 @@ async function fetchCatalog() {
 // Airtable'daki mevcut kayıtları gösterir, hiçbir çağrıyı engellemez.
 export async function listCatalogProducts() {
   try {
-    return await fetchCatalog();
+    const catalog = await fetchCatalog();
+    return catalog.map((item) => ({ ...item, imageUrl: findKnownProductPhoto(item.url) }));
   } catch {
     return [];
   }
@@ -97,5 +101,5 @@ export async function findCatalogProduct(id) {
   const url = decodeURIComponent(id.slice(CATALOG_ID_PREFIX.length));
   const catalog = await listCatalogProducts();
   const match = catalog.find((item) => item.url === url);
-  return match || { title: titleFromSlug(slugFromUrl(url)), url };
+  return match || { title: titleFromSlug(slugFromUrl(url)), url, imageUrl: findKnownProductPhoto(url) };
 }

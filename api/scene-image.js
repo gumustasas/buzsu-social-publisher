@@ -31,8 +31,9 @@ export default async function handler(request, response) {
     if (isCatalogProductId(body.productId)) {
       const catalogProduct = await findCatalogProduct(body.productId);
       if (!catalogProduct) return response.status(400).json({ error: "Ürün bulunamadı." });
-      if (!manualImageUrl) return response.status(400).json({ error: "Bu ürünün Airtable'da fotoğrafı yok. Üstteki \"Görsel URL\" alanına ürünün gerçek fotoğraf bağlantısını girin (ör. https://www.buzsu.com.tr/wp-content/uploads/.../urun.jpg) — ürün sayfasının linkini değil." });
-      product = { title: baseProductTitle(catalogProduct.title) || "Buzsu ürünü", imageUrl: manualImageUrl };
+      const resolvedImageUrl = catalogProduct.imageUrl || manualImageUrl;
+      if (!resolvedImageUrl) return response.status(400).json({ error: "Bu ürünün bilinen bir fotoğrafı yok. Üstteki \"Görsel URL\" alanına ürünün gerçek fotoğraf bağlantısını girin (ör. https://www.buzsu.com.tr/wp-content/uploads/.../urun.jpg) — ürün sayfasının linkini değil." });
+      product = { title: baseProductTitle(catalogProduct.title) || "Buzsu ürünü", imageUrl: resolvedImageUrl };
       recordId = body.productId;
     } else {
       const data = await airtable();
