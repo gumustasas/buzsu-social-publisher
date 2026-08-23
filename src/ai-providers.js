@@ -21,8 +21,21 @@ async function request(url, options) {
   return data;
 }
 
+// OPENAI_API_KEY'in kredisi tükendi (bkz. src/scene-image.js'teki kredili
+// OPENAI_IMAGE_API_KEY ayrımı) — tüm OpenAI metin çağrıları da artık aynı
+// kredili anahtarı kullanır; ayrı bir metin anahtarına gerek yok.
+function openaiTextApiKey(env) {
+  return env.OPENAI_IMAGE_API_KEY || env.OPENAI_API_KEY;
+}
+
 export function availableProviders(env = process.env) {
-  return ["openai", "anthropic", "gemini", "fal", "veo"].filter((provider) => Boolean(env[provider === "openai" ? "OPENAI_API_KEY" : provider === "anthropic" ? "ANTHROPIC_API_KEY" : provider === "gemini" || provider === "veo" ? "GEMINI_API_KEY" : "FAL_KEY"]));
+  return [
+    openaiTextApiKey(env) && "openai",
+    env.ANTHROPIC_API_KEY && "anthropic",
+    env.GEMINI_API_KEY && "gemini",
+    env.FAL_KEY && "fal",
+    env.GEMINI_API_KEY && "veo"
+  ].filter(Boolean);
 }
 
 function scenePlanPrompt(product, context) {
@@ -50,14 +63,10 @@ export async function generateScenePlan(provider, product, env = process.env) {
   const input = scenePlanPrompt(product, context);
   let raw;
   if (provider === "openai") {
-    // Sahne görseli için kredili OPENAI_IMAGE_API_KEY zaten çalıştığı
-    // doğrulandı (bkz. src/scene-image.js) — sahne planı metni de aynı
-    // kredili anahtarı kullanır, ayrı bir metin anahtarına gerek yok.
-    // Model, düşük maliyetli ama stabil gpt-5.4-nano'ya sabit (bu kısa
-    // sahne açıklaması için gpt-5.6 gibi daha pahalı bir model gerekmez).
-    const apiKey = env.OPENAI_IMAGE_API_KEY || env.OPENAI_API_KEY;
+    // Kısa bir sahne açıklaması için gpt-5.6 gibi pahalı bir model gerekmez;
+    // düşük maliyetli ama stabil gpt-5.4-nano'ya sabit.
     const model = env.OPENAI_SCENE_PLAN_MODEL || "gpt-5.4-nano";
-    const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model, input, store: false }) });
+    const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${openaiTextApiKey(env)}`, "Content-Type": "application/json" }, body: JSON.stringify({ model, input, store: false }) });
     raw = textFromOpenAI(data);
   } else {
     const model = env.GEMINI_REEL_MODEL || "gemini-3.5-flash";
@@ -86,7 +95,7 @@ export async function generateCaption(provider, product, env = process.env) {
   const input = captionPrompt(product, context);
   let raw;
   if (provider === "openai") {
-    const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: env.OPENAI_REEL_MODEL || "gpt-5.6", input, store: false }) });
+    const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${openaiTextApiKey(env)}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: env.OPENAI_REEL_MODEL || "gpt-5.6", input, store: false }) });
     raw = textFromOpenAI(data);
   } else {
     const model = env.GEMINI_REEL_MODEL || "gemini-3.5-flash";
@@ -114,7 +123,7 @@ export async function generateMotionPlan(provider, sceneDescription, env = proce
   const input = motionPlanPrompt(sceneDescription);
   let raw;
   if (provider === "openai") {
-    const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: env.OPENAI_REEL_MODEL || "gpt-5.6", input, store: false }) });
+    const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${openaiTextApiKey(env)}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: env.OPENAI_REEL_MODEL || "gpt-5.6", input, store: false }) });
     raw = textFromOpenAI(data);
   } else {
     const model = env.GEMINI_REEL_MODEL || "gemini-3.5-flash";
@@ -130,7 +139,7 @@ export async function generateReelPackage(provider, product, env = process.env) 
   const input = prompt(product);
   let raw;
   if (provider === "openai") {
-    const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: env.OPENAI_REEL_MODEL || "gpt-5.6", input, store: false }) });
+    const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${openaiTextApiKey(env)}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: env.OPENAI_REEL_MODEL || "gpt-5.6", input, store: false }) });
     raw = textFromOpenAI(data);
   } else if (provider === "anthropic") {
     const data = await request("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json" }, body: JSON.stringify({ model: env.ANTHROPIC_REEL_MODEL || "claude-sonnet-4-20250514", max_tokens: 1800, system: "Yanıtı yalnızca geçerli JSON olarak ver.", messages: [{ role: "user", content: input }] }) });

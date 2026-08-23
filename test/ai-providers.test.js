@@ -1,10 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { availableProviders, generateScenePlan, generateCaption } from "../src/ai-providers.js";
+import { availableProviders, generateScenePlan, generateCaption, generateMotionPlan, generateReelPackage } from "../src/ai-providers.js";
 
 test("AI provider availability is derived from configured keys", () => {
   assert.deepEqual(availableProviders({ OPENAI_API_KEY: "x", ANTHROPIC_API_KEY: "", GEMINI_API_KEY: "y" }), ["openai", "gemini", "veo"]);
   assert.deepEqual(availableProviders({ FAL_KEY: "fal-test" }), ["fal"]);
+});
+
+test("AI provider availability lists 'openai' from a standalone OPENAI_IMAGE_API_KEY even without OPENAI_API_KEY", () => {
+  assert.deepEqual(availableProviders({ OPENAI_IMAGE_API_KEY: "credited-key" }), ["openai"]);
 });
 
 test("generateScenePlan rejects an unsupported provider before making any network call", async () => {
@@ -53,6 +57,54 @@ test("generateScenePlan falls back to OPENAI_API_KEY when no separate OPENAI_IMA
   try {
     await generateScenePlan("openai", { title: "Code Advantage" }, { OPENAI_API_KEY: "only-key" });
     assert.equal(capturedAuth, "Bearer only-key");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// generateCaption/generateMotionPlan/generateReelPackage aynı desende
+// (kredili anahtar tercih edilir, kredisiz OPENAI_API_KEY'e düşülür) —
+// hepsinin gerçekten kredili anahtarı kullandığını doğrula.
+test("generateCaption uses the working OPENAI_IMAGE_API_KEY over the depleted OPENAI_API_KEY for provider 'openai'", async () => {
+  const originalFetch = global.fetch;
+  let capturedAuth = null;
+  global.fetch = async (url, options) => {
+    capturedAuth = options.headers.Authorization;
+    return { ok: true, json: async () => ({ output_text: '{"instagramText":"a","facebookText":"b","hashtags":"#Buzsu"}' }) };
+  };
+  try {
+    await generateCaption("openai", { title: "Code Advantage" }, { OPENAI_API_KEY: "depleted-key", OPENAI_IMAGE_API_KEY: "credited-key" });
+    assert.equal(capturedAuth, "Bearer credited-key");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateMotionPlan uses the working OPENAI_IMAGE_API_KEY over the depleted OPENAI_API_KEY for provider 'openai'", async () => {
+  const originalFetch = global.fetch;
+  let capturedAuth = null;
+  global.fetch = async (url, options) => {
+    capturedAuth = options.headers.Authorization;
+    return { ok: true, json: async () => ({ output_text: "kamera yavaşça yaklaşır" }) };
+  };
+  try {
+    await generateMotionPlan("openai", "mutfak", { OPENAI_API_KEY: "depleted-key", OPENAI_IMAGE_API_KEY: "credited-key" });
+    assert.equal(capturedAuth, "Bearer credited-key");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateReelPackage uses the working OPENAI_IMAGE_API_KEY over the depleted OPENAI_API_KEY for provider 'openai'", async () => {
+  const originalFetch = global.fetch;
+  let capturedAuth = null;
+  global.fetch = async (url, options) => {
+    capturedAuth = options.headers.Authorization;
+    return { ok: true, json: async () => ({ output_text: '{"hook":"h","voiceover":"v","scenes":[],"caption":"c","hashtags":["#Buzsu"],"cta":"cta"}' }) };
+  };
+  try {
+    await generateReelPackage("openai", { title: "Code Advantage", url: "https://example.com", imageUrl: "https://example.com/x.jpg" }, { OPENAI_API_KEY: "depleted-key", OPENAI_IMAGE_API_KEY: "credited-key" });
+    assert.equal(capturedAuth, "Bearer credited-key");
   } finally {
     global.fetch = originalFetch;
   }
