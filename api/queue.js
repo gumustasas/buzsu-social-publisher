@@ -43,6 +43,7 @@ function publicRecord(record) {
     instagramId: fields["Instagram Yayın ID"] || "",
     facebookId: fields["Facebook Yayın ID"] || "",
     isArchived: fields.Durum === "Paylaşıldı" || Boolean(fields["Instagram Yayın ID"] || fields["Facebook Yayın ID"]),
+    deletedAt: fields["Silinme Tarihi"] || null,
     error: fields["Hata Mesajı"] || "",
     note: fields.Not || "",
     isStopped: effectiveStatus === "Durduruldu",
@@ -61,15 +62,38 @@ export default async function handler(request, response) {
     if (request.method === "DELETE") {
       const body = typeof request.body === "string" ? JSON.parse(request.body) : (request.body || {});
       const ids = Array.isArray(body.ids) ? body.ids.filter(Boolean) : [];
-      if (!ids.length || ids.length > 50) return response.status(400).json({ error: "Silinecek kayıt seçin (en fazla 50)." });
+      if (!ids.length || ids.length > 50) return response.status(400).json({ error: "Kayıt seçin (en fazla 50)." });
       const records = await Promise.all(ids.map((id) => airtable(`/${encodeURIComponent(id)}`)));
-      const deletable = records.every((record) => {
-        const fields = record.fields || {};
-        return fields.Durum === "Taslak" || fields.Durum === "Paylaşıldı" || Boolean(fields["Instagram Yayın ID"] || fields["Facebook Yayın ID"]);
-      });
-      if (!deletable) return response.status(409).json({ error: "Yalnızca taslak veya arşiv/çöp kutusundaki kayıtlar silinebilir." });
-      await Promise.all(ids.map((id) => airtable(`/${encodeURIComponent(id)}`, { method: "DELETE" })));
-      return response.status(200).json({ ok: true, deleted: ids.length });
+
+      // "Kalıcı olarak sil" ve "Geri al": yalnızca zaten çöp kutusunda olan
+      // (Silinme Tarihi dolu) kayıtlarda çalışır.
+      if (body.permanent === true || body.restore === true) {
+        const inTrash = records.every((record) => Boolean(record.fields?.["Silinme Tarihi"]));
+        if (!inTrash) return response.status(409).json({ error: "Yalnızca çöp kutusundaki kayıtlar geri alınabilir veya kalıcı silinebilir." });
+        if (body.permanent === true) {
+          await Promise.all(ids.map((id) => airtable(`/${encodeURIComponent(id)}`, { method: "DELETE" })));
+          return response.status(200).json({ ok: true, deleted: ids.length });
+        }
+        await Promise.all(ids.map((id) => airtable(`/${encodeURIComponent(id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: { "Silinme Tarihi": null } })
+        })));
+        return response.status(200).json({ ok: true, restored: ids.length });
+      }
+
+      // Varsayılan: kalıcı silme değil, çöp kutusuna taşıma (soft delete).
+      // Yalnızca taslaklar için — arşivlenmiş/paylaşılmış kayıtlar bu yoldan
+      // silinemez.
+      const deletable = records.every((record) => record.fields?.Durum === "Taslak" && !record.fields?.["Silinme Tarihi"]);
+      if (!deletable) return response.status(409).json({ error: "Yalnızca taslak kayıtlar çöp kutusuna taşınabilir." });
+      const deletedAt = new Date().toISOString();
+      await Promise.all(ids.map((id) => airtable(`/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: { "Silinme Tarihi": deletedAt } })
+      })));
+      return response.status(200).json({ ok: true, trashed: ids.length });
     }
     if (request.method !== "POST") {
       response.setHeader("Allow", "GET, POST, DELETE");
