@@ -31,18 +31,26 @@ export async function listRawRecords() {
 // api/content.js (composer) ve api/intent.js (tek cümlelik istek ayrıştırma)
 // aynı listeyi kullanır — tek kaynak burasıdır.
 export async function listProducts() {
-  const records = await listRawRecords();
+  const [records, catalog] = await Promise.all([listRawRecords(), listCatalogProducts()]);
+  // Aynı ürüne ait birden fazla Airtable taslağı olabilir (her paylaşım
+  // denemesi ayrı bir kayıttır) ve dropdown bunlardan yalnızca ilkini
+  // ürün adı olarak kullanır. O ilk kayıt "DENEME | ..." gibi geçici bir
+  // test başlığı taşıyorsa ürün dropdown'da tanınmaz hale gelir (bkz.
+  // "DENEME" bug'ı). Bu yüzden llms-full.txt kataloğunda bu URL için
+  // resmi bir ürün adı varsa, Airtable kaydının başlığı yerine o kullanılır.
+  const catalogTitleByUrl = new Map(catalog.map((item) => [item.url, item.title]));
   const seen = new Set();
   const airtableProducts = records.map((record) => {
     const fields = record.fields || {};
-    return { id: record.id, title: baseProductTitle(fields.Başlık) || "Başlıksız", url: fields["Kaynak URL"] || "", imageUrl: fields["Görsel URL"] || "", instagramText: fields["Instagram Metni"] || "", facebookText: fields["Facebook Metni"] || "" };
+    const url = fields["Kaynak URL"] || "";
+    const title = (url && catalogTitleByUrl.get(url)) || baseProductTitle(fields.Başlık) || "Başlıksız";
+    return { id: record.id, title, url, imageUrl: fields["Görsel URL"] || "", instagramText: fields["Instagram Metni"] || "", facebookText: fields["Facebook Metni"] || "" };
   }).filter((product) => {
     const key = product.url || product.id;
     if (!product.url || seen.has(key)) return false;
     seen.add(key);
     return true;
   });
-  const catalog = await listCatalogProducts();
   const catalogProducts = catalog.map((item) => ({ id: catalogProductId(item.url), title: item.title, url: item.url, imageUrl: item.imageUrl || "", instagramText: "", facebookText: "" })).filter((product) => {
     if (seen.has(product.url)) return false;
     seen.add(product.url);
