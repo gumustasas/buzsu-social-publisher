@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import sharp from "sharp";
-import { floodFillBackgroundMask, sceneEditPrompt, geminiScenePrompt, applyRemoveBox, availableSceneProviders, generateSceneImage } from "../src/scene-image.js";
+import { floodFillBackgroundMask, sceneEditPrompt, geminiScenePrompt, applyRemoveBox, availableSceneProviders } from "../src/scene-image.js";
 
 test("floodFillBackgroundMask marks border-connected near-white pixels as background", () => {
   const width = 4, height = 4, channels = 3;
@@ -93,38 +92,10 @@ test("geminiScenePrompt forbids a faucet attached to the device but allows one e
   assert.match(withRemoval, /Sahne açıklaması ayrı bir yerde/);
 });
 
-test("availableSceneProviders lists gemini, the free gemini-2.5-flash option, then openai, only when keys are present", () => {
-  assert.deepEqual(availableSceneProviders({ GEMINI_API_KEY: "g", OPENAI_API_KEY: "o" }), ["gemini", "gemini-2.5-flash", "openai"]);
-  assert.deepEqual(availableSceneProviders({ GEMINI_API_KEY: "g" }), ["gemini", "gemini-2.5-flash"]);
+test("availableSceneProviders lists gemini before openai and only when keys are present", () => {
+  assert.deepEqual(availableSceneProviders({ GEMINI_API_KEY: "g", OPENAI_API_KEY: "o" }), ["gemini", "openai"]);
   assert.deepEqual(availableSceneProviders({ OPENAI_API_KEY: "o" }), ["openai"]);
   assert.deepEqual(availableSceneProviders({}), []);
-});
-
-test("generateSceneImage pins provider 'gemini-2.5-flash' to the free gemini-2.5-flash-image model, regardless of GEMINI_SCENE_MODEL", async () => {
-  const originalFetch = global.fetch;
-  let calledModel = null;
-  const tinyPng = await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer();
-  global.fetch = async (url) => {
-    const u = String(url);
-    if (u.includes("example.com")) return { ok: true, arrayBuffer: async () => tinyPng };
-    if (u.includes("generativelanguage.googleapis.com")) {
-      calledModel = u.match(/models\/([^:]+):/)[1];
-      return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { data: "AAAA" } }] } }] }) };
-    }
-    throw new Error(`unexpected fetch: ${u}`);
-  };
-  try {
-    const result = await generateSceneImage(
-      { title: "Test Ürün", imageUrl: "https://example.com/photo.png" },
-      "mutfak",
-      { GEMINI_API_KEY: "test", GEMINI_SCENE_MODEL: "some-other-paid-model" },
-      { provider: "gemini-2.5-flash" }
-    );
-    assert.equal(calledModel, "gemini-2.5-flash-image");
-    assert.equal(result.model, "gemini-2.5-flash-image");
-  } finally {
-    global.fetch = originalFetch;
-  }
 });
 
 test("applyRemoveBox marks only the pixels inside the given box as background, leaving pixels outside untouched", () => {

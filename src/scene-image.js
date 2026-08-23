@@ -122,8 +122,9 @@ async function buildMaskBuffer(sourceBuffer, { removeFaucet = false } = {}) {
   return { basePng, maskPng };
 }
 
-async function callGeminiImageEdit({ basePng, prompt, model }, env) {
+async function callGeminiImageEdit({ basePng, prompt }, env) {
   if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY Vercel Production ortamında tanımlı değil.");
+  const model = env.GEMINI_SCENE_MODEL || "gemini-3.1-flash-lite-image";
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: "POST",
     headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json" },
@@ -162,18 +163,8 @@ async function callOpenAIImageEdit({ basePng, maskPng, prompt }, env) {
   return item.b64_json;
 }
 
-// "gemini" güncel/varsayılan modeli kullanır (GEMINI_SCENE_MODEL ile
-// override edilebilir). "gemini-2.5-flash" ise bilinçli olarak sabit bir
-// modele (gemini-2.5-flash-image, "Nano Banana") kilitli: Google'ın kredi
-// kartsız, günde 500 istek/gün ücretsiz kotası bu modele ait — panelde
-// gönderileri önce ücretsiz test etmek için ayrı, öngörülebilir bir seçenek.
-// Aynı GEMINI_API_KEY her iki model için de geçerlidir, ayrı bir anahtar
-// gerekmez.
-const GEMINI_FREE_MODEL = "gemini-2.5-flash-image";
-
 export function availableSceneProviders(env = process.env) {
-  const hasGemini = Boolean(env.GEMINI_API_KEY);
-  return [hasGemini && "gemini", hasGemini && "gemini-2.5-flash", env.OPENAI_API_KEY && "openai"].filter(Boolean);
+  return ["gemini", "openai"].filter((provider) => Boolean(env[provider === "gemini" ? "GEMINI_API_KEY" : "OPENAI_API_KEY"]));
 }
 
 export async function generateSceneImage(product, sceneDescription, env = process.env, { removeFaucet = false, provider = "gemini" } = {}) {
@@ -187,10 +178,10 @@ export async function generateSceneImage(product, sceneDescription, env = proces
   const { basePng, maskPng } = await buildMaskBuffer(sourceBuffer, { removeFaucet });
 
   let b64, model, prompt;
-  if (provider === "gemini" || provider === "gemini-2.5-flash") {
+  if (provider === "gemini") {
     prompt = geminiScenePrompt(sceneDescription, { removeFaucet });
-    model = provider === "gemini-2.5-flash" ? GEMINI_FREE_MODEL : (env.GEMINI_SCENE_MODEL || "gemini-3.1-flash-lite-image");
-    b64 = await callGeminiImageEdit({ basePng, prompt, model }, env);
+    model = env.GEMINI_SCENE_MODEL || "gemini-3.1-flash-lite-image";
+    b64 = await callGeminiImageEdit({ basePng, prompt }, env);
   } else if (provider === "openai") {
     prompt = sceneEditPrompt(sceneDescription, { removeFaucet });
     model = env.OPENAI_SCENE_MODEL || "gpt-image-1";
