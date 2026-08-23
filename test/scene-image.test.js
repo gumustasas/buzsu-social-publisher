@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { floodFillBackgroundMask, sceneEditPrompt, geminiScenePrompt, applyRemoveBox, availableSceneProviders } from "../src/scene-image.js";
+import sharp from "sharp";
+import { floodFillBackgroundMask, sceneEditPrompt, geminiScenePrompt, applyRemoveBox, availableSceneProviders, generateSceneImage } from "../src/scene-image.js";
 
 test("floodFillBackgroundMask marks border-connected near-white pixels as background", () => {
   const width = 4, height = 4, channels = 3;
@@ -96,6 +97,36 @@ test("availableSceneProviders lists gemini before openai and only when keys are 
   assert.deepEqual(availableSceneProviders({ GEMINI_API_KEY: "g", OPENAI_API_KEY: "o" }), ["gemini", "openai"]);
   assert.deepEqual(availableSceneProviders({ OPENAI_API_KEY: "o" }), ["openai"]);
   assert.deepEqual(availableSceneProviders({}), []);
+});
+
+test("availableSceneProviders offers openai from a standalone OPENAI_IMAGE_API_KEY even without OPENAI_API_KEY", () => {
+  assert.deepEqual(availableSceneProviders({ OPENAI_IMAGE_API_KEY: "img" }), ["openai"]);
+});
+
+test("generateSceneImage sends the standalone OPENAI_IMAGE_API_KEY (not the text OPENAI_API_KEY) for provider 'openai' when both are set", async () => {
+  const originalFetch = global.fetch;
+  let calledAuth = null;
+  const tinyPng = await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer();
+  global.fetch = async (url, options) => {
+    const u = String(url);
+    if (u.includes("example.com")) return { ok: true, arrayBuffer: async () => tinyPng };
+    if (u.includes("api.openai.com")) {
+      calledAuth = options.headers.Authorization;
+      return { ok: true, json: async () => ({ data: [{ b64_json: "AAAA" }] }) };
+    }
+    throw new Error(`unexpected fetch: ${u}`);
+  };
+  try {
+    await generateSceneImage(
+      { title: "Test Ürün", imageUrl: "https://example.com/photo.png" },
+      "mutfak",
+      { OPENAI_API_KEY: "text-key", OPENAI_IMAGE_API_KEY: "image-key" },
+      { provider: "openai" }
+    );
+    assert.equal(calledAuth, "Bearer image-key");
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test("applyRemoveBox marks only the pixels inside the given box as background, leaving pixels outside untouched", () => {
