@@ -1,12 +1,14 @@
 import "dotenv/config";
 import fs from "node:fs";
+import { META_GRAPH_VERSION, assertMetaGraphVersionCurrent } from "./lib/config.js";
 
-const { META_ACCESS_TOKEN, META_APP_SECRET, META_GRAPH_VERSION } = process.env;
+const { META_ACCESS_TOKEN, META_APP_SECRET } = process.env;
 const envPath = new URL("../.env", import.meta.url);
 
-if (!META_ACCESS_TOKEN || !META_APP_SECRET || !META_GRAPH_VERSION) {
-  throw new Error("Meta kullanıcı tokenı, uygulama secretı veya Graph sürümü eksik.");
+if (!META_ACCESS_TOKEN || !META_APP_SECRET) {
+  throw new Error("Meta kullanıcı tokenı veya uygulama secretı eksik.");
 }
+assertMetaGraphVersionCurrent();
 
 const url = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token`);
 url.searchParams.set("grant_type", "fb_exchange_token");

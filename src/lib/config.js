@@ -17,14 +17,25 @@ export const AIRTABLE_USER_TABLE_ID = process.env.AIRTABLE_USER_TABLE_ID || "tbl
 export const DEFAULT_META_GRAPH_VERSION = "v25.0";
 export const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || DEFAULT_META_GRAPH_VERSION;
 
-// Meta'nın resmi olarak sonlandırdığı sürümler. Biri env'de kalmışsa Meta'nın
-// kendi (çoğu zaman anlaşılması güç) hata mesajını beklemeden erken uyarır.
-const EXPIRED_META_GRAPH_VERSIONS = new Set(["v15.0", "v16.0", "v17.0", "v18.0", "v19.0"]);
+// Meta, v20.0 öncesi tüm sürümleri resmi olarak sonlandırdı (v18.0/v19.0
+// dahil — https://developers.facebook.com/docs/graph-api/changelog). Sabit
+// bir liste yerine sayısal bir eşik kullanılıyor; aksi halde listede
+// unutulmuş, ondan da eski bir sürüm (örn. v14.0) sessizce geçerdi.
+const MINIMUM_SUPPORTED_META_GRAPH_VERSION = 20.0;
+
+function parseMetaGraphVersionNumber(version) {
+  const match = /^v?(\d+(?:\.\d+)?)$/.exec(String(version || "").trim());
+  return match ? Number.parseFloat(match[1]) : null;
+}
 
 export function assertMetaGraphVersionCurrent() {
-  if (EXPIRED_META_GRAPH_VERSIONS.has(META_GRAPH_VERSION)) {
+  const parsed = parseMetaGraphVersionNumber(META_GRAPH_VERSION);
+  if (parsed === null) {
+    throw new Error(`META_GRAPH_VERSION="${META_GRAPH_VERSION}" tanınabilir bir Meta Graph API sürümü değil (örn. ${DEFAULT_META_GRAPH_VERSION}).`);
+  }
+  if (parsed < MINIMUM_SUPPORTED_META_GRAPH_VERSION) {
     throw new Error(
-      `META_GRAPH_VERSION=${META_GRAPH_VERSION} Meta tarafından sonlandırıldı. .env dosyasında güncel bir sürüme (örn. ${DEFAULT_META_GRAPH_VERSION}) yükseltin.`
+      `META_GRAPH_VERSION=${META_GRAPH_VERSION} Meta tarafından sonlandırıldı (v${MINIMUM_SUPPORTED_META_GRAPH_VERSION} öncesi sürümler artık desteklenmiyor). .env dosyasında güncel bir sürüme (örn. ${DEFAULT_META_GRAPH_VERSION}) yükseltin.`
     );
   }
 }

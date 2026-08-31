@@ -4,6 +4,8 @@
 // ayrıntılı "impressions/reach" metrikleri ek izin gerektirir ve API
 // sürümüne göre sık değiştiği için buraya dahil edilmedi. Tek bir gönderi
 // başarısız olursa çağıran taraf diğerlerini etkilemeden devam edebilir.
+import { META_GRAPH_VERSION } from "./config.js";
+
 async function graphGet(path, accessToken, graphVersion) {
   const response = await fetch(`https://graph.facebook.com/${graphVersion}/${path}`, { headers: { Authorization: `Bearer ${accessToken}` } });
   const data = await response.json();
@@ -11,13 +13,16 @@ async function graphGet(path, accessToken, graphVersion) {
   return data;
 }
 
+// env.META_GRAPH_VERSION tanımlı değilse (config.js'teki merkezi varsayılan
+// gibi) META_GRAPH_VERSION'a düşülür — aksi halde "/undefined/..." isteği
+// atılıp bu gönderi sessizce "failures" sayacına eklenirdi.
 export async function fetchInstagramEngagement(mediaId, env = process.env) {
-  const data = await graphGet(`${mediaId}?fields=like_count,comments_count`, env.META_ACCESS_TOKEN, env.META_GRAPH_VERSION);
+  const data = await graphGet(`${mediaId}?fields=like_count,comments_count`, env.META_ACCESS_TOKEN, env.META_GRAPH_VERSION || META_GRAPH_VERSION);
   return { likes: Number(data.like_count || 0), comments: Number(data.comments_count || 0), shares: 0 };
 }
 
 export async function fetchFacebookEngagement(postId, env = process.env) {
-  const data = await graphGet(`${postId}?fields=likes.summary(true),comments.summary(true),shares`, env.META_FACEBOOK_PAGE_ACCESS_TOKEN, env.META_GRAPH_VERSION);
+  const data = await graphGet(`${postId}?fields=likes.summary(true),comments.summary(true),shares`, env.META_FACEBOOK_PAGE_ACCESS_TOKEN, env.META_GRAPH_VERSION || META_GRAPH_VERSION);
   return { likes: Number(data.likes?.summary?.total_count || 0), comments: Number(data.comments?.summary?.total_count || 0), shares: Number(data.shares?.count || 0) };
 }
 
