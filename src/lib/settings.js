@@ -2,9 +2,11 @@
 // kuyruğuyla (Sosyal Medya Takvimi) karışmasın diye panel geneli ayarlar
 // bilinçli olarak ayrı, küçük bir tabloda tutulur — bu tablo elle
 // oluşturuldu, tek satırı var ve id'si sabit.
-const baseId = process.env.AIRTABLE_BASE_ID || "apphVqbUQohAMIoWk";
-const tableId = process.env.AIRTABLE_SETTINGS_TABLE_ID || "tblcoBjEWj7UbQ0wr";
-const AUTOPILOT_RECORD_ID = process.env.AIRTABLE_AUTOPILOT_RECORD_ID || "recserXsAErwqHUbZ";
+import {
+  AIRTABLE_BASE_ID as baseId,
+  AIRTABLE_SETTINGS_TABLE_ID as tableId,
+  AIRTABLE_AUTOPILOT_RECORD_ID as AUTOPILOT_RECORD_ID
+} from "./config.js";
 
 async function airtableRequest(path = "", options = {}) {
   const response = await fetch(`https://api.airtable.com/v0/${baseId}/${tableId}${path}`, {

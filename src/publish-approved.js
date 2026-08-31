@@ -2,16 +2,18 @@ import "dotenv/config";
 import { fileURLToPath } from "node:url";
 import { publicationFormat, selectDueRecords, withUtm } from "./lib/schedule.js";
 import { buildLease, canProcess, clearLease } from "./lib/queue.js";
+import { AIRTABLE_BASE_ID, AIRTABLE_TABLE_ID, META_GRAPH_VERSION, assertMetaGraphVersionCurrent } from "./lib/config.js";
+import { notifyFailure } from "./lib/notify.js";
 
 const livePostingEnabled = process.env.ENABLE_LIVE_POSTING === "true";
 const facebookStoriesEnabled = process.env.ENABLE_FACEBOOK_STORIES === "true";
-const graphVersion = process.env.META_GRAPH_VERSION;
+const graphVersion = META_GRAPH_VERSION;
 const postLimit = Number.parseInt(process.env.SOCIAL_POST_LIMIT || "1", 10);
 const maxAttempts = Number.parseInt(process.env.MAX_PUBLISH_ATTEMPTS || "3", 10);
 const storyImageBaseUrl = process.env.STORY_IMAGE_BASE_URL || "";
-const airtableBaseId = process.env.AIRTABLE_BASE_ID || "apphVqbUQohAMIoWk";
-const airtableTableId = process.env.AIRTABLE_TABLE_ID || "tblir7vlazMo8v532";
-const required = ["META_ACCESS_TOKEN", "META_FACEBOOK_PAGE_ACCESS_TOKEN", "META_INSTAGRAM_ACCOUNT_ID", "META_FACEBOOK_PAGE_ID", "META_GRAPH_VERSION", "AIRTABLE_TOKEN"];
+const airtableBaseId = AIRTABLE_BASE_ID;
+const airtableTableId = AIRTABLE_TABLE_ID;
+const required = ["META_ACCESS_TOKEN", "META_FACEBOOK_PAGE_ACCESS_TOKEN", "META_INSTAGRAM_ACCOUNT_ID", "META_FACEBOOK_PAGE_ID", "AIRTABLE_TOKEN"];
 const airtableFields = ["Başlık", "Kaynak URL", "Görsel URL", "Video URL", "Instagram Metni", "Facebook Metni", "Hashtagler", "Platform", "Yayın Biçimi", "Yayın Zamanı", "Durum", "Not", "Deneme Sayısı", "Instagram Yayın ID", "Facebook Yayın ID", "Hata Mesajı"];
 
 function assertConfiguration() {
@@ -19,6 +21,7 @@ function assertConfiguration() {
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1) throw new Error("MAX_PUBLISH_ATTEMPTS en az 1 olmalı.");
   const missing = required.filter((name) => !process.env[name]);
   if (missing.length) throw new Error(`Eksik ortam değişkenleri: ${missing.join(", ")}`);
+  assertMetaGraphVersionCurrent();
 }
 
 function requireHttpsUrl(value, label) {
@@ -205,6 +208,8 @@ export async function runPublisher() {
     if (attempts >= maxAttempts) {
       await updateAirtable(record.id, { Durum: "Hata", "Hata Mesajı": `Maksimum deneme sayısına ulaşıldı (${maxAttempts}). Yeniden denemek için Durum alanını Onaylandı yapın.`, "Deneme Sayısı": attempts });
       console.error(`${fields["Başlık"] || record.id}: maksimum deneme sayısı`);
+      await notifyFailure(`Buzsu yayın: "${fields["Başlık"] || record.id}" maksimum deneme sayısına (${maxAttempts}) ulaştı, elle onay bekliyor.`);
+      summary.failed += 1;
       continue;
     }
     const updates = {
@@ -231,6 +236,7 @@ export async function runPublisher() {
       updates.Not = clearLease({ ...fields, Not: updates.Not }, { type: "failed", error: String(error.message).slice(0, 500) });
       await updateAirtable(record.id, updates);
       console.error(`${fields["Başlık"] || record.id}: ${error.message}`);
+      await notifyFailure(`Buzsu yayın hatası: "${fields["Başlık"] || record.id}" — ${error.message}`);
       summary.failed += 1;
     }
   }

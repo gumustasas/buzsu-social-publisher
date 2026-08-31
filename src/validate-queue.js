@@ -1,7 +1,5 @@
 import "dotenv/config";
-
-const baseId = process.env.AIRTABLE_BASE_ID || "apphVqbUQohAMIoWk";
-const tableId = process.env.AIRTABLE_TABLE_ID || "tblir7vlazMo8v532";
+import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "./lib/config.js";
 const fields = ["Başlık", "Kaynak URL", "Görsel URL", "Platform", "Yayın Biçimi", "Yayın Zamanı", "Durum"];
 
 async function main() {
