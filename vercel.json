@@ -12,5 +12,13 @@
       "path": "/api/purge-trash",
       "schedule": "0 4 * * *"
     }
+  ],
+  "headers": [
+    {
+      "source": "/dashboard.html",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+      ]
+    }
   ]
 }
