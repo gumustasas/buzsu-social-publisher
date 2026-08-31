@@ -49,21 +49,35 @@ export function availableProviders(env = process.env) {
   ].filter(Boolean);
 }
 
+// "Su arıtma cihazları kategori paylaşımı" gibi tek bir ürünü değil bir
+// kategoriyi/genel bir konuyu temsil eden panel kayıtları için llms-full.txt'te
+// eşleşen bir ürün sayfası bulunamaz (fetchProductContext boş döner). Bu
+// durumda AI, isim belirsiz olduğu için en yaygın senaryoya (tezgah altı
+// cihaz + ayrı musluk + aile sahnesi) varsayılan olarak düşüyordu — kategori
+// paylaşımları için bu iddia yanlış ve tek bir ürünmüş gibi yanıltıcı oluyor.
+const CATEGORY_LIKE_TITLE_PATTERN = /kategori|koleksiyon/i;
+
 function scenePlanPrompt(product, context) {
+  const isCategoryLike = !context && CATEGORY_LIKE_TITLE_PATTERN.test(product.title || "");
   const grounding = context
     ? `Ürün hakkında buzsu.com.tr'den alınan gerçek bilgi:\n"""\n${context}\n"""\n\nÖnce bu bilgiye göre ürünün GERÇEKTE ne olduğunu ve nerede/nasıl kullanıldığını anla.`
-    : `Ürün hakkında ek bilgi bulunamadı; ürün adından mantıklı bir çıkarım yap.`;
-  return `Buzsu için "${product.title}" ürününün sosyal medya sahne görseli üretiminde kullanılacak bir sahne açıklaması yaz.
-
-${grounding}
-
-Sahneyi ürünün gerçek kullanım ortamına göre kurgula. ÖRNEĞİN ürün mutfakta kullanılan, içme suyu veren bir cihazsa (mutfak altı/üstü su arıtma cihazı gibi) şu şablonu kullanabilirsin:
+    : isCategoryLike
+      ? `Bu, TEK bir ürüne değil bir ürün KATEGORİSİNE veya genel bir konuya ait bir paylaşım gibi görünüyor ("${product.title}"); buzsu.com.tr'de bu başlıkla eşleşen belirli bir ürün sayfası bulunamadı.`
+      : `Ürün hakkında ek bilgi bulunamadı; ürün adından mantıklı bir çıkarım yap.`;
+  const sceneGuidance = isCategoryLike
+    ? `Bu bir kategori/genel konu paylaşımı olduğu için TEK bir cihazın kurulum detaylarını (örn. "tezgah altı dolap", "ayrı 3 yollu musluk", belirli bir model) İDDİA ETME — hangi spesifik ürün/model olduğunu bilmiyorsun. Bunun yerine kategoriyi temsil eden GENEL bir yaşam/temiz su sahnesi tarif et (örn. berrak su dolu bardaklar, mutlu bir aile veya kişi, sıcak ev/mutfak atmosferi) — tek bir ürünün teknik kurulum iddiasında bulunmadan.`
+    : `Sahneyi ürünün gerçek kullanım ortamına göre kurgula. ÖRNEĞİN ürün mutfakta kullanılan, içme suyu veren bir cihazsa (mutfak altı/üstü su arıtma cihazı gibi) şu şablonu kullanabilirsin:
 - Cihaz, mutfak tezgahı ALTINDAKİ dolabın içinde; dolap kapakları açık, cihaz görünüyor.
 - Cihazın kendi üzerinde veya hemen yanında HİÇBİR musluk yok.
 - Tezgah ÜSTÜNDE, ayrı ve bağımsız 3 yollu bir su arıtma musluğu var; su bu musluktan akıyor.
 - Mutlu bir aile sahnesi: bir çocuk musluktan bardağa su dolduruyor, diğer çocuk suyunu içiyor, anne ve baba ellerinde berrak, duru su dolu bardaklarla gülümsüyor.
 
-Ama ürün bu değilse (örneğin bina/apartman su girişine veya boruya takılan bir kireç önleyici, bir sayaç, bir filtre kartuşu, dışarıda kullanılan bir ekipman vb.) BU ŞABLONU ZORLAMA — ürünün gerçekte kurulduğu/kullanıldığı yeri (teknik oda, bodrum, su sayacı yanı, boru hattı, bahçe vb.) gerçekçi şekilde tarif et; mutfak veya aile sahnesi sadece ürün gerçekten mutfakta/içme suyunda kullanılıyorsa uygun olur.
+Ama ürün bu değilse (örneğin bina/apartman su girişine veya boruya takılan bir kireç önleyici, bir sayaç, bir filtre kartuşu, dışarıda kullanılan bir ekipman vb.) BU ŞABLONU ZORLAMA — ürünün gerçekte kurulduğu/kullanıldığı yeri (teknik oda, bodrum, su sayacı yanı, boru hattı, bahçe vb.) gerçekçi şekilde tarif et; mutfak veya aile sahnesi sadece ürün gerçekten mutfakta/içme suyunda kullanılıyorsa uygun olur.`;
+  return `Buzsu için "${product.title}" ${isCategoryLike ? "konusunun" : "ürününün"} sosyal medya sahne görseli üretiminde kullanılacak bir sahne açıklaması yaz.
+
+${grounding}
+
+${sceneGuidance}
 
 Her durumda: sıcak, doğal ışık; gerçekçi, reklam kalitesinde bir sahne olsun. Yalnızca sahnenin kendisini tarif eden, 2-4 cümlelik tek bir Türkçe paragraf yaz — talimat cümlesi ("şunu koru" gibi) veya ürün marka adı/teknik özellik ekleme, sadece ortamı ve (varsa) insanları tarif et. Başka açıklama, başlık veya tırnak işareti ekleme, yalnızca sahne metnini döndür.`;
 }

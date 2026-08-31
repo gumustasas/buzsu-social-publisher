@@ -139,3 +139,42 @@ test("generateScenePlan treats provider 'composite' the same as 'gemini' instead
     global.fetch = originalFetch;
   }
 });
+
+// Bir kullanıcı, "Su arıtma cihazları kategori paylaşımı" gibi TEK bir ürüne
+// değil bir kategoriye ait bir kaydı seçtiğinde, AI'nin buzsu.com.tr'de
+// eşleşen bir ürün sayfası bulamayınca (context boş) en yaygın senaryoya
+// (tezgah altı cihaz + ayrı musluk + aile sahnesi) varsayılan olarak
+// düştüğünü ve bunu tek bir gerçek ürünmüş gibi iddia ettiğini bildirdi.
+test("generateScenePlan does not claim a specific under-counter device installation for a category-like title with no matched product page", async () => {
+  const originalFetch = global.fetch;
+  let capturedBody = null;
+  global.fetch = async (url, options) => {
+    if (String(url).includes("llms-full.txt")) return { ok: true, text: async () => "bu metinde eşleşen bir ürün yok" };
+    capturedBody = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ output_text: "genel sahne" }) };
+  };
+  try {
+    await generateScenePlan("openai", { title: "Su arıtma cihazları kategori paylaşımı" }, { OPENAI_API_KEY: "key" });
+    assert.match(capturedBody.input, /KATEGORİSİNE veya genel bir konuya/);
+    assert.doesNotMatch(capturedBody.input, /tezgahı ALTINDAKİ dolabın içinde/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateScenePlan still offers the under-counter device template for an ordinary product title without a category/collection marker", async () => {
+  const originalFetch = global.fetch;
+  let capturedBody = null;
+  global.fetch = async (url, options) => {
+    if (String(url).includes("llms-full.txt")) return { ok: true, text: async () => "eşleşme yok" };
+    capturedBody = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ output_text: "cihaz sahnesi" }) };
+  };
+  try {
+    await generateScenePlan("openai", { title: "Code Advantage" }, { OPENAI_API_KEY: "key" });
+    assert.match(capturedBody.input, /tezgahı ALTINDAKİ dolabın içinde/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
