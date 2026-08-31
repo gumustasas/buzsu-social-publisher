@@ -144,6 +144,47 @@ export async function generateCaption(provider, product, env = process.env) {
   return { instagramText, facebookText, hashtags: String(parsed.hashtags || "#Buzsu").trim() };
 }
 
+// Composer'da kullanıcı serbest metin yazdığında (bkz. dashboard.html
+// "Serbest metin (yaz)"), hashtag'leri elle yazmak yerine markaya (Buzsu),
+// seçilen ürüne/kategoriye ve yazılan metnin kendisine göre otomatik
+// üretmek için kullanılır. Kısa bir çıktı olduğundan sahne planıyla aynı
+// düşük maliyetli model tercih edilir.
+function hashtagsPrompt(product, text, context) {
+  const grounding = context ? `Ürün/konu hakkında buzsu.com.tr'den alınan bilgi:\n"""\n${context}\n"""\n\n` : "";
+  return `Buzsu markası için hazırlanan bir sosyal medya paylaşımına 4-6 adet ilgili Türkçe hashtag üret.
+
+Marka: Buzsu
+Ürün/konu: "${product.title}"
+${grounding}Paylaşım metni:
+"""
+${text}
+"""
+
+Hashtagler #Buzsu ile başlamalı (mutlaka dahil et), markayı ve ürünü/konuyu yansıtsın, metindeki öne çıkan temaya uygun olsun. Aşırıya kaçma, abartılı/kanıtsız iddia içeren hashtag üretme. Çıktıyı yalnızca şu JSON şemasına göre ver: {"hashtags":"#Buzsu #..."}`;
+}
+
+export async function generateHashtags(provider, product, text, env = process.env) {
+  provider = normalizeTextProvider(provider);
+  if (provider !== "openai" && provider !== "gemini") throw new Error("Desteklenmeyen AI sağlayıcısı.");
+  const trimmedText = String(text || "").trim();
+  if (!trimmedText) throw new Error("Hashtag üretmek için önce metin yazın.");
+  const context = await fetchProductContext(product);
+  const input = hashtagsPrompt(product, trimmedText, context);
+  let raw;
+  if (provider === "openai") {
+    const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${openaiTextApiKey(env)}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-5.4-nano", input, store: false }) });
+    raw = textFromOpenAI(data);
+  } else {
+    const model = env.GEMINI_REEL_MODEL || "gemini-3.5-flash";
+    const data = await request(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, { method: "POST", headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: input }] }], generationConfig: { responseMimeType: "application/json" } }) });
+    raw = textFromGemini(data);
+  }
+  const parsed = parseJson(raw);
+  const hashtags = String(parsed.hashtags || "").trim();
+  if (!hashtags) throw new Error("AI hashtag boş döndü.");
+  return hashtags;
+}
+
 function motionPlanPrompt(sceneDescription) {
   const scene = String(sceneDescription || "").trim();
   const context = scene ? `Sahne: "${scene}".` : `Sahne açıklaması verilmedi; genel bir ürün sahnesi olduğunu varsay.`;
