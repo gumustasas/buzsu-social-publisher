@@ -6,8 +6,7 @@ import { generateCompositeSceneImage } from "../src/scene-composite.js";
 import { baseProductTitle } from "../src/lib/product-title.js";
 import { findCatalogProduct, isCatalogProductId } from "../src/lib/product-catalog.js";
 
-const baseId = process.env.AIRTABLE_BASE_ID || "apphVqbUQohAMIoWk";
-const tableId = process.env.AIRTABLE_TABLE_ID || "tblir7vlazMo8v532";
+import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "../src/lib/config.js";
 function authorized(request) { return Boolean(getSession(request)); }
 async function airtable(path = "") { const response = await fetch(`https://api.airtable.com/v0/${baseId}/${tableId}${path}?pageSize=100`, { headers: { Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}` } }); const data = await response.json(); if (!response.ok) throw new Error(data.error?.message || `Airtable HTTP ${response.status}`); return data; }
 

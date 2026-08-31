@@ -2,8 +2,7 @@ import "dotenv/config";
 import { getSession } from "../src/auth.js";
 import { baseProductTitle } from "../src/lib/product-title.js";
 
-const baseId = process.env.AIRTABLE_BASE_ID || "apphVqbUQohAMIoWk";
-const tableId = process.env.AIRTABLE_TABLE_ID || "tblir7vlazMo8v532";
+import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "../src/lib/config.js";
 
 function authorized(request) { return Boolean(getSession(request)); }
 function shotstackBase() { return process.env.SHOTSTACK_ENV === "stage" ? "https://api.shotstack.io/stage" : "https://api.shotstack.io/v1"; }

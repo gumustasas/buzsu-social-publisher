@@ -1,8 +1,8 @@
 import "dotenv/config";
+import { META_GRAPH_VERSION, assertMetaGraphVersionCurrent } from "./lib/config.js";
 
 const required = [
   "META_ACCESS_TOKEN",
-  "META_GRAPH_VERSION",
   "META_INSTAGRAM_ACCOUNT_ID",
   "META_FACEBOOK_PAGE_ID"
 ];
@@ -10,8 +10,9 @@ const required = [
 for (const name of required) {
   if (!process.env[name]) throw new Error(`${name} eksik.`);
 }
+assertMetaGraphVersionCurrent();
 
-const baseUrl = `https://graph.facebook.com/${process.env.META_GRAPH_VERSION}`;
+const baseUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
 const headers = { Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}` };
 
 async function read(path, params = {}) {

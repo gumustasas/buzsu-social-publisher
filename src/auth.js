@@ -1,9 +1,8 @@
 import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
+import { AIRTABLE_BASE_ID as baseId, AIRTABLE_USER_TABLE_ID as tableId } from "./lib/config.js";
 
 const scrypt = promisify(scryptCallback);
-const baseId = process.env.AIRTABLE_BASE_ID || "apphVqbUQohAMIoWk";
-const tableId = process.env.AIRTABLE_USER_TABLE_ID || "tblH84os6uOYsy4AK";
 const cookieName = "buzsu_panel_session";
 function secret() { return process.env.SESSION_SECRET || process.env.CRON_SECRET || ""; }
 function cookieHeader(value, maxAge = 60 * 60 * 24 * 7) { return `${cookieName}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`; }

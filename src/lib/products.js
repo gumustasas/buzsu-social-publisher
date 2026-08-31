@@ -1,8 +1,6 @@
 import { baseProductTitle } from "./product-title.js";
 import { listCatalogProducts, catalogProductId } from "./product-catalog.js";
-
-const baseId = process.env.AIRTABLE_BASE_ID || "apphVqbUQohAMIoWk";
-const tableId = process.env.AIRTABLE_TABLE_ID || "tblir7vlazMo8v532";
+import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "./config.js";
 
 export async function airtableRequest(path = "", options = {}) {
   const response = await fetch(`https://api.airtable.com/v0/${baseId}/${tableId}${path}`, {
