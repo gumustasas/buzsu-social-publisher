@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      # Gizli değer gerektirmez: process.env'i sadece okur, eksik/varsayılan
+      # durumunu loglar; hiçbir gerçek değeri ekrana yazmaz.
+      - run: npm run check
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Gitleaks'in ücretli GitHub Action sarmalayıcısı yerine doğrudan MIT
+      # lisanslı CLI ikilisini indirip çalıştırıyoruz — özel repo/organizasyon
+      # lisans şartına takılmadan aynı taramayı yapar. .gitleaksignore, bilinen
+      # yanlış pozitifleri (Airtable base/tablo ID'leri, ga4.test.js'teki
+      # sahte PEM anahtarları) allowlist'e alır.
+      - name: Install gitleaks
+        run: |
+          VERSION=$(curl -fsSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep -m1 '"tag_name"' | cut -d '"' -f4 | sed 's/^v//')
+          curl -fsSL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
+          tar -xzf gitleaks.tar.gz gitleaks
+      - name: Run gitleaks
+        run: ./gitleaks detect --source . --no-banner --redact

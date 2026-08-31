@@ -1,0 +1,15 @@
+# Bilinen yanlış pozitifler (gerçek sır değil):
+# - Airtable base/tablo ID'leri erişim kimlik bilgisi değil, sadece hangi
+#   base/tabloya bakılacağını belirten tanımlayıcılar; gerçek sır olan
+#   AIRTABLE_TOKEN hiçbir yerde literal olarak commit edilmedi.
+# - test/ga4.test.js içindeki "-----BEGIN PRIVATE KEY-----" dizeleri,
+#   normalizePrivateKey() fonksiyonunun string biçimlendirmesini test eden
+#   sahte/uydurma değerlerdir, gerçek bir anahtara ait değildir.
+f9bc562e716171ae448be36255e7c07253161133:test/ga4.test.js:private-key:13
+f9bc562e716171ae448be36255e7c07253161133:test/ga4.test.js:private-key:14
+f9bc562e716171ae448be36255e7c07253161133:test/ga4.test.js:private-key:21
+f9bc562e716171ae448be36255e7c07253161133:test/ga4.test.js:private-key:27
+e733c56d6505b36612408f087e2ec03d0b15a290:.env.example:airtable-api-key:2
+e733c56d6505b36612408f087e2ec03d0b15a290:.env.example:airtable-api-key:3
+e733c56d6505b36612408f087e2ec03d0b15a290:src/dry-run.js:airtable-api-key:5
+e733c56d6505b36612408f087e2ec03d0b15a290:src/dry-run.js:airtable-api-key:6
