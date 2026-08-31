@@ -50,22 +50,30 @@ export function availableProviders(env = process.env) {
 }
 
 // "Su arıtma cihazları kategori paylaşımı" gibi tek bir ürünü değil bir
-// kategoriyi/genel bir konuyu temsil eden panel kayıtları için llms-full.txt'te
-// eşleşen bir ürün sayfası bulunamaz (fetchProductContext boş döner). Bu
-// durumda AI, isim belirsiz olduğu için en yaygın senaryoya (tezgah altı
-// cihaz + ayrı musluk + aile sahnesi) varsayılan olarak düşüyordu — kategori
-// paylaşımları için bu iddia yanlış ve tek bir ürünmüş gibi yanıltıcı oluyor.
+// kategoriyi/genel bir konuyu temsil eden panel kayıtları için AI, isim
+// belirsiz olduğunda en yaygın senaryoya (tezgah altı cihaz + ayrı musluk +
+// aile sahnesi) varsayılan olarak düşüyordu — kategori paylaşımları için bu
+// iddia yanlış ve tek bir ürünmüş gibi yanıltıcı oluyor. Bu kontrol yalnızca
+// context boşken değil, başlık eşleştiğinde HER ZAMAN uygulanır: llms-full.txt
+// bu başlıkla zayıf/genel bir sayfa (örn. kategori listeleme sayfası) eşleştirip
+// context'i doldursa bile, o context yine de TEK bir cihazın kurulumunu
+// tarif etmiyor olabilir.
 const CATEGORY_LIKE_TITLE_PATTERN = /kategori|koleksiyon/i;
 
 function scenePlanPrompt(product, context) {
-  const isCategoryLike = !context && CATEGORY_LIKE_TITLE_PATTERN.test(product.title || "");
+  // Başlık kategori/koleksiyon işareti taşıyorsa, buzsu.com.tr'de bu başlıkla
+  // TAM eşleşen bir ürün sayfası bulunmuş olsa bile (örn. kategori listeleme
+  // sayfasındaki zayıf/genel bir metin context'e sızabilir) bu, TEK bir
+  // fiziksel cihazın kurulum detaylarını bilmediğimiz gerçeğini değiştirmez —
+  // bu yüzden kontrol yalnızca "context boş mu" değil, doğrudan başlığa bakar.
+  const isCategoryLike = CATEGORY_LIKE_TITLE_PATTERN.test(product.title || "");
   const grounding = context
-    ? `Ürün hakkında buzsu.com.tr'den alınan gerçek bilgi:\n"""\n${context}\n"""\n\nÖnce bu bilgiye göre ürünün GERÇEKTE ne olduğunu ve nerede/nasıl kullanıldığını anla.`
+    ? `${isCategoryLike ? "Konu" : "Ürün"} hakkında buzsu.com.tr'den alınan bilgi:\n"""\n${context}\n"""\n\n${isCategoryLike ? "Bu bilgi bir kategori/genel sayfaya ait olabilir, TEK bir ürünün kurulum detaylarını içermeyebilir — buna göre değerlendir." : "Önce bu bilgiye göre ürünün GERÇEKTE ne olduğunu ve nerede/nasıl kullanıldığını anla."}`
     : isCategoryLike
       ? `Bu, TEK bir ürüne değil bir ürün KATEGORİSİNE veya genel bir konuya ait bir paylaşım gibi görünüyor ("${product.title}"); buzsu.com.tr'de bu başlıkla eşleşen belirli bir ürün sayfası bulunamadı.`
       : `Ürün hakkında ek bilgi bulunamadı; ürün adından mantıklı bir çıkarım yap.`;
   const sceneGuidance = isCategoryLike
-    ? `Bu bir kategori/genel konu paylaşımı olduğu için TEK bir cihazın kurulum detaylarını (örn. "tezgah altı dolap", "ayrı 3 yollu musluk", belirli bir model) İDDİA ETME — hangi spesifik ürün/model olduğunu bilmiyorsun. Bunun yerine kategoriyi temsil eden GENEL bir yaşam/temiz su sahnesi tarif et (örn. berrak su dolu bardaklar, mutlu bir aile veya kişi, sıcak ev/mutfak atmosferi) — tek bir ürünün teknik kurulum iddiasında bulunmadan.`
+    ? `Bu bir kategori/genel konu paylaşımı olduğu için (yukarıda bir bilgi bulunmuş olsa bile) TEK bir cihazın kurulum detaylarını (örn. "tezgah altı dolap", "ayrı 3 yollu musluk", belirli bir model) İDDİA ETME — hangi spesifik ürün/model olduğunu bilmiyorsun. Bunun yerine kategoriyi temsil eden GENEL bir yaşam/temiz su sahnesi tarif et (örn. berrak su dolu bardaklar, mutlu bir aile veya kişi, sıcak ev/mutfak atmosferi) — tek bir ürünün teknik kurulum iddiasında bulunmadan.`
     : `Sahneyi ürünün gerçek kullanım ortamına göre kurgula. ÖRNEĞİN ürün mutfakta kullanılan, içme suyu veren bir cihazsa (mutfak altı/üstü su arıtma cihazı gibi) şu şablonu kullanabilirsin:
 - Cihaz, mutfak tezgahı ALTINDAKİ dolabın içinde; dolap kapakları açık, cihaz görünüyor.
 - Cihazın kendi üzerinde veya hemen yanında HİÇBİR musluk yok.

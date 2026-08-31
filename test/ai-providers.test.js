@@ -140,11 +140,38 @@ test("generateScenePlan treats provider 'composite' the same as 'gemini' instead
   }
 });
 
+// NOT: fetchProductContext() modül seviyesinde 30 dakikalık bir önbellek
+// tutuyor (bkz. src/lib/product-context.js) — bu dosyadaki testler arasında
+// paylaşılır. Bu yüzden bu üç kategori/context testi, önbelleği İLK dolduran
+// testin metni sonraki testleri etkilemesin diye kasıtlı olarak bu sırada ve
+// birbirinden ayırt edilebilir başlıklarla yazıldı.
+
 // Bir kullanıcı, "Su arıtma cihazları kategori paylaşımı" gibi TEK bir ürüne
 // değil bir kategoriye ait bir kaydı seçtiğinde, AI'nin buzsu.com.tr'de
 // eşleşen bir ürün sayfası bulamayınca (context boş) en yaygın senaryoya
 // (tezgah altı cihaz + ayrı musluk + aile sahnesi) varsayılan olarak
-// düştüğünü ve bunu tek bir gerçek ürünmüş gibi iddia ettiğini bildirdi.
+// düştüğünü ve bunu tek bir gerçek ürünmüş gibi iddia ettiğini bildirdi. Bir
+// sonraki raporda ise, llms-full.txt bu başlıkla zayıf/genel bir sayfayı
+// (örn. kategori listeleme sayfası) eşleştirip context'i doldurunca da aynı
+// hatalı iddianın geri döndüğü ortaya çıktı — bu yüzden kontrol artık yalnızca
+// "context boş mu" değil, doğrudan başlığa bakıyor (context bulunsa bile).
+test("generateScenePlan does not claim a specific under-counter device installation for a category-like title even when a weak/generic context IS matched", async () => {
+  const originalFetch = global.fetch;
+  let capturedBody = null;
+  global.fetch = async (url, options) => {
+    if (String(url).includes("llms-full.txt")) return { ok: true, text: async () => "Su Arıtma Cihazları Kategorisi - tüm su arıtma cihazlarımızı burada inceleyebilirsiniz." };
+    capturedBody = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ output_text: "genel sahne" }) };
+  };
+  try {
+    await generateScenePlan("openai", { title: "Su Arıtma Cihazları Kategorisi" }, { OPENAI_API_KEY: "key" });
+    assert.match(capturedBody.input, /TEK bir cihazın kurulum detaylarını.*İDDİA ETME/s);
+    assert.doesNotMatch(capturedBody.input, /tezgahı ALTINDAKİ dolabın içinde/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("generateScenePlan does not claim a specific under-counter device installation for a category-like title with no matched product page", async () => {
   const originalFetch = global.fetch;
   let capturedBody = null;
