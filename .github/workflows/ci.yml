@@ -31,10 +31,17 @@ jobs:
       # lisans şartına takılmadan aynı taramayı yapar. .gitleaksignore, bilinen
       # yanlış pozitifleri (Airtable base/tablo ID'leri, ga4.test.js'teki
       # sahte PEM anahtarları) allowlist'e alır.
+      #
+      # Sürüm bilinçli olarak sabitlendi ("latest" değil): .gitleaksignore
+      # içindeki fingerprint'ler bu sürümün ruleset'ine göre doğrulandı; daha
+      # yeni bir sürüm farklı/ek kurallarla yanlış pozitif sayısını
+      # öngörülemez şekilde artırabilir (bu PR'da tam olarak bu yaşandı — bkz.
+      # PR #1 tartışması). Periyodik olarak elle yükseltip yeniden doğrulayın.
       - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: "8.21.2"
         run: |
-          VERSION=$(curl -fsSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep -m1 '"tag_name"' | cut -d '"' -f4 | sed 's/^v//')
-          curl -fsSL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           tar -xzf gitleaks.tar.gz gitleaks
       - name: Run gitleaks
         run: ./gitleaks detect --source . --no-banner --redact
