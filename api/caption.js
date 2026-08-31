@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { getSession } from "../src/auth.js";
-import { availableProviders, generateCaption } from "../src/ai-providers.js";
+import { availableProviders, generateCaption, generateHashtags } from "../src/ai-providers.js";
 import { baseProductTitle } from "../src/lib/product-title.js";
 import { findCatalogProduct, isCatalogProductId } from "../src/lib/product-catalog.js";
 
@@ -32,6 +32,10 @@ export default async function handler(request, response) {
       const fields = record?.fields || {};
       if (!record) return response.status(400).json({ error: "Ürün seçilmedi." });
       product = { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", url: fields["Kaynak URL"] || "" };
+    }
+    if (body.mode === "hashtags") {
+      const hashtags = await generateHashtags(provider, product, body.text, process.env);
+      return response.status(200).json({ ok: true, hashtags });
     }
     const caption = await generateCaption(provider, product, process.env);
     return response.status(200).json({ ok: true, caption });

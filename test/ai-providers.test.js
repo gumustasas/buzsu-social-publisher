@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { availableProviders, generateScenePlan, generateCaption, generateMotionPlan, generateReelPackage } from "../src/ai-providers.js";
+import { availableProviders, generateScenePlan, generateCaption, generateMotionPlan, generateReelPackage, generateHashtags } from "../src/ai-providers.js";
 
 test("AI provider availability is derived from configured keys", () => {
   assert.deepEqual(availableProviders({ OPENAI_API_KEY: "x", ANTHROPIC_API_KEY: "", GEMINI_API_KEY: "y" }), ["openai", "gemini", "veo"]);
@@ -205,3 +205,39 @@ test("generateScenePlan still offers the under-counter device template for an or
   }
 });
 
+
+// Kullanıcı, serbest metin yazarken hashtag'leri elle yazmak yerine markaya
+// (Buzsu), seçilen ürüne/kategoriye ve yazılan metne göre otomatik üretilmesini
+// istedi (bkz. dashboard.html "Serbest metin (yaz)" — hashtag alanı artık bir
+// "Hashtag üret (AI)" butonuyla dolduruluyor).
+test("generateHashtags rejects an unsupported provider before making any network call", async () => {
+  await assert.rejects(
+    () => generateHashtags("anthropic", { title: "Code Advantage" }, "merhaba", {}),
+    /Desteklenmeyen AI sağlayıcısı/
+  );
+});
+
+test("generateHashtags requires non-empty text before making any network call", async () => {
+  await assert.rejects(
+    () => generateHashtags("openai", { title: "Code Advantage" }, "   ", { OPENAI_API_KEY: "key" }),
+    /önce metin yazın/
+  );
+});
+
+test("generateHashtags sends the product title and user-written text to the AI and returns the generated hashtags", async () => {
+  const originalFetch = global.fetch;
+  let capturedBody = null;
+  global.fetch = async (url, options) => {
+    if (String(url).includes("llms-full.txt")) return { ok: true, text: async () => "eşleşme yok" };
+    capturedBody = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ output_text: '{"hashtags":"#Buzsu #Code #SuArıtma"}' }) };
+  };
+  try {
+    const hashtags = await generateHashtags("openai", { title: "Code Advantage" }, "Mutfaklar için pratik bir çözüm.", { OPENAI_API_KEY: "key" });
+    assert.match(capturedBody.input, /Code Advantage/);
+    assert.match(capturedBody.input, /Mutfaklar için pratik bir çözüm\./);
+    assert.equal(hashtags, "#Buzsu #Code #SuArıtma");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
