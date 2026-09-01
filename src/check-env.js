@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { AIRTABLE_BASE_ID, AIRTABLE_TABLE_ID, DEFAULT_META_GRAPH_VERSION } from "./lib/config.js";
 
 const checks = [
   {
@@ -8,12 +9,12 @@ const checks = [
   {
     name: "AIRTABLE_BASE_ID",
     requiredFor: "Doğru Airtable base seçimi",
-    fallback: "apphVqbUQohAMIoWk"
+    fallback: AIRTABLE_BASE_ID
   },
   {
     name: "AIRTABLE_TABLE_ID",
     requiredFor: "Sosyal Medya Takvimi tablosu",
-    fallback: "tblir7vlazMo8v532"
+    fallback: AIRTABLE_TABLE_ID
   },
   {
     name: "META_ACCESS_TOKEN",
@@ -37,7 +38,8 @@ const checks = [
   },
   {
     name: "META_GRAPH_VERSION",
-    requiredFor: "Meta Graph API sürümü"
+    requiredFor: "Meta Graph API sürümü",
+    fallback: DEFAULT_META_GRAPH_VERSION
   },
   {
     name: "SOCIAL_POST_LIMIT",

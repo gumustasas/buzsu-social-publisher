@@ -49,21 +49,43 @@ export function availableProviders(env = process.env) {
   ].filter(Boolean);
 }
 
+// "Su arıtma cihazları kategori paylaşımı" gibi tek bir ürünü değil bir
+// kategoriyi/genel bir konuyu temsil eden panel kayıtları için AI, isim
+// belirsiz olduğunda en yaygın senaryoya (tezgah altı cihaz + ayrı musluk +
+// aile sahnesi) varsayılan olarak düşüyordu — kategori paylaşımları için bu
+// iddia yanlış ve tek bir ürünmüş gibi yanıltıcı oluyor. Bu kontrol yalnızca
+// context boşken değil, başlık eşleştiğinde HER ZAMAN uygulanır: llms-full.txt
+// bu başlıkla zayıf/genel bir sayfa (örn. kategori listeleme sayfası) eşleştirip
+// context'i doldursa bile, o context yine de TEK bir cihazın kurulumunu
+// tarif etmiyor olabilir.
+const CATEGORY_LIKE_TITLE_PATTERN = /kategori|koleksiyon/i;
+
 function scenePlanPrompt(product, context) {
+  // Başlık kategori/koleksiyon işareti taşıyorsa, buzsu.com.tr'de bu başlıkla
+  // TAM eşleşen bir ürün sayfası bulunmuş olsa bile (örn. kategori listeleme
+  // sayfasındaki zayıf/genel bir metin context'e sızabilir) bu, TEK bir
+  // fiziksel cihazın kurulum detaylarını bilmediğimiz gerçeğini değiştirmez —
+  // bu yüzden kontrol yalnızca "context boş mu" değil, doğrudan başlığa bakar.
+  const isCategoryLike = CATEGORY_LIKE_TITLE_PATTERN.test(product.title || "");
   const grounding = context
-    ? `Ürün hakkında buzsu.com.tr'den alınan gerçek bilgi:\n"""\n${context}\n"""\n\nÖnce bu bilgiye göre ürünün GERÇEKTE ne olduğunu ve nerede/nasıl kullanıldığını anla.`
-    : `Ürün hakkında ek bilgi bulunamadı; ürün adından mantıklı bir çıkarım yap.`;
-  return `Buzsu için "${product.title}" ürününün sosyal medya sahne görseli üretiminde kullanılacak bir sahne açıklaması yaz.
-
-${grounding}
-
-Sahneyi ürünün gerçek kullanım ortamına göre kurgula. ÖRNEĞİN ürün mutfakta kullanılan, içme suyu veren bir cihazsa (mutfak altı/üstü su arıtma cihazı gibi) şu şablonu kullanabilirsin:
+    ? `${isCategoryLike ? "Konu" : "Ürün"} hakkında buzsu.com.tr'den alınan bilgi:\n"""\n${context}\n"""\n\n${isCategoryLike ? "Bu bilgi bir kategori/genel sayfaya ait olabilir, TEK bir ürünün kurulum detaylarını içermeyebilir — buna göre değerlendir." : "Önce bu bilgiye göre ürünün GERÇEKTE ne olduğunu ve nerede/nasıl kullanıldığını anla."}`
+    : isCategoryLike
+      ? `Bu, TEK bir ürüne değil bir ürün KATEGORİSİNE veya genel bir konuya ait bir paylaşım gibi görünüyor ("${product.title}"); buzsu.com.tr'de bu başlıkla eşleşen belirli bir ürün sayfası bulunamadı.`
+      : `Ürün hakkında ek bilgi bulunamadı; ürün adından mantıklı bir çıkarım yap.`;
+  const sceneGuidance = isCategoryLike
+    ? `Bu bir kategori/genel konu paylaşımı olduğu için (yukarıda bir bilgi bulunmuş olsa bile) TEK bir cihazın kurulum detaylarını (örn. "tezgah altı dolap", "ayrı 3 yollu musluk", belirli bir model) İDDİA ETME — hangi spesifik ürün/model olduğunu bilmiyorsun. Bunun yerine kategoriyi temsil eden GENEL bir yaşam/temiz su sahnesi tarif et (örn. berrak su dolu bardaklar, mutlu bir aile veya kişi, sıcak ev/mutfak atmosferi) — tek bir ürünün teknik kurulum iddiasında bulunmadan.`
+    : `Sahneyi ürünün gerçek kullanım ortamına göre kurgula. ÖRNEĞİN ürün mutfakta kullanılan, içme suyu veren bir cihazsa (mutfak altı/üstü su arıtma cihazı gibi) şu şablonu kullanabilirsin:
 - Cihaz, mutfak tezgahı ALTINDAKİ dolabın içinde; dolap kapakları açık, cihaz görünüyor.
 - Cihazın kendi üzerinde veya hemen yanında HİÇBİR musluk yok.
 - Tezgah ÜSTÜNDE, ayrı ve bağımsız 3 yollu bir su arıtma musluğu var; su bu musluktan akıyor.
 - Mutlu bir aile sahnesi: bir çocuk musluktan bardağa su dolduruyor, diğer çocuk suyunu içiyor, anne ve baba ellerinde berrak, duru su dolu bardaklarla gülümsüyor.
 
-Ama ürün bu değilse (örneğin bina/apartman su girişine veya boruya takılan bir kireç önleyici, bir sayaç, bir filtre kartuşu, dışarıda kullanılan bir ekipman vb.) BU ŞABLONU ZORLAMA — ürünün gerçekte kurulduğu/kullanıldığı yeri (teknik oda, bodrum, su sayacı yanı, boru hattı, bahçe vb.) gerçekçi şekilde tarif et; mutfak veya aile sahnesi sadece ürün gerçekten mutfakta/içme suyunda kullanılıyorsa uygun olur.
+Ama ürün bu değilse (örneğin bina/apartman su girişine veya boruya takılan bir kireç önleyici, bir sayaç, bir filtre kartuşu, dışarıda kullanılan bir ekipman vb.) BU ŞABLONU ZORLAMA — ürünün gerçekte kurulduğu/kullanıldığı yeri (teknik oda, bodrum, su sayacı yanı, boru hattı, bahçe vb.) gerçekçi şekilde tarif et; mutfak veya aile sahnesi sadece ürün gerçekten mutfakta/içme suyunda kullanılıyorsa uygun olur.`;
+  return `Buzsu için "${product.title}" ${isCategoryLike ? "konusunun" : "ürününün"} sosyal medya sahne görseli üretiminde kullanılacak bir sahne açıklaması yaz.
+
+${grounding}
+
+${sceneGuidance}
 
 Her durumda: sıcak, doğal ışık; gerçekçi, reklam kalitesinde bir sahne olsun. Yalnızca sahnenin kendisini tarif eden, 2-4 cümlelik tek bir Türkçe paragraf yaz — talimat cümlesi ("şunu koru" gibi) veya ürün marka adı/teknik özellik ekleme, sadece ortamı ve (varsa) insanları tarif et. Başka açıklama, başlık veya tırnak işareti ekleme, yalnızca sahne metnini döndür.`;
 }
@@ -165,6 +187,47 @@ export async function generateSeoArticle(provider, product, topic, env = process
   const body = String(parsed.body || "").trim();
   if (!title || !body) throw new Error("AI yazı içeriği boş döndü.");
   return { title, body, provider, product: product.title, generatedAt: new Date().toISOString() };
+}
+
+// Composer'da kullanıcı serbest metin yazdığında (bkz. dashboard.html
+// "Serbest metin (yaz)"), hashtag'leri elle yazmak yerine markaya (Buzsu),
+// seçilen ürüne/kategoriye ve yazılan metnin kendisine göre otomatik
+// üretmek için kullanılır. Kısa bir çıktı olduğundan sahne planıyla aynı
+// düşük maliyetli model tercih edilir.
+function hashtagsPrompt(product, text, context) {
+  const grounding = context ? `Ürün/konu hakkında buzsu.com.tr'den alınan bilgi:\n"""\n${context}\n"""\n\n` : "";
+  return `Buzsu markası için hazırlanan bir sosyal medya paylaşımına 4-6 adet ilgili Türkçe hashtag üret.
+
+Marka: Buzsu
+Ürün/konu: "${product.title}"
+${grounding}Paylaşım metni:
+"""
+${text}
+"""
+
+Hashtagler #Buzsu ile başlamalı (mutlaka dahil et), markayı ve ürünü/konuyu yansıtsın, metindeki öne çıkan temaya uygun olsun. Aşırıya kaçma, abartılı/kanıtsız iddia içeren hashtag üretme. Çıktıyı yalnızca şu JSON şemasına göre ver: {"hashtags":"#Buzsu #..."}`;
+}
+
+export async function generateHashtags(provider, product, text, env = process.env) {
+  provider = normalizeTextProvider(provider);
+  if (provider !== "openai" && provider !== "gemini") throw new Error("Desteklenmeyen AI sağlayıcısı.");
+  const trimmedText = String(text || "").trim();
+  if (!trimmedText) throw new Error("Hashtag üretmek için önce metin yazın.");
+  const context = await fetchProductContext(product);
+  const input = hashtagsPrompt(product, trimmedText, context);
+  let raw;
+  if (provider === "openai") {
+    const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${openaiTextApiKey(env)}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-5.4-nano", input, store: false }) });
+    raw = textFromOpenAI(data);
+  } else {
+    const model = env.GEMINI_REEL_MODEL || "gemini-3.5-flash";
+    const data = await request(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, { method: "POST", headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: input }] }], generationConfig: { responseMimeType: "application/json" } }) });
+    raw = textFromGemini(data);
+  }
+  const parsed = parseJson(raw);
+  const hashtags = String(parsed.hashtags || "").trim();
+  if (!hashtags) throw new Error("AI hashtag boş döndü.");
+  return hashtags;
 }
 
 function motionPlanPrompt(sceneDescription) {

@@ -3,8 +3,7 @@ import { appendEvent, parseJsonNote } from "../src/lib/queue.js";
 import { summarizeRecords } from "../src/lib/metrics.js";
 import { getSession } from "../src/auth.js";
 
-const baseId = process.env.AIRTABLE_BASE_ID || "apphVqbUQohAMIoWk";
-const tableId = process.env.AIRTABLE_TABLE_ID || "tblir7vlazMo8v532";
+import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "../src/lib/config.js";
 
 function authorized(request) {
   const expected = process.env.CRON_SECRET;

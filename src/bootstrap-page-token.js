@@ -1,12 +1,14 @@
 import "dotenv/config";
 import fs from "node:fs";
+import { META_GRAPH_VERSION, assertMetaGraphVersionCurrent } from "./lib/config.js";
 
-const { META_ACCESS_TOKEN, META_GRAPH_VERSION, META_FACEBOOK_PAGE_ID } = process.env;
+const { META_ACCESS_TOKEN, META_FACEBOOK_PAGE_ID } = process.env;
 const envPath = new URL("../.env", import.meta.url);
 
-if (!META_ACCESS_TOKEN || !META_GRAPH_VERSION || !META_FACEBOOK_PAGE_ID) {
-  throw new Error("Meta kullanıcı tokenı, Graph sürümü veya Facebook sayfa ID'si eksik.");
+if (!META_ACCESS_TOKEN || !META_FACEBOOK_PAGE_ID) {
+  throw new Error("Meta kullanıcı tokenı veya Facebook sayfa ID'si eksik.");
 }
+assertMetaGraphVersionCurrent();
 
 const url = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/${META_FACEBOOK_PAGE_ID}`);
 url.searchParams.set("fields", "id,name,access_token");

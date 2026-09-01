@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { availableProviders, generateScenePlan, generateCaption, generateMotionPlan, generateReelPackage, generateSeoArticle } from "../src/ai-providers.js";
+import { availableProviders, generateScenePlan, generateCaption, generateMotionPlan, generateReelPackage, generateSeoArticle, generateHashtags } from "../src/ai-providers.js";
 
 test("AI provider availability is derived from configured keys", () => {
   assert.deepEqual(availableProviders({ OPENAI_API_KEY: "x", ANTHROPIC_API_KEY: "", GEMINI_API_KEY: "y" }), ["openai", "gemini", "veo"]);
@@ -147,6 +147,83 @@ test("generateSeoArticle rejects an unsupported provider before making any netwo
   );
 });
 
+// NOT: fetchProductContext() modül seviyesinde 30 dakikalık bir önbellek
+// tutuyor (bkz. src/lib/product-context.js) — bu dosyadaki testler arasında
+// paylaşılır. Bu yüzden bu üç kategori/context testi, önbelleği İLK dolduran
+// testin metni sonraki testleri etkilemesin diye kasıtlı olarak bu sırada ve
+// birbirinden ayırt edilebilir başlıklarla yazıldı.
+
+// Bir kullanıcı, "Su arıtma cihazları kategori paylaşımı" gibi TEK bir ürüne
+// değil bir kategoriye ait bir kaydı seçtiğinde, AI'nin buzsu.com.tr'de
+// eşleşen bir ürün sayfası bulamayınca (context boş) en yaygın senaryoya
+// (tezgah altı cihaz + ayrı musluk + aile sahnesi) varsayılan olarak
+// düştüğünü ve bunu tek bir gerçek ürünmüş gibi iddia ettiğini bildirdi. Bir
+// sonraki raporda ise, llms-full.txt bu başlıkla zayıf/genel bir sayfayı
+// (örn. kategori listeleme sayfası) eşleştirip context'i doldurunca da aynı
+// hatalı iddianın geri döndüğü ortaya çıktı — bu yüzden kontrol artık yalnızca
+// "context boş mu" değil, doğrudan başlığa bakıyor (context bulunsa bile).
+test("generateScenePlan does not claim a specific under-counter device installation for a category-like title even when a weak/generic context IS matched", async () => {
+  const originalFetch = global.fetch;
+  let capturedBody = null;
+  global.fetch = async (url, options) => {
+    if (String(url).includes("llms-full.txt")) return { ok: true, text: async () => "Su Arıtma Cihazları Kategorisi - tüm su arıtma cihazlarımızı burada inceleyebilirsiniz." };
+    capturedBody = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ output_text: "genel sahne" }) };
+  };
+  try {
+    await generateScenePlan("openai", { title: "Su Arıtma Cihazları Kategorisi" }, { OPENAI_API_KEY: "key" });
+    assert.match(capturedBody.input, /TEK bir cihazın kurulum detaylarını.*İDDİA ETME/s);
+    assert.doesNotMatch(capturedBody.input, /tezgahı ALTINDAKİ dolabın içinde/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateScenePlan does not claim a specific under-counter device installation for a category-like title with no matched product page", async () => {
+  const originalFetch = global.fetch;
+  let capturedBody = null;
+  global.fetch = async (url, options) => {
+    if (String(url).includes("llms-full.txt")) return { ok: true, text: async () => "bu metinde eşleşen bir ürün yok" };
+    capturedBody = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ output_text: "genel sahne" }) };
+  };
+  try {
+    await generateScenePlan("openai", { title: "Su arıtma cihazları kategori paylaşımı" }, { OPENAI_API_KEY: "key" });
+    assert.match(capturedBody.input, /KATEGORİSİNE veya genel bir konuya/);
+    assert.doesNotMatch(capturedBody.input, /tezgahı ALTINDAKİ dolabın içinde/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateScenePlan still offers the under-counter device template for an ordinary product title without a category/collection marker", async () => {
+  const originalFetch = global.fetch;
+  let capturedBody = null;
+  global.fetch = async (url, options) => {
+    if (String(url).includes("llms-full.txt")) return { ok: true, text: async () => "eşleşme yok" };
+    capturedBody = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ output_text: "cihaz sahnesi" }) };
+  };
+  try {
+    await generateScenePlan("openai", { title: "Code Advantage" }, { OPENAI_API_KEY: "key" });
+    assert.match(capturedBody.input, /tezgahı ALTINDAKİ dolabın içinde/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+
+// Kullanıcı, serbest metin yazarken hashtag'leri elle yazmak yerine markaya
+// (Buzsu), seçilen ürüne/kategoriye ve yazılan metne göre otomatik üretilmesini
+// istedi (bkz. dashboard.html "Serbest metin (yaz)" — hashtag alanı artık bir
+// "Hashtag üret (AI)" butonuyla dolduruluyor).
+test("generateHashtags rejects an unsupported provider before making any network call", async () => {
+  await assert.rejects(
+    () => generateHashtags("anthropic", { title: "Code Advantage" }, "merhaba", {}),
+    /Desteklenmeyen AI sağlayıcısı/
+  );
+});
+
 test("generateSeoArticle uses the working OPENAI_IMAGE_API_KEY over the depleted OPENAI_API_KEY and returns title+body", async () => {
   const originalFetch = global.fetch;
   let capturedAuth = null;
@@ -183,6 +260,31 @@ test("generateSeoArticle treats provider 'openai-low'/'composite' the same as 'o
   try {
     const article = await generateSeoArticle("openai-low", { title: "UltraMag" }, "", { OPENAI_API_KEY: "key" });
     assert.equal(article.title, "t");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateHashtags requires non-empty text before making any network call", async () => {
+  await assert.rejects(
+    () => generateHashtags("openai", { title: "Code Advantage" }, "   ", { OPENAI_API_KEY: "key" }),
+    /önce metin yazın/
+  );
+});
+
+test("generateHashtags sends the product title and user-written text to the AI and returns the generated hashtags", async () => {
+  const originalFetch = global.fetch;
+  let capturedBody = null;
+  global.fetch = async (url, options) => {
+    if (String(url).includes("llms-full.txt")) return { ok: true, text: async () => "eşleşme yok" };
+    capturedBody = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ output_text: '{"hashtags":"#Buzsu #Code #SuArıtma"}' }) };
+  };
+  try {
+    const hashtags = await generateHashtags("openai", { title: "Code Advantage" }, "Mutfaklar için pratik bir çözüm.", { OPENAI_API_KEY: "key" });
+    assert.match(capturedBody.input, /Code Advantage/);
+    assert.match(capturedBody.input, /Mutfaklar için pratik bir çözüm\./);
+    assert.equal(hashtags, "#Buzsu #Code #SuArıtma");
   } finally {
     global.fetch = originalFetch;
   }

@@ -1,10 +1,7 @@
 import "dotenv/config";
+import { AIRTABLE_BASE_ID, AIRTABLE_TABLE_ID } from "./lib/config.js";
 
-const {
-  AIRTABLE_TOKEN,
-  AIRTABLE_BASE_ID = "apphVqbUQohAMIoWk",
-  AIRTABLE_TABLE_ID = "tblir7vlazMo8v532"
-} = process.env;
+const { AIRTABLE_TOKEN } = process.env;
 
 const FIELD_NAMES = [
   "Başlık",
