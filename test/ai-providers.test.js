@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { availableProviders, generateScenePlan, generateCaption, generateMotionPlan, generateReelPackage } from "../src/ai-providers.js";
+import { availableProviders, generateScenePlan, generateCaption, generateMotionPlan, generateReelPackage, generateSeoArticle } from "../src/ai-providers.js";
 
 test("AI provider availability is derived from configured keys", () => {
   assert.deepEqual(availableProviders({ OPENAI_API_KEY: "x", ANTHROPIC_API_KEY: "", GEMINI_API_KEY: "y" }), ["openai", "gemini", "veo"]);
@@ -135,6 +135,54 @@ test("generateScenePlan treats provider 'composite' the same as 'gemini' instead
   try {
     const plan = await generateScenePlan("composite", { title: "Code Advantage" }, { GEMINI_API_KEY: "key" });
     assert.equal(plan, "test sahne planı");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateSeoArticle rejects an unsupported provider before making any network call", async () => {
+  await assert.rejects(
+    () => generateSeoArticle("anthropic", { title: "UltraMag" }, "manyetik kireç önleyici", {}),
+    /Desteklenmeyen AI sağlayıcısı/
+  );
+});
+
+test("generateSeoArticle uses the working OPENAI_IMAGE_API_KEY over the depleted OPENAI_API_KEY and returns title+body", async () => {
+  const originalFetch = global.fetch;
+  let capturedAuth = null;
+  global.fetch = async (url, options) => {
+    capturedAuth = options.headers.Authorization;
+    return { ok: true, json: async () => ({ output_text: '{"title":"Manyetik Kireç Önleyici Nedir?","body":"Manyetik kireç önleyici, su hattındaki kireci manyetik alanla azaltan bir cihazdır."}' }) };
+  };
+  try {
+    const article = await generateSeoArticle("openai", { title: "UltraMag" }, "manyetik kireç önleyici", { OPENAI_API_KEY: "depleted-key", OPENAI_IMAGE_API_KEY: "credited-key" });
+    assert.equal(capturedAuth, "Bearer credited-key");
+    assert.equal(article.title, "Manyetik Kireç Önleyici Nedir?");
+    assert.match(article.body, /manyetik alanla/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateSeoArticle throws when the AI response has no title or body", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, json: async () => ({ output_text: '{"title":"","body":""}' }) });
+  try {
+    await assert.rejects(
+      () => generateSeoArticle("openai", { title: "UltraMag" }, "", { OPENAI_API_KEY: "key" }),
+      /AI yazı içeriği boş döndü/
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateSeoArticle treats provider 'openai-low'/'composite' the same as 'openai'/'gemini' instead of rejecting them", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, json: async () => ({ output_text: '{"title":"t","body":"b"}' }) });
+  try {
+    const article = await generateSeoArticle("openai-low", { title: "UltraMag" }, "", { OPENAI_API_KEY: "key" });
+    assert.equal(article.title, "t");
   } finally {
     global.fetch = originalFetch;
   }

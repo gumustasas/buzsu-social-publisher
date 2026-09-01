@@ -122,6 +122,51 @@ export async function generateCaption(provider, product, env = process.env) {
   return { instagramText, facebookText, hashtags: String(parsed.hashtags || "#Buzsu").trim() };
 }
 
+function seoArticlePrompt(product, topic, context) {
+  const grounding = context
+    ? `Ürün hakkında buzsu.com.tr'den alınan gerçek bilgi:\n"""\n${context}\n"""\n\nYazıyı bu gerçek bilgiye dayandır, uydurma teknik özellik/iddia ekleme.`
+    : `Ürün hakkında ek bilgi bulunamadı; yalnızca ürün adına ve genel bilgiye dayanarak yaz, uydurma teknik özellik ekleme.`;
+  const focusTopic = String(topic || "").trim() || product.title;
+  return `Buzsu (buzsu.com.tr, su arıtma ürünleri) için "${focusTopic}" konulu bir SEO/GEO makalesi yaz. Konu, "${product.title}" ürünüyle ilgili.
+
+${grounding}
+
+Bu yazı hem geleneksel Google aramasında hem de ChatGPT, Gemini, Perplexity gibi yapay zeka arama/cevap motorlarında (GEO/AEO) doğru anlaşılıp alıntılanmalı. Şu kurallara uy:
+- İlk paragraf, konunun DOĞRUDAN ve net cevabını/tanımını versin — AI'ların tek başına alıntılayabileceği kısa, öz bir açılış cümlesiyle başla.
+- Ardından 2-4 kısa alt başlık altında konuyu açıkla (nasıl çalıştığı, kimin için uygun olduğu, dikkat edilmesi gerekenler gibi). Alt başlıkları "## " ile işaretle.
+- Yazının sonunda "## Sıkça Sorulan Sorular" başlığı altında 2-3 soru-cevap olsun; her cevap 1-2 cümle, net ve doğrudan olsun (AI cevap motorlarının kolayca alıntılayabileceği formatta). Soruları "**Soru?**" şeklinde kalın yaz.
+- Ne çok uzun (blog makalesi gibi) ne çok kısa (birkaç cümle) olsun; toplam 250-400 kelime arası, sade ve net Türkçe cümleler kullan.
+- Sağlık, tedavi, kesin sonuç, garanti gibi kanıtsız iddialar veya "en iyi" gibi abartılı üstünlük ifadeleri kullanma.
+- Doğal biçimde anahtar kelime kullan ama kelime tekrarına/doldurmaya (keyword stuffing) kaçma.
+- Yazının sonuna kısa bir çağrı cümlesiyle buzsu.com.tr'ye yönlendirme yap (link ekleme, sadece cümle).
+
+Çıktıyı yalnızca şu JSON şemasına göre ver: {"title":"SEO başlığı (60 karakter civarı)","body":"tam yazı metni (paragraflar/başlıklar arasında çift satır boşluğu ile)"}`;
+}
+
+// LinkedIn, Medium, Reddit gibi platformlara ve Facebook'a kopyala-yapıştır
+// ile paylaşılacak bağımsız bir SEO/GEO yazısı üretir (bkz. api/content-seo.js).
+// Kuyruğa/Airtable'a hiçbir şey yazmaz — panelde üretilip anlık gösterilir.
+export async function generateSeoArticle(provider, product, topic, env = process.env) {
+  provider = normalizeTextProvider(provider);
+  if (provider !== "openai" && provider !== "gemini") throw new Error("Desteklenmeyen AI sağlayıcısı.");
+  const context = await fetchProductContext(product);
+  const input = seoArticlePrompt(product, topic, context);
+  let raw;
+  if (provider === "openai") {
+    const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${openaiTextApiKey(env)}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: env.OPENAI_SEO_MODEL || "gpt-5.6", input, store: false }) });
+    raw = textFromOpenAI(data);
+  } else {
+    const model = env.GEMINI_REEL_MODEL || "gemini-3.5-flash";
+    const data = await request(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, { method: "POST", headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: input }] }], generationConfig: { responseMimeType: "application/json" } }) });
+    raw = textFromGemini(data);
+  }
+  const parsed = parseJson(raw);
+  const title = String(parsed.title || "").trim();
+  const body = String(parsed.body || "").trim();
+  if (!title || !body) throw new Error("AI yazı içeriği boş döndü.");
+  return { title, body, provider, product: product.title, generatedAt: new Date().toISOString() };
+}
+
 function motionPlanPrompt(sceneDescription) {
   const scene = String(sceneDescription || "").trim();
   const context = scene ? `Sahne: "${scene}".` : `Sahne açıklaması verilmedi; genel bir ürün sahnesi olduğunu varsay.`;
