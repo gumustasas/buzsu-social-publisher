@@ -9,7 +9,9 @@ const DEFAULT_SCENE = "modern bir mutfak tezgahı, sabah gün ışığı, ahşap
 // eğiliminde. Gerçek kurulumlarda cihaz borunun kendisinin bir parçasıdır:
 // borunun iki ucu doğrudan cihazın giriş/çıkış ağızlarına bağlanır, aralarında
 // boşluk veya ayrık duruş olmaz.
-const INSTALLATION_INSTRUCTION = "Ürün sahnede gerçekten kurulu/bağlı/kullanımda görünsün. Ürün bir boruya/tesisata montajlı, silindirik bir cihazsa (örn. manyetik kireç önleyici), cihazı borunun kendisinin bir parçası gibi göster: borunun iki ucu doğrudan cihazın giriş ve çıkış ağızlarına vidalı/rakorlu şekilde bağlansın, cihaz ile boru arasında boşluk veya ayrık duruş olmasın — cihaz borudan çıkarılıp yanına bırakılmış gibi görünmemeli. Diğer ürünlerde de aynı mantık geçerli: ürün havada asılı veya bağlantısız durmamalı, sahnedeki ilgili yüzeyle (tezgah, duvar, boru vb.) fiziksel olarak temas etsin.";
+const INSTALLATION_INSTRUCTION = "Ürün sahnede gerçekten kurulu/kullanımda görünsün; ürün havada asılı veya bağlantısız durmamalı, sahnedeki ilgili yüzeyle (tezgah, duvar, boru vb.) fiziksel olarak temas etsin. Ürün bir boruya/tesisata montajlı, silindirik bir cihazsa (örn. manyetik kireç önleyici), cihazı borunun kendisinin bir parçası gibi göster: borunun iki ucu doğrudan cihazın giriş ve çıkış ağızlarına vidalı/rakorlu şekilde bağlansın. Ama ürün kutu/kasa şeklinde bir su arıtma cihazıysa (tezgah altı, kompakt), cihaza GÖRÜNÜR hortum, boru, tesisat bağlantısı veya rakor EKLEME — gerçek kurulumlarda tüm bağlantılar dolabın içinde gizlidir, görselde de öyle olmalı.";
+
+const WATER_NEGATIVE = "Cihazın gövdesinden dışarı doğru akan/dökülen/fışkıran su gösterme — cihaz bir musluk veya çeşme DEĞİLDİR, su doğrudan cihazdan akmaz. Sahnede su gösterilecekse su yalnızca bir musluktan (cihazdan ayrı, tezgah üstünde duran bir musluk) veya bir bardaktan akıyor olsun.";
 
 // Maskesiz düzenleme yapan sağlayıcılarda (Gemini) AI, arka planı yeniden
 // çizerken ürünün kalınlığını/çapını da hafifçe değiştirme eğiliminde
@@ -70,7 +72,7 @@ export function sceneEditPrompt(sceneDescription, { removeFaucet = false } = {})
   const faucetInstruction = removeFaucet
     ? " Musluk maskelenerek kaldırıldı; cihazın hemen yanına veya üzerine bitişik yeni bir musluk ekleme, cihazın yanı boş/temiz görünsün. Sahne açıklaması ayrı bir yerde (örn. tezgah üstünde) bağımsız bir musluk tarif ediyorsa, o musluğu sahnenin tarif edilen yerine ekle."
     : "";
-  return `Maskelenmemiş (opak) alandaki ürünü hiç değiştirme; ${preserved}. Yalnızca şeffaf/maskelenmiş arka plan alanını şu sahneyle doldur: ${scene}.${faucetInstruction} ${INSTALLATION_INSTRUCTION} ${PROPORTION_INSTRUCTION} Gerçekçi, reklam kalitesinde, yüksek çözünürlüklü bir fotoğraf üret. Ürünün üzerine yeni metin, logo veya filigran ekleme.`;
+  return `Maskelenmemiş (opak) alandaki ürünü hiç değiştirme; ${preserved}. Yalnızca şeffaf/maskelenmiş arka plan alanını şu sahneyle doldur: ${scene}.${faucetInstruction} ${INSTALLATION_INSTRUCTION} ${WATER_NEGATIVE} ${PROPORTION_INSTRUCTION} Gerçekçi, reklam kalitesinde, yüksek çözünürlüklü bir fotoğraf üret. Ürünün üzerine yeni metin, logo veya filigran ekleme.`;
 }
 
 // Gemini'nin images/edits benzeri bir maske uç noktası yok; referans görsel +
@@ -84,7 +86,7 @@ export function geminiScenePrompt(sceneDescription, { removeFaucet = false } = {
   const faucetInstruction = removeFaucet
     ? " Musluğu cihazın gövdesinden kaldır; cihazın hemen yanına veya üzerine bitişik yeni bir musluk ekleme, cihazın yanı boş/temiz görünsün. Sahne açıklaması ayrı bir yerde (örn. tezgah üstünde) bağımsız bir musluk tarif ediyorsa, o musluğu sahnenin tarif edilen yerine ekle."
     : "";
-  return `Bu görseldeki su arıtma cihazının ${preserved}. Sadece arka planı ve sahneyi değiştir: ${scene}.${faucetInstruction} ${INSTALLATION_INSTRUCTION} ${PROPORTION_INSTRUCTION} Fotoğraf gerçekçi, reklam/katalog kalitesinde, yüksek çözünürlüklü olsun. Ürünün üzerine hiçbir yeni metin, logo veya filigran ekleme; etiket üzerindeki mevcut metni bulanıklaştırma veya değiştirme, olduğu gibi koru.`;
+  return `Bu görseldeki su arıtma cihazının ${preserved}. Sadece arka planı ve sahneyi değiştir: ${scene}.${faucetInstruction} ${INSTALLATION_INSTRUCTION} ${WATER_NEGATIVE} ${PROPORTION_INSTRUCTION} Fotoğraf gerçekçi, reklam/katalog kalitesinde, yüksek çözünürlüklü olsun. Ürünün üzerine hiçbir yeni metin, logo veya filigran ekleme; etiket üzerindeki mevcut metni bulanıklaştırma veya değiştirme, olduğu gibi koru.`;
 }
 
 export function applyRemoveBox(isBackground, info, box) {
