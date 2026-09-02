@@ -76,8 +76,9 @@ function scenePlanPrompt(product, context) {
     ? `Bu bir kategori/genel konu paylaşımı olduğu için (yukarıda bir bilgi bulunmuş olsa bile) TEK bir cihazın kurulum detaylarını (örn. "tezgah altı dolap", "ayrı 3 yollu musluk", belirli bir model) İDDİA ETME — hangi spesifik ürün/model olduğunu bilmiyorsun. Bunun yerine kategoriyi temsil eden GENEL bir yaşam/temiz su sahnesi tarif et (örn. berrak su dolu bardaklar, mutlu bir aile veya kişi, sıcak ev/mutfak atmosferi) — tek bir ürünün teknik kurulum iddiasında bulunmadan.`
     : `Sahneyi ürünün gerçek kullanım ortamına göre kurgula. ÖRNEĞİN ürün mutfakta kullanılan, içme suyu veren bir cihazsa (mutfak altı/üstü su arıtma cihazı gibi) şu şablonu kullanabilirsin:
 - Cihaz, mutfak tezgahı ALTINDAKİ dolabın içinde; dolap kapakları açık, cihaz görünüyor.
-- Cihazın kendi üzerinde veya hemen yanında HİÇBİR musluk yok.
-- Tezgah ÜSTÜNDE, ayrı ve bağımsız 3 yollu bir su arıtma musluğu var; su bu musluktan akıyor.
+- Cihazın kendi üzerinde veya hemen yanında HİÇBİR musluk yok; cihaza bağlı GÖRÜNÜR hortum, boru veya tesisat bağlantısı yok (gerçek kurulumlarda tüm bağlantılar dolabın içinde gizlidir).
+- Cihazın gövdesinden dışarı doğru su AKMIYOR — cihaz bir çeşme veya musluk DEĞİLDİR.
+- Tezgah ÜSTÜNDE, cihazdan tamamen AYRI ve bağımsız ince bir 3 yollu su arıtma musluğu var; su yalnızca BU musluktan akıyor.
 - Mutlu bir aile sahnesi: bir çocuk musluktan bardağa su dolduruyor, diğer çocuk suyunu içiyor, anne ve baba ellerinde berrak, duru su dolu bardaklarla gülümsüyor.
 
 Ama ürün bu değilse (örneğin bina/apartman su girişine veya boruya takılan bir kireç önleyici, bir sayaç, bir filtre kartuşu, dışarıda kullanılan bir ekipman vb.) BU ŞABLONU ZORLAMA — ürünün gerçekte kurulduğu/kullanıldığı yeri (teknik oda, bodrum, su sayacı yanı, boru hattı, bahçe vb.) gerçekçi şekilde tarif et; mutfak veya aile sahnesi sadece ürün gerçekten mutfakta/içme suyunda kullanılıyorsa uygun olur.`;

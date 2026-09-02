@@ -93,6 +93,18 @@ test("geminiScenePrompt forbids a faucet attached to the device but allows one e
   assert.match(withRemoval, /Sahne açıklaması ayrı bir yerde/);
 });
 
+test("sceneEditPrompt forbids water flowing from the device itself and visible hoses on box-shaped purifiers", () => {
+  const prompt = sceneEditPrompt("mutfak");
+  assert.match(prompt, /cihaz bir musluk veya çeşme DEĞİLDİR/);
+  assert.match(prompt, /GÖRÜNÜR hortum, boru, tesisat bağlantısı/);
+});
+
+test("geminiScenePrompt forbids water flowing from the device itself and visible hoses on box-shaped purifiers", () => {
+  const prompt = geminiScenePrompt("mutfak");
+  assert.match(prompt, /cihaz bir musluk veya çeşme DEĞİLDİR/);
+  assert.match(prompt, /GÖRÜNÜR hortum, boru, tesisat bağlantısı/);
+});
+
 test("availableSceneProviders lists gemini, openai, openai-low, then the experimental composite variant, only when keys are present", () => {
   assert.deepEqual(availableSceneProviders({ GEMINI_API_KEY: "g", OPENAI_API_KEY: "o" }), ["gemini", "openai", "openai-low", "composite"]);
   assert.deepEqual(availableSceneProviders({ OPENAI_API_KEY: "o" }), ["openai", "openai-low"]);

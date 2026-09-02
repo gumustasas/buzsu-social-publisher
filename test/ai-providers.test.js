@@ -212,6 +212,24 @@ test("generateScenePlan still offers the under-counter device template for an or
   }
 });
 
+test("generateScenePlan under-counter template explicitly forbids visible hoses and water flowing from the device", async () => {
+  const originalFetch = global.fetch;
+  let capturedBody = null;
+  global.fetch = async (url, options) => {
+    if (String(url).includes("llms-full.txt")) return { ok: true, text: async () => "eşleşme yok" };
+    capturedBody = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ output_text: "cihaz sahnesi" }) };
+  };
+  try {
+    await generateScenePlan("openai", { title: "Buzsu Slim Kasa" }, { OPENAI_API_KEY: "key" });
+    assert.match(capturedBody.input, /GÖRÜNÜR hortum, boru veya tesisat bağlantısı yok/);
+    assert.match(capturedBody.input, /cihaz bir çeşme veya musluk DEĞİLDİR/);
+    assert.match(capturedBody.input, /su yalnızca BU musluktan akıyor/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 
 // Kullanıcı, serbest metin yazarken hashtag'leri elle yazmak yerine markaya
 // (Buzsu), seçilen ürüne/kategoriye ve yazılan metne göre otomatik üretilmesini
