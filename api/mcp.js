@@ -137,6 +137,21 @@ const TOOLS = [
     }
   },
   {
+    name: "update_draft",
+    description: "Kuyruktaki mevcut bir taslağın Instagram/Facebook metnini, hashtag'lerini veya yayın zamanını günceller (ör. WhatsApp numarası veya ek bilgi eklemek için). Yalnızca verilen alanlar değiştirilir, diğerleri olduğu gibi kalır.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        recordId: { type: "string", description: "Airtable kayıt ID'si (rec...)" },
+        instagramText: { type: "string", description: "Yeni Instagram gönderi metni (isteğe bağlı)" },
+        facebookText: { type: "string", description: "Yeni Facebook gönderi metni (isteğe bağlı)" },
+        hashtags: { type: "string", description: "Yeni hashtagler (isteğe bağlı)" },
+        publishAt: { type: "string", description: "Yeni yayın zamanı, ISO 8601 (isteğe bağlı)" }
+      },
+      required: ["recordId"]
+    }
+  },
+  {
     name: "update_status",
     description: "Kuyruktaki bir içeriğin durumunu günceller. Akış: Taslak → Kontrol Edilecek → Onaylandı. Onaylanmış ve zamanı gelen içerikler otomatik yayınlanır.",
     inputSchema: {
@@ -234,6 +249,22 @@ async function callTool(name, args) {
       if (!draft.valid) throw new Error(draft.warnings.join(" "));
       const record = await createDraftRecord({ product, draft, format: args.format, platforms: args.platforms, publishAt: args.publishAt, note: "MCP üzerinden oluşturuldu." });
       return JSON.stringify({ ok: true, id: record.id, status: "Taslak" }, null, 2);
+    }
+    case "update_draft": {
+      const fields = {};
+      if (typeof args.instagramText === "string") fields["Instagram Metni"] = args.instagramText;
+      if (typeof args.facebookText === "string") fields["Facebook Metni"] = args.facebookText;
+      if (typeof args.hashtags === "string") fields["Hashtagler"] = args.hashtags;
+      if (typeof args.publishAt === "string") fields["Yayın Zamanı"] = args.publishAt;
+      if (!Object.keys(fields).length) throw new Error("Güncellenecek en az bir alan belirtmelisiniz.");
+      const response = await fetch(`https://api.airtable.com/v0/${baseId}/${tableId}/${encodeURIComponent(args.recordId)}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ fields })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error?.message || `Airtable HTTP ${response.status}`);
+      return JSON.stringify({ ok: true, id: args.recordId, updated: Object.keys(fields) }, null, 2);
     }
     case "update_status": {
       const nextStatus = args.status === "Durduruldu" ? "Taslak" : args.status;
