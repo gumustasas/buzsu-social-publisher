@@ -12,7 +12,12 @@ const SERVER_INFO = { name: "buzsu-social-publisher", version: "1.0.0" };
 function authorized(request) {
   if (!MCP_API_KEY) return false;
   const header = request.headers.authorization || "";
-  return header === `Bearer ${MCP_API_KEY}`;
+  if (header === `Bearer ${MCP_API_KEY}`) return true;
+  // ChatGPT/Codex bağlayıcı arayüzü OAuth dışında özel header eklemeye izin
+  // vermiyor; bu istemciler için token'ı URL sorgu parametresinden de kabul
+  // ediyoruz (?token=... veya ?api_key=...).
+  const queryToken = request.query?.token || request.query?.api_key;
+  return typeof queryToken === "string" && queryToken === MCP_API_KEY;
 }
 
 async function airtableGet(path = "") {
