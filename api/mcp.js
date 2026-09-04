@@ -1,9 +1,12 @@
 import "dotenv/config";
+import { put } from "@vercel/blob";
 import { listProducts, createDraftRecord } from "../src/lib/products.js";
 import { generateCaption, generateHashtags, generateScenePlan, generateSeoArticle } from "../src/ai-providers.js";
 import { baseProductTitle } from "../src/lib/product-title.js";
 import { findCatalogProduct, isCatalogProductId } from "../src/lib/product-catalog.js";
 import { buildDraft } from "../src/content-worker.js";
+import { availableSceneProviders, generateSceneImage } from "../src/scene-image.js";
+import { composeBrandedPost } from "../src/post-branding.js";
 import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "../src/lib/config.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
@@ -33,13 +36,13 @@ async function resolveProduct(productId) {
   if (isCatalogProductId(productId)) {
     const catalogProduct = await findCatalogProduct(productId);
     if (!catalogProduct) throw new Error("Ürün bulunamadı.");
-    return { title: baseProductTitle(catalogProduct.title) || "Buzsu ürünü", url: catalogProduct.url };
+    return { title: baseProductTitle(catalogProduct.title) || "Buzsu ürünü", url: catalogProduct.url, imageUrl: catalogProduct.imageUrl || "" };
   }
   const data = await airtableGet();
   const record = (data.records || []).find((item) => item.id === productId);
   if (!record) throw new Error("Ürün bulunamadı.");
   const fields = record.fields || {};
-  return { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", url: fields["Kaynak URL"] || "" };
+  return { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", url: fields["Kaynak URL"] || "", imageUrl: fields["Görsel URL"] || "" };
 }
 
 function pickProvider() {
@@ -99,6 +102,20 @@ const TOOLS = [
         topic: { type: "string", description: "İsteğe bağlı konu/anahtar kelime (boş bırakılırsa ürün adından türetilir)" }
       },
       required: ["productId"]
+    }
+  },
+  {
+    name: "generate_scene_image",
+    description: "Ürünün gerçek fotoğrafını, verilen sahne açıklamasına göre AI ile yeni bir ortam/arka plana yerleştirir (ör. dış mekan boru montajı, mutfak tezgahı). Sonuca isteğe bağlı olarak alt kısımda ürün adı ve Buzsu logosu bindirilir. Üretilen görselin URL'sini döner ve (Airtable ürünüyse) kaydın Görsel URL alanını otomatik günceller — bu sayede create_draft bu görseli otomatik kullanır.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        productId: { type: "string", description: "Ürün ID'si (gerçek bir ürün fotoğrafı olmalı)" },
+        sceneDescription: { type: "string", description: "Sahnenin Türkçe açıklaması (ör. 'apartman girişinde dış mekanda, sıvalı duvara monte ana su borusu üzerinde, mavi gökyüzü altında profesyonel bir kurulum')" },
+        removeFaucet: { type: "boolean", description: "Üründeki musluğu kaldırıp sahnede ayrı bir musluk mu gösterilsin (varsayılan false)" },
+        brand: { type: "boolean", description: "Görselin altına ürün adı + Buzsu logosu bindirilsin mi (varsayılan true)" }
+      },
+      required: ["productId", "sceneDescription"]
     }
   },
   {
@@ -170,6 +187,39 @@ async function callTool(name, args) {
       const product = await resolveProduct(args.productId);
       const article = await generateSeoArticle(pickProvider(), product, args.topic, process.env);
       return JSON.stringify(article, null, 2);
+    }
+    case "generate_scene_image": {
+      const product = await resolveProduct(args.productId);
+      if (!product.imageUrl) throw new Error("Bu ürünün bilinen bir fotoğrafı yok; önce Görsel URL alanını doldurun.");
+      const providers = availableSceneProviders(process.env);
+      if (!providers.length) throw new Error("AI görsel sağlayıcı anahtarı (GEMINI_API_KEY veya OPENAI_API_KEY) tanımlı değil.");
+      const scene = await generateSceneImage(product, args.sceneDescription, process.env, {
+        removeFaucet: Boolean(args.removeFaucet),
+        provider: providers[0]
+      });
+      let finalBuffer = Buffer.from(scene.dataUrl.split(",")[1], "base64");
+      if (args.brand !== false) finalBuffer = await composeBrandedPost(finalBuffer, { title: product.title });
+
+      let imageUrl = `data:image/png;base64,${finalBuffer.toString("base64")}`;
+      let uploaded = false;
+      if (process.env.BLOB_READ_WRITE_TOKEN) {
+        const safeId = String(args.productId).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80);
+        const blob = await put(`ai-scenes/${safeId}-${Date.now()}.png`, finalBuffer, { access: "public", contentType: "image/png" });
+        imageUrl = blob.url;
+        uploaded = true;
+      }
+
+      if (!isCatalogProductId(args.productId) && uploaded) {
+        const patchResponse = await fetch(`https://api.airtable.com/v0/${baseId}/${tableId}/${encodeURIComponent(args.productId)}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: { "Görsel URL": imageUrl } })
+        });
+        const patchData = await patchResponse.json();
+        if (!patchResponse.ok) throw new Error(patchData.error?.message || `Airtable HTTP ${patchResponse.status}`);
+      }
+
+      return JSON.stringify({ ok: true, imageUrl, provider: scene.provider, prompt: scene.prompt }, null, 2);
     }
     case "create_draft": {
       const allProducts = await listProducts();
