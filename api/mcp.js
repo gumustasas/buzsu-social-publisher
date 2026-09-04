@@ -8,6 +8,7 @@ import { buildDraft } from "../src/content-worker.js";
 import { availableSceneProviders, generateSceneImage } from "../src/scene-image.js";
 import { composeBrandedPost } from "../src/post-branding.js";
 import { runPublisher } from "../src/publish-approved.js";
+import { submitVeoVideo, veoVideoStatus, downloadVeoVideo } from "../src/veo-video.js";
 import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "../src/lib/config.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
@@ -168,6 +169,32 @@ const TOOLS = [
     name: "publish_now",
     description: "Onaylandı durumundaki ve yayın zamanı gelmiş (Yayın Zamanı <= şu an) içerikleri hemen yayınlar; normalde bu her 2 saatte bir otomatik çalışır. Belirli bir kaydı hemen yayınlamak için önce update_draft ile yayın zamanını geçmişe/şimdiye çekin, sonra bu tool'u çağırın.",
     inputSchema: { type: "object", properties: {} }
+  },
+  {
+    name: "generate_video_clip",
+    description: "Bir referans görseli (örn. generate_scene_image çıktısı, markasız hali) verilen sinematik prompt'a göre Google Veo 3.1 ile kısa bir video klibe dönüştürür (image-to-video). GERÇEK PARA HARCAR (~$0.32-0.40/4sn, Fast/720p). Üretim uzun sürdüğü için (dakikalar) bu tool işi başlatıp hemen bir operationName döner — sonucu almak için get_video_clip_status ile bu operationName'i sorgulayın. confirmed:true verilmezse hiçbir API çağrısı/harcama yapılmaz.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        imageUrl: { type: "string", description: "Referans görselin herkese açık HTTPS URL'si (markasız/logosuz sahne görseli önerilir — logo/yazı da animasyona karışabilir)" },
+        prompt: { type: "string", description: "Sinematik video prompt'u (İngilizce önerilir; kamera hareketi, negatif kısıtlar vb. dahil)" },
+        aspectRatio: { type: "string", description: "En-boy oranı (varsayılan '9:16', Reels için)" },
+        title: { type: "string", description: "Görüntüleme amaçlı ürün/klip adı (isteğe bağlı)" },
+        confirmed: { type: "boolean", description: "true olmadan hiçbir API çağrısı yapılmaz/ücret alınmaz — gerçek harcamayı bilerek onayladığınızı belirtir" }
+      },
+      required: ["imageUrl", "prompt", "confirmed"]
+    }
+  },
+  {
+    name: "get_video_clip_status",
+    description: "generate_video_clip ile başlatılmış bir Veo işinin durumunu sorgular. Tamamlandıysa videoyu indirip Vercel Blob'a yükler ve herkese açık videoUrl döner; henüz bitmediyse IN_PROGRESS döner (birkaç dakika sonra tekrar deneyin).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        operationName: { type: "string", description: "generate_video_clip yanıtındaki operationName" }
+      },
+      required: ["operationName"]
+    }
   }
 ];
 
@@ -286,6 +313,30 @@ async function callTool(name, args) {
     case "publish_now": {
       const summary = await runPublisher();
       return JSON.stringify({ ok: true, ...summary }, null, 2);
+    }
+    case "generate_video_clip": {
+      if (args.confirmed !== true) throw new Error("Bu işlem gerçek API kredisi harcar (~$0.32-0.40/4sn, Veo 3.1 Fast/720p). Onaylamak için confirmed:true gönderin.");
+      if (!/^https:\/\//i.test(String(args.imageUrl || ""))) throw new Error("imageUrl herkese açık HTTPS URL olmalı.");
+      if (!String(args.prompt || "").trim()) throw new Error("prompt boş olamaz.");
+      const job = await submitVeoVideo(
+        { imageUrl: args.imageUrl, title: args.title || "" },
+        process.env,
+        { finalizedPrompt: args.prompt, aspectRatio: args.aspectRatio || "9:16" }
+      );
+      return JSON.stringify({ ok: true, ...job }, null, 2);
+    }
+    case "get_video_clip_status": {
+      if (!String(args.operationName || "").trim()) throw new Error("operationName gerekli.");
+      const status = await veoVideoStatus({ operationName: args.operationName }, process.env);
+      if (status.status !== "COMPLETED") return JSON.stringify({ ok: true, status: status.status }, null, 2);
+      const videoBuffer = await downloadVeoVideo(status.fileUri, process.env);
+      let videoUrl = null;
+      if (process.env.BLOB_READ_WRITE_TOKEN) {
+        const safeName = String(args.operationName).replace(/[^a-zA-Z0-9_-]/g, "_").slice(-80);
+        const blob = await put(`ai-videos/${safeName}-${Date.now()}.mp4`, videoBuffer, { access: "public", contentType: "video/mp4" });
+        videoUrl = blob.url;
+      }
+      return JSON.stringify({ ok: true, status: "COMPLETED", videoUrl }, null, 2);
     }
     default:
       throw new Error(`Bilinmeyen tool: ${name}`);
