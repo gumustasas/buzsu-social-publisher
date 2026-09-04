@@ -113,7 +113,8 @@ const TOOLS = [
         productId: { type: "string", description: "Ürün ID'si (gerçek bir ürün fotoğrafı olmalı)" },
         sceneDescription: { type: "string", description: "Sahnenin Türkçe açıklaması (ör. 'apartman girişinde dış mekanda, sıvalı duvara monte ana su borusu üzerinde, mavi gökyüzü altında profesyonel bir kurulum')" },
         removeFaucet: { type: "boolean", description: "Üründeki musluğu kaldırıp sahnede ayrı bir musluk mu gösterilsin (varsayılan false)" },
-        brand: { type: "boolean", description: "Görselin altına ürün adı + Buzsu logosu bindirilsin mi (varsayılan true)" }
+        brand: { type: "boolean", description: "Görselin altına ürün adı + Buzsu logosu bindirilsin mi (varsayılan true)" },
+        provider: { type: "string", enum: ["gemini", "openai", "openai-low"], description: "AI görsel sağlayıcısı (varsayılan: mevcut olanlardan ilki, genelde gemini). Bir sağlayıcı sahnede istenmeyen bir öğeyi (ör. fazladan gösterge/panel) ısrarla üretmeye devam ederse diğerini deneyin." }
       },
       required: ["productId", "sceneDescription"]
     }
@@ -193,9 +194,10 @@ async function callTool(name, args) {
       if (!product.imageUrl) throw new Error("Bu ürünün bilinen bir fotoğrafı yok; önce Görsel URL alanını doldurun.");
       const providers = availableSceneProviders(process.env);
       if (!providers.length) throw new Error("AI görsel sağlayıcı anahtarı (GEMINI_API_KEY veya OPENAI_API_KEY) tanımlı değil.");
+      const provider = providers.includes(args.provider) ? args.provider : providers[0];
       const scene = await generateSceneImage(product, args.sceneDescription, process.env, {
         removeFaucet: Boolean(args.removeFaucet),
-        provider: providers[0]
+        provider
       });
       let finalBuffer = Buffer.from(scene.dataUrl.split(",")[1], "base64");
       if (args.brand !== false) finalBuffer = await composeBrandedPost(finalBuffer, { title: product.title });
