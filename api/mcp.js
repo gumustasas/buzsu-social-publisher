@@ -1,0 +1,274 @@
+import "dotenv/config";
+import { listProducts, createDraftRecord } from "../src/lib/products.js";
+import { generateCaption, generateHashtags, generateScenePlan, generateSeoArticle } from "../src/ai-providers.js";
+import { baseProductTitle } from "../src/lib/product-title.js";
+import { findCatalogProduct, isCatalogProductId } from "../src/lib/product-catalog.js";
+import { buildDraft } from "../src/content-worker.js";
+import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "../src/lib/config.js";
+
+const MCP_API_KEY = process.env.MCP_API_KEY || "";
+const SERVER_INFO = { name: "buzsu-social-publisher", version: "1.0.0" };
+
+function authorized(request) {
+  if (!MCP_API_KEY) return false;
+  const header = request.headers.authorization || "";
+  return header === `Bearer ${MCP_API_KEY}`;
+}
+
+async function airtableGet(path = "") {
+  const response = await fetch(`https://api.airtable.com/v0/${baseId}/${tableId}${path}?pageSize=100`, {
+    headers: { Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}` }
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error?.message || `Airtable HTTP ${response.status}`);
+  return data;
+}
+
+async function resolveProduct(productId) {
+  if (isCatalogProductId(productId)) {
+    const catalogProduct = await findCatalogProduct(productId);
+    if (!catalogProduct) throw new Error("Ürün bulunamadı.");
+    return { title: baseProductTitle(catalogProduct.title) || "Buzsu ürünü", url: catalogProduct.url };
+  }
+  const data = await airtableGet();
+  const record = (data.records || []).find((item) => item.id === productId);
+  if (!record) throw new Error("Ürün bulunamadı.");
+  const fields = record.fields || {};
+  return { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", url: fields["Kaynak URL"] || "" };
+}
+
+function pickProvider() {
+  if (process.env.GEMINI_API_KEY) return "gemini";
+  if (process.env.OPENAI_API_KEY || process.env.OPENAI_IMAGE_API_KEY) return "openai";
+  throw new Error("AI sağlayıcı anahtarı (GEMINI_API_KEY veya OPENAI_API_KEY) tanımlı değil.");
+}
+
+const TOOLS = [
+  {
+    name: "list_products",
+    description: "Airtable ve buzsu.com.tr katalogundaki tüm ürünleri listeler. Her ürünün id, title, url, imageUrl alanları döner.",
+    inputSchema: { type: "object", properties: {} }
+  },
+  {
+    name: "list_queue",
+    description: "Yayın kuyruğundaki tüm içerikleri listeler (taslak, onaylı, paylaşılmış). Her kaydın id, title, status, format, platforms, publishAt, imageUrl, instagramText, facebookText alanları döner.",
+    inputSchema: { type: "object", properties: {} }
+  },
+  {
+    name: "generate_caption",
+    description: "Seçilen ürün için Instagram ve Facebook gönderi metni (SEO odaklı, samimi Türkçe) ve hashtag üretir. instagramText, facebookText, hashtags döner.",
+    inputSchema: {
+      type: "object",
+      properties: { productId: { type: "string", description: "Ürün ID'si (Airtable rec... veya llms:... formatında). list_products ile alınır." } },
+      required: ["productId"]
+    }
+  },
+  {
+    name: "generate_hashtags",
+    description: "Verilen metin, ürün ve Buzsu markasına göre 4-6 adet ilgili Türkçe hashtag üretir.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        productId: { type: "string", description: "Ürün ID'si" },
+        text: { type: "string", description: "Hashtag üretilecek paylaşım metni" }
+      },
+      required: ["productId", "text"]
+    }
+  },
+  {
+    name: "generate_scene_plan",
+    description: "Ürünün sosyal medya sahne görseli için AI sahne açıklaması yazar (mutfak, aile, ortam tarifi gibi 2-4 cümlelik Türkçe paragraf).",
+    inputSchema: {
+      type: "object",
+      properties: { productId: { type: "string", description: "Ürün ID'si" } },
+      required: ["productId"]
+    }
+  },
+  {
+    name: "generate_seo_article",
+    description: "Ürün veya konu için SEO uyumlu, uzun formatlı bir Türkçe makale üretir (title + body). LinkedIn, Medium, blog paylaşımları için.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        productId: { type: "string", description: "Ürün ID'si" },
+        topic: { type: "string", description: "İsteğe bağlı konu/anahtar kelime (boş bırakılırsa ürün adından türetilir)" }
+      },
+      required: ["productId"]
+    }
+  },
+  {
+    name: "create_draft",
+    description: "Yeni bir taslak içerik oluşturup yayın kuyruğuna ekler. Oluşturulan taslak 'Taslak' durumundadır, onaylanması gerekir.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        productId: { type: "string", description: "Ürün ID'si" },
+        format: { type: "string", enum: ["Gönderi", "Hikâye", "Reel"], description: "Yayın biçimi" },
+        platforms: { type: "array", items: { type: "string", enum: ["Instagram", "Facebook"] }, description: "Hedef platformlar" },
+        publishAt: { type: "string", description: "Yayın zamanı (ISO 8601, örn. 2026-09-05T10:00:00Z)" },
+        instagramText: { type: "string", description: "Instagram gönderi metni (isteğe bağlı — verilmezse otomatik üretilir)" },
+        facebookText: { type: "string", description: "Facebook gönderi metni (isteğe bağlı)" },
+        hashtags: { type: "string", description: "Hashtagler (isteğe bağlı, örn. #Buzsu #SuArıtma)" }
+      },
+      required: ["productId", "format", "platforms", "publishAt"]
+    }
+  },
+  {
+    name: "update_status",
+    description: "Kuyruktaki bir içeriğin durumunu günceller. Akış: Taslak → Kontrol Edilecek → Onaylandı. Onaylanmış ve zamanı gelen içerikler otomatik yayınlanır.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        recordId: { type: "string", description: "Airtable kayıt ID'si (rec...)" },
+        status: { type: "string", enum: ["Taslak", "Kontrol Edilecek", "Onaylandı", "Durduruldu"], description: "Yeni durum" }
+      },
+      required: ["recordId", "status"]
+    }
+  }
+];
+
+async function callTool(name, args) {
+  switch (name) {
+    case "list_products": {
+      const products = await listProducts();
+      return JSON.stringify(products, null, 2);
+    }
+    case "list_queue": {
+      const data = await airtableGet("?pageSize=100");
+      const records = (data.records || []).map((record) => {
+        const fields = record.fields || {};
+        return {
+          id: record.id, title: fields["Başlık"] || "Başlıksız", status: fields.Durum || "Taslak",
+          format: fields["Yayın Biçimi"] || "Gönderi", platforms: fields.Platform || [],
+          publishAt: fields["Yayın Zamanı"] || null, imageUrl: fields["Görsel URL"] || "",
+          instagramText: fields["Instagram Metni"] || "", facebookText: fields["Facebook Metni"] || ""
+        };
+      });
+      return JSON.stringify(records, null, 2);
+    }
+    case "generate_caption": {
+      const product = await resolveProduct(args.productId);
+      const caption = await generateCaption(pickProvider(), product, process.env);
+      return JSON.stringify(caption, null, 2);
+    }
+    case "generate_hashtags": {
+      const product = await resolveProduct(args.productId);
+      const hashtags = await generateHashtags(pickProvider(), product, args.text, process.env);
+      return hashtags;
+    }
+    case "generate_scene_plan": {
+      const product = await resolveProduct(args.productId);
+      const plan = await generateScenePlan(pickProvider(), product, process.env);
+      return plan;
+    }
+    case "generate_seo_article": {
+      const product = await resolveProduct(args.productId);
+      const article = await generateSeoArticle(pickProvider(), product, args.topic, process.env);
+      return JSON.stringify(article, null, 2);
+    }
+    case "create_draft": {
+      const allProducts = await listProducts();
+      const product = allProducts.find((item) => item.id === args.productId);
+      if (!product) throw new Error("Ürün bulunamadı.");
+      const aiCaption = args.instagramText || args.facebookText
+        ? { instagramText: args.instagramText || args.facebookText, facebookText: args.facebookText || args.instagramText, hashtags: args.hashtags || "#Buzsu" }
+        : null;
+      const draft = buildDraft(product, { format: args.format, platforms: args.platforms, variant: 0, publishAt: args.publishAt, captionOverride: aiCaption });
+      if (!draft.valid) throw new Error(draft.warnings.join(" "));
+      const record = await createDraftRecord({ product, draft, format: args.format, platforms: args.platforms, publishAt: args.publishAt, note: "MCP üzerinden oluşturuldu." });
+      return JSON.stringify({ ok: true, id: record.id, status: "Taslak" }, null, 2);
+    }
+    case "update_status": {
+      const nextStatus = args.status === "Durduruldu" ? "Taslak" : args.status;
+      const response = await fetch(`https://api.airtable.com/v0/${baseId}/${tableId}/${encodeURIComponent(args.recordId)}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: { Durum: nextStatus, ...(nextStatus === "Onaylandı" ? { "Hata Mesajı": "" } : {}) } })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error?.message || `Airtable HTTP ${response.status}`);
+      return JSON.stringify({ ok: true, id: args.recordId, status: nextStatus }, null, 2);
+    }
+    default:
+      throw new Error(`Bilinmeyen tool: ${name}`);
+  }
+}
+
+function jsonRpcResponse(id, result) {
+  return { jsonrpc: "2.0", id, result };
+}
+function jsonRpcError(id, code, message) {
+  return { jsonrpc: "2.0", id, error: { code, message } };
+}
+
+async function handleMessage(msg) {
+  const { id, method, params } = msg;
+  switch (method) {
+    case "initialize":
+      return jsonRpcResponse(id, {
+        protocolVersion: "2025-03-26",
+        serverInfo: SERVER_INFO,
+        capabilities: { tools: {} }
+      });
+    case "notifications/initialized":
+      return null;
+    case "tools/list":
+      return jsonRpcResponse(id, { tools: TOOLS });
+    case "tools/call": {
+      const toolName = params?.name;
+      const toolArgs = params?.arguments || {};
+      try {
+        const text = await callTool(toolName, toolArgs);
+        return jsonRpcResponse(id, { content: [{ type: "text", text }] });
+      } catch (error) {
+        return jsonRpcResponse(id, { content: [{ type: "text", text: `Hata: ${error.message}` }], isError: true });
+      }
+    }
+    case "ping":
+      return jsonRpcResponse(id, {});
+    default:
+      return jsonRpcError(id, -32601, `Method not found: ${method}`);
+  }
+}
+
+export default async function handler(request, response) {
+  if (request.method === "GET") {
+    return response.status(200).json({
+      ...SERVER_INFO,
+      description: "Buzsu sosyal medya yayın yönetim MCP sunucusu. POST ile JSON-RPC 2.0 mesajı gönderin.",
+      tools: TOOLS.map((tool) => tool.name)
+    });
+  }
+
+  if (request.method !== "POST") {
+    response.setHeader("Allow", "GET, POST");
+    return response.status(405).json({ error: "Method not allowed" });
+  }
+
+  if (!authorized(request)) {
+    return response.status(401).json({
+      jsonrpc: "2.0", id: null,
+      error: { code: -32000, message: "MCP_API_KEY gerekli. Authorization: Bearer <key> header'ı gönderin." }
+    });
+  }
+
+  try {
+    const body = typeof request.body === "string" ? JSON.parse(request.body) : request.body;
+
+    if (Array.isArray(body)) {
+      const results = [];
+      for (const msg of body) {
+        const result = await handleMessage(msg);
+        if (result) results.push(result);
+      }
+      return response.status(200).json(results);
+    }
+
+    const result = await handleMessage(body);
+    if (!result) return response.status(204).end();
+    return response.status(200).json(result);
+  } catch (error) {
+    console.error("MCP handler error:", error);
+    return response.status(200).json(jsonRpcError(null, -32603, error.message));
+  }
+}
