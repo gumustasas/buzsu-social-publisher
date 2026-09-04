@@ -105,6 +105,16 @@ test("geminiScenePrompt forbids water flowing from the device itself and visible
   assert.match(prompt, /GÖRÜNÜR hortum, boru, tesisat bağlantısı/);
 });
 
+test("sceneEditPrompt forbids fabricated signage/plaques with made-up text on scene walls", () => {
+  const prompt = sceneEditPrompt("villa dış cephesi");
+  assert.match(prompt, /gerçek olmayan, üzerinde yazı\/marka adı bulunan pleksi, metal veya plastik bir tabela/);
+});
+
+test("geminiScenePrompt forbids fabricated signage/plaques with made-up text on scene walls", () => {
+  const prompt = geminiScenePrompt("villa dış cephesi");
+  assert.match(prompt, /gerçek olmayan, üzerinde yazı\/marka adı bulunan pleksi, metal veya plastik bir tabela/);
+});
+
 test("availableSceneProviders lists gemini, openai, openai-low, then the experimental composite variant, only when keys are present", () => {
   assert.deepEqual(availableSceneProviders({ GEMINI_API_KEY: "g", OPENAI_API_KEY: "o" }), ["gemini", "openai", "openai-low", "composite"]);
   assert.deepEqual(availableSceneProviders({ OPENAI_API_KEY: "o" }), ["openai", "openai-low"]);

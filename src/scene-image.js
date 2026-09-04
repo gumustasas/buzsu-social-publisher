@@ -13,6 +13,13 @@ const INSTALLATION_INSTRUCTION = "Ürün sahnede gerçekten kurulu/kullanımda g
 
 const WATER_NEGATIVE = "Cihazın gövdesinden dışarı doğru akan/dökülen/fışkıran su gösterme — cihaz bir musluk veya çeşme DEĞİLDİR, su doğrudan cihazdan akmaz. Sahnede su gösterilecekse su yalnızca bir musluktan (cihazdan ayrı, tezgah üstünde duran bir musluk) veya bir bardaktan akıyor olsun.";
 
+// AI, sahnedeki duvara/yüzeye gerçek olmayan, üzerinde uydurma marka adı
+// veya yazı bulunan pleksi/metal tabela ya da pano ekleme eğiliminde
+// (kullanıcı, gerçek üründe olmayan sahte bir "Buz-Su" tabelası bulunan bir
+// çıktı bildirdi). Bu tür sahte tabelalar hem yanıltıcı hem de marka
+// tutarsızlığı yaratıyor.
+const SIGNAGE_NEGATIVE = "Sahnede duvara veya herhangi bir yüzeye gerçek olmayan, üzerinde yazı/marka adı bulunan pleksi, metal veya plastik bir tabela, pano ya da etiket EKLEME. Duvarlar ve çevre yüzeyler sade kalsın; var olmayan bir tabela veya yazı uydurma.";
+
 // Maskesiz düzenleme yapan sağlayıcılarda (Gemini) AI, arka planı yeniden
 // çizerken ürünün kalınlığını/çapını da hafifçe değiştirme eğiliminde
 // olabiliyor — kullanıcı canlıda gerçek ürünle karşılaştırıp bunu bildirdi.
@@ -72,7 +79,7 @@ export function sceneEditPrompt(sceneDescription, { removeFaucet = false } = {})
   const faucetInstruction = removeFaucet
     ? " Musluk maskelenerek kaldırıldı; cihazın hemen yanına veya üzerine bitişik yeni bir musluk ekleme, cihazın yanı boş/temiz görünsün. Sahne açıklaması ayrı bir yerde (örn. tezgah üstünde) bağımsız bir musluk tarif ediyorsa, o musluğu sahnenin tarif edilen yerine ekle."
     : "";
-  return `Maskelenmemiş (opak) alandaki ürünü hiç değiştirme; ${preserved}. Yalnızca şeffaf/maskelenmiş arka plan alanını şu sahneyle doldur: ${scene}.${faucetInstruction} ${INSTALLATION_INSTRUCTION} ${WATER_NEGATIVE} ${PROPORTION_INSTRUCTION} Gerçekçi, reklam kalitesinde, yüksek çözünürlüklü bir fotoğraf üret. Ürünün üzerine yeni metin, logo veya filigran ekleme.`;
+  return `Maskelenmemiş (opak) alandaki ürünü hiç değiştirme; ${preserved}. Yalnızca şeffaf/maskelenmiş arka plan alanını şu sahneyle doldur: ${scene}.${faucetInstruction} ${INSTALLATION_INSTRUCTION} ${WATER_NEGATIVE} ${SIGNAGE_NEGATIVE} ${PROPORTION_INSTRUCTION} Gerçekçi, reklam kalitesinde, yüksek çözünürlüklü bir fotoğraf üret. Ürünün üzerine yeni metin, logo veya filigran ekleme.`;
 }
 
 // Gemini'nin images/edits benzeri bir maske uç noktası yok; referans görsel +
@@ -86,7 +93,7 @@ export function geminiScenePrompt(sceneDescription, { removeFaucet = false } = {
   const faucetInstruction = removeFaucet
     ? " Musluğu cihazın gövdesinden kaldır; cihazın hemen yanına veya üzerine bitişik yeni bir musluk ekleme, cihazın yanı boş/temiz görünsün. Sahne açıklaması ayrı bir yerde (örn. tezgah üstünde) bağımsız bir musluk tarif ediyorsa, o musluğu sahnenin tarif edilen yerine ekle."
     : "";
-  return `Bu görseldeki su arıtma cihazının ${preserved}. Sadece arka planı ve sahneyi değiştir: ${scene}.${faucetInstruction} ${INSTALLATION_INSTRUCTION} ${WATER_NEGATIVE} ${PROPORTION_INSTRUCTION} Fotoğraf gerçekçi, reklam/katalog kalitesinde, yüksek çözünürlüklü olsun. Ürünün üzerine hiçbir yeni metin, logo veya filigran ekleme; etiket üzerindeki mevcut metni bulanıklaştırma veya değiştirme, olduğu gibi koru.`;
+  return `Bu görseldeki su arıtma cihazının ${preserved}. Sadece arka planı ve sahneyi değiştir: ${scene}.${faucetInstruction} ${INSTALLATION_INSTRUCTION} ${WATER_NEGATIVE} ${SIGNAGE_NEGATIVE} ${PROPORTION_INSTRUCTION} Fotoğraf gerçekçi, reklam/katalog kalitesinde, yüksek çözünürlüklü olsun. Ürünün üzerine hiçbir yeni metin, logo veya filigran ekleme; etiket üzerindeki mevcut metni bulanıklaştırma veya değiştirme, olduğu gibi koru.`;
 }
 
 export function applyRemoveBox(isBackground, info, box) {
