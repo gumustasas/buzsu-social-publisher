@@ -7,6 +7,7 @@ import { findCatalogProduct, isCatalogProductId } from "../src/lib/product-catal
 import { buildDraft } from "../src/content-worker.js";
 import { availableSceneProviders, generateSceneImage } from "../src/scene-image.js";
 import { composeBrandedPost } from "../src/post-branding.js";
+import { runPublisher } from "../src/publish-approved.js";
 import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "../src/lib/config.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
@@ -162,6 +163,11 @@ const TOOLS = [
       },
       required: ["recordId", "status"]
     }
+  },
+  {
+    name: "publish_now",
+    description: "Onaylandı durumundaki ve yayın zamanı gelmiş (Yayın Zamanı <= şu an) içerikleri hemen yayınlar; normalde bu her 2 saatte bir otomatik çalışır. Belirli bir kaydı hemen yayınlamak için önce update_draft ile yayın zamanını geçmişe/şimdiye çekin, sonra bu tool'u çağırın.",
+    inputSchema: { type: "object", properties: {} }
   }
 ];
 
@@ -276,6 +282,10 @@ async function callTool(name, args) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error?.message || `Airtable HTTP ${response.status}`);
       return JSON.stringify({ ok: true, id: args.recordId, status: nextStatus }, null, 2);
+    }
+    case "publish_now": {
+      const summary = await runPublisher();
+      return JSON.stringify({ ok: true, ...summary }, null, 2);
     }
     default:
       throw new Error(`Bilinmeyen tool: ${name}`);
