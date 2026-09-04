@@ -172,13 +172,16 @@ const TOOLS = [
   },
   {
     name: "generate_video_clip",
-    description: "Bir referans görseli (örn. generate_scene_image çıktısı, markasız hali) verilen sinematik prompt'a göre Google Veo 3.1 ile kısa bir video klibe dönüştürür (image-to-video). GERÇEK PARA HARCAR (~$0.32-0.40/4sn, Fast/720p). Üretim uzun sürdüğü için (dakikalar) bu tool işi başlatıp hemen bir operationName döner — sonucu almak için get_video_clip_status ile bu operationName'i sorgulayın. confirmed:true verilmezse hiçbir API çağrısı/harcama yapılmaz.",
+    description: "Bir referans görseli (örn. generate_scene_image çıktısı, markasız hali) verilen sinematik prompt'a göre Google Veo 3.1 ile kısa bir video klibe dönüştürür (image-to-video). GERÇEK PARA HARCAR — maliyet çözünürlük/süreye göre değişir (Fast/720p ~$0.08-0.10/sn, Fast/1080p ve tam Veo modelleri daha yüksek). Üretim uzun sürdüğü için (dakikalar) bu tool işi başlatıp hemen bir operationName döner — sonucu almak için get_video_clip_status ile bu operationName'i sorgulayın. confirmed:true verilmezse hiçbir API çağrısı/harcama yapılmaz.",
     inputSchema: {
       type: "object",
       properties: {
         imageUrl: { type: "string", description: "Referans görselin herkese açık HTTPS URL'si (markasız/logosuz sahne görseli önerilir — logo/yazı da animasyona karışabilir)" },
         prompt: { type: "string", description: "Sinematik video prompt'u (İngilizce önerilir; kamera hareketi, negatif kısıtlar vb. dahil)" },
         aspectRatio: { type: "string", description: "En-boy oranı (varsayılan '9:16', Reels için)" },
+        durationSeconds: { type: "number", description: "Video süresi, saniye (isteğe bağlı — verilmezse modelin varsayılanı kullanılır; Google'ın kabul ettiği değerler modele göre değişir, örn. 4/6/8)" },
+        resolution: { type: "string", enum: ["720p", "1080p"], description: "Çözünürlük (isteğe bağlı, varsayılan model varsayılanı — genelde 720p). 1080p daha yüksek maliyetlidir." },
+        model: { type: "string", description: "Veo model adı (isteğe bağlı, varsayılan 'veo-3.1-fast-generate-preview'). Örn. tam kaliteli 'veo-3.1-generate-preview' — daha yavaş ve pahalı." },
         title: { type: "string", description: "Görüntüleme amaçlı ürün/klip adı (isteğe bağlı)" },
         confirmed: { type: "boolean", description: "true olmadan hiçbir API çağrısı yapılmaz/ücret alınmaz — gerçek harcamayı bilerek onayladığınızı belirtir" }
       },
@@ -315,13 +318,19 @@ async function callTool(name, args) {
       return JSON.stringify({ ok: true, ...summary }, null, 2);
     }
     case "generate_video_clip": {
-      if (args.confirmed !== true) throw new Error("Bu işlem gerçek API kredisi harcar (~$0.32-0.40/4sn, Veo 3.1 Fast/720p). Onaylamak için confirmed:true gönderin.");
+      if (args.confirmed !== true) throw new Error("Bu işlem gerçek API kredisi harcar (süre/çözünürlüğe göre değişir). Onaylamak için confirmed:true gönderin.");
       if (!/^https:\/\//i.test(String(args.imageUrl || ""))) throw new Error("imageUrl herkese açık HTTPS URL olmalı.");
       if (!String(args.prompt || "").trim()) throw new Error("prompt boş olamaz.");
       const job = await submitVeoVideo(
         { imageUrl: args.imageUrl, title: args.title || "" },
         process.env,
-        { finalizedPrompt: args.prompt, aspectRatio: args.aspectRatio || "9:16" }
+        {
+          finalizedPrompt: args.prompt,
+          aspectRatio: args.aspectRatio || "9:16",
+          durationSeconds: args.durationSeconds,
+          resolution: args.resolution,
+          model: args.model
+        }
       );
       return JSON.stringify({ ok: true, ...job }, null, 2);
     }

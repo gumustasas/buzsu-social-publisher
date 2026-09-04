@@ -24,7 +24,7 @@ export function veoModel(env = process.env) { return env.VEO_VIDEO_MODEL || DEFA
 // alınmış promptun aynısıdır — burada yeniden kurulmaz, olduğu gibi
 // kullanılır. Verilmezse (örn. ileride başka bir çağıran) generic bir
 // prompt'a düşer.
-export async function submitVeoVideo(product, env = process.env, { finalizedPrompt, aspectRatio = "9:16" } = {}) {
+export async function submitVeoVideo(product, env = process.env, { finalizedPrompt, aspectRatio = "9:16", durationSeconds, resolution, model: modelOverride } = {}) {
   if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY Vercel Production ortamında tanımlı değil.");
   const imageUrl = String(product.imageUrl || "").trim();
   if (!/^https:\/\//i.test(imageUrl)) throw new Error("Veo için ürün görseli herkese açık HTTPS URL olmalı.");
@@ -33,11 +33,12 @@ export async function submitVeoVideo(product, env = process.env, { finalizedProm
   const mimeType = upstream.headers.get("content-type") || "image/jpeg";
   const imageBytes = Buffer.from(await upstream.arrayBuffer()).toString("base64");
   const prompt = String(finalizedPrompt || "").trim() || buildVideoPrompt(product.title);
-  const model = veoModel(env);
+  const model = modelOverride || veoModel(env);
+  const parameters = { aspectRatio, ...(durationSeconds && { durationSeconds }), ...(resolution && { resolution }) };
   const response = await fetch(`${API_BASE}/models/${model}:predictLongRunning`, {
     method: "POST",
     headers: veoHeaders(env),
-    body: JSON.stringify({ instances: [{ prompt, image: { bytesBase64Encoded: imageBytes, mimeType } }], parameters: { aspectRatio } })
+    body: JSON.stringify({ instances: [{ prompt, image: { bytesBase64Encoded: imageBytes, mimeType } }], parameters })
   });
   const data = await readJson(response);
   if (!data.name) throw new Error("Veo işlem adı (operation) alınamadı.");
