@@ -9,6 +9,7 @@ import { availableSceneProviders, generateSceneImage } from "../src/scene-image.
 import { composeBrandedPost } from "../src/post-branding.js";
 import { runPublisher } from "../src/publish-approved.js";
 import { submitVeoVideo, veoVideoStatus, downloadVeoVideo } from "../src/veo-video.js";
+import { getAutopilotEnabled, setAutopilotEnabled } from "../src/lib/settings.js";
 import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "../src/lib/config.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
@@ -198,6 +199,22 @@ const TOOLS = [
       },
       required: ["operationName"]
     }
+  },
+  {
+    name: "get_autopilot_status",
+    description: "Otomatik Pilot'un açık mı kapalı mı olduğunu döner. Açıksa günde bir kez (Vercel cron) en uzun süredir öne çıkarılmamış ürün için otomatik sahne görseli + metin üretip Taslak olarak kuyruğa ekler; onay hâlâ elle yapılır, hiçbir zaman otomatik yayınlanmaz.",
+    inputSchema: { type: "object", properties: {} }
+  },
+  {
+    name: "set_autopilot",
+    description: "Otomatik Pilot'u açar veya kapatır. Açıksa günde bir kez otomatik taslak oluşturmaya başlar (yayın değil, yalnızca taslak — onay hâlâ elle yapılır).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        enabled: { type: "boolean", description: "true: aç, false: kapat" }
+      },
+      required: ["enabled"]
+    }
   }
 ];
 
@@ -346,6 +363,15 @@ async function callTool(name, args) {
         videoUrl = blob.url;
       }
       return JSON.stringify({ ok: true, status: "COMPLETED", videoUrl }, null, 2);
+    }
+    case "get_autopilot_status": {
+      const enabled = await getAutopilotEnabled();
+      return JSON.stringify({ ok: true, enabled }, null, 2);
+    }
+    case "set_autopilot": {
+      if (typeof args.enabled !== "boolean") throw new Error("enabled (true/false) gerekli.");
+      await setAutopilotEnabled(args.enabled);
+      return JSON.stringify({ ok: true, enabled: args.enabled }, null, 2);
     }
     default:
       throw new Error(`Bilinmeyen tool: ${name}`);
