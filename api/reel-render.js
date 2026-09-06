@@ -70,7 +70,12 @@ export default async function handler(request, response) {
     const record = (data.records || []).find((item) => item.id === body.productId);
     const fields = record?.fields || {};
     if (!record || !fields["Kaynak URL"] || !fields["Görsel URL"]) return response.status(400).json({ error: "Ürün URL veya görsel bilgisi eksik." });
-    const product = { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", url: fields["Kaynak URL"], imageUrl: fields["Görsel URL"] };
+    // Kompozerde önceden bir AI sahne görseli üretildiyse (bkz. api/reels.js
+    // aynı desen), MP4 render da onu baz alsın — yoksa "Sahneyi baz alarak
+    // video üret" kutusu yalnızca senaryo metnini etkiler, render'da sessizce
+    // orijinal ürün fotoğrafına döner.
+    const sceneImageUrl = typeof body.sceneImageUrl === "string" && /^https:\/\//i.test(body.sceneImageUrl) ? body.sceneImageUrl : null;
+    const product = { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", url: fields["Kaynak URL"], imageUrl: sceneImageUrl || fields["Görsel URL"] };
     const render = await shotstack("/render", { method: "POST", body: JSON.stringify(editFor(product, body.reel || {})) });
     return response.status(200).json({ ok: true, render: render.response || render, product: product.title });
   } catch (error) { console.error(error); return response.status(500).json({ ok: false, error: error.message }); }

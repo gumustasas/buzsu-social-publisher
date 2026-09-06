@@ -46,16 +46,28 @@ export default async function handler(request, response) {
       const previewProduct = await resolveProduct(body.productId);
       if (!previewProduct) return response.status(400).json({ error: "Ürün bulunamadı." });
       const title = previewProduct.title;
+      const freePrompt = typeof body.freePrompt === "string" ? body.freePrompt.trim() : "";
       let motion = typeof body.motion === "string" ? body.motion.trim() : "";
       let motionSource = "user";
-      if (!motion) {
-        const textProvider = availableSceneProviders(process.env)[0];
-        if (!textProvider) return response.status(400).json({ error: "Hareket alanı boş ve OPENAI_API_KEY/GEMINI_API_KEY tanımlı değil — hareketi elle yazmalısınız." });
-        motion = await generateMotionPlan(textProvider, body.sceneDescription, process.env);
-        motionSource = "ai";
+      // Serbest metin doluysa REFERENCE/PRESERVE/MOTION/CAMERA/CONSTRAINTS
+      // şablonu tamamen atlanır; kullanıcının yazdığı metin fal.ai/Veo'ya
+      // birebir, olduğu gibi gönderilir (bkz. src/fal-video.js,
+      // src/veo-video.js — finalizedPrompt zaten olduğu gibi kullanılıyordu).
+      let prompt;
+      if (freePrompt) {
+        prompt = freePrompt;
+        motion = "";
+        motionSource = "free";
+      } else {
+        if (!motion) {
+          const textProvider = availableSceneProviders(process.env)[0];
+          if (!textProvider) return response.status(400).json({ error: "Hareket alanı boş ve OPENAI_API_KEY/GEMINI_API_KEY tanımlı değil — hareketi elle yazmalısınız." });
+          motion = await generateMotionPlan(textProvider, body.sceneDescription, process.env);
+          motionSource = "ai";
+        }
+        const sections = buildVideoPromptSections({ productTitle: title, motion });
+        prompt = renderVideoPrompt(sections);
       }
-      const sections = buildVideoPromptSections({ productTitle: title, motion });
-      const prompt = renderVideoPrompt(sections);
       // Bu, sadece fal.ai'nin kendi API sınırı (fal-ai/minimax-video/
       // image-to-video prompt alanı en fazla 2000 karakter kabul ediyor,
       // gerçek denemede görülen hata: "String should have at most 2000
@@ -63,7 +75,8 @@ export default async function handler(request, response) {
       // provider fal iken erkenden (ücretsiz önizleme sırasında) uyarıyoruz;
       // asıl koruma src/fal-video.js:submitFalVideo içinde.
       if (body.provider === "fal" && prompt.length > MAX_FAL_PROMPT_LENGTH) {
-        return response.status(400).json({ error: `Video hareketi metni çok uzun (toplam prompt ${prompt.length}/${MAX_FAL_PROMPT_LENGTH} karakter, fal.ai sınırı). Hareket açıklamasını kısaltıp tekrar önizle.` });
+        const hint = freePrompt ? "Serbest metin promptunu kısaltıp" : "Hareket açıklamasını kısaltıp";
+        return response.status(400).json({ error: `Video prompt'u çok uzun (${prompt.length}/${MAX_FAL_PROMPT_LENGTH} karakter, fal.ai sınırı). ${hint} tekrar önizle.` });
       }
       const promptId = hashVideoPrompt(prompt);
       return response.status(200).json({ ok: true, preview: { promptId, prompt, motion, motionSource } });
