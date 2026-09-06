@@ -242,6 +242,45 @@ Otomatik Pilot **hiçbir zaman kendi kendine onaylamaz veya yayınlamaz** —
 oluşan taslak, panelde her zamanki gibi incelenip "Onayla" ile onaylanmalı.
 Kapalıyken cron hemen çıkar, hiçbir AI/Airtable çağrısı yapmaz.
 
+## MCP: harici görsel yükleme (upload_media)
+
+`api/mcp.js` (`GET/POST /api/mcp`), Claude/ChatGPT gibi MCP istemcilerinin
+kuyruğu yönetmesini sağlar. `generate_scene_image` görseli kendisi (Gemini/
+OpenAI ile) üretirken, **`upload_media`** aracı ChatGPT'de veya başka bir yerde
+zaten oluşturulmuş hazır bir PNG/JPEG/WebP görselini sisteme alıp herkese açık
+bir Vercel Blob URL'i döner — bu URL doğrudan `create_draft`'a verilebilir.
+
+```jsonc
+// 1) Hazır görseli yükle (imageUrl veya imageBase64'ten biri)
+upload_media({
+  imageUrl: "https://.../chatgpt-tarafindan-uretilen-gorsel.png",
+  filename: "buzsu-ultramag-hikaye.png",
+  confirmed: true
+})
+// -> { ok: true, imageUrl: "https://<blob>/manual-uploads/...png", mimeType: "image/png", size: 123456 }
+
+// 2) Dönen URL'i SADECE bu taslak için kullan (ürünün ana kataloğ görseli değişmez)
+create_draft({
+  productId: "rec6hFtypa3dY78ei",
+  format: "Hikâye",
+  platforms: ["Instagram"],
+  imageUrl: "https://<blob>/manual-uploads/...png",
+  publishAt: "2026-09-06T12:00:00Z",
+  instagramText: "Tüm evinizde kirece karşı akıllı koruma.",
+  hashtags: "#Buzsu #UltraMag #KireçÖnleyici"
+})
+```
+
+Güvenlik: `imageUrl` verilirse görsel sunucu tarafında indirilir — SSRF'e karşı
+yalnızca HTTPS kabul edilir, hedef host çözümlenip özel/yerel IP aralıkları
+(localhost, `127.0.0.1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
+`169.254.169.254` gibi bulut metadata adresleri dahil) ve her yönlendirme adımı
+reddedilir (`src/lib/upload-media.js`). Yalnızca PNG/JPEG/WebP ve en fazla 15MB
+kabul edilir. `confirmed:true` verilmeden ne Blob'a yükleme ne de Airtable
+yazması yapılır — yalnızca doğrulama sonucu döner. `productId` +
+`updateProductImage:true` verilmedikçe ürünün Airtable'daki ana `Görsel URL`
+alanı hiçbir zaman değişmez.
+
 ## Sonraki adım
 
 Dry-run doğru çalıştıktan sonra Meta API için ayrı gönderim scripti eklenir. O aşamada da önce test modu, sonra tek kayıtla kontrollü canlı paylaşım yapılmalıdır.

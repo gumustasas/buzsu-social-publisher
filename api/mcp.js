@@ -11,6 +11,7 @@ import { runPublisher } from "../src/publish-approved.js";
 import { submitVeoVideo, veoVideoStatus, downloadVeoVideo } from "../src/veo-video.js";
 import { getAutopilotEnabled, setAutopilotEnabled } from "../src/lib/settings.js";
 import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "../src/lib/config.js";
+import { fetchPublicImage, decodeImageBase64, imageExtensionFor } from "../src/lib/upload-media.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
 const SERVER_INFO = { name: "buzsu-social-publisher", version: "1.0.0" };
@@ -134,9 +135,27 @@ const TOOLS = [
         publishAt: { type: "string", description: "Yayın zamanı (ISO 8601, örn. 2026-09-05T10:00:00Z)" },
         instagramText: { type: "string", description: "Instagram gönderi metni (isteğe bağlı — verilmezse otomatik üretilir)" },
         facebookText: { type: "string", description: "Facebook gönderi metni (isteğe bağlı)" },
-        hashtags: { type: "string", description: "Hashtagler (isteğe bağlı, örn. #Buzsu #SuArıtma)" }
+        hashtags: { type: "string", description: "Hashtagler (isteğe bağlı, örn. #Buzsu #SuArıtma)" },
+        imageUrl: { type: "string", description: "İsteğe bağlı — verilirse ürünün kayıtlı ana görseli yerine SADECE bu taslak için bu HTTPS görsel URL'i kullanılır (ör. upload_media çıktısı). Ürünün Airtable'daki ana Görsel URL alanı değişmez." }
       },
       required: ["productId", "format", "platforms", "publishAt"]
+    }
+  },
+  {
+    name: "upload_media",
+    description: "ChatGPT'de oluşturulmuş veya kullanıcının yüklediği hazır bir PNG/JPEG/WebP görselini Vercel Blob'a yükleyip herkese açık bir HTTPS URL döner — bu URL create_draft'a imageUrl olarak verilebilir. imageUrl (herkese açık HTTPS, sunucu indirir) veya imageBase64 (+ mimeType) alanlarından tam olarak biri verilmelidir. confirmed:true olmadan hiçbir yükleme/kayıt yapılmaz, yalnızca doğrulama sonucu döner.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        imageUrl: { type: "string", description: "İndirilecek görselin herkese açık HTTPS URL'i (yalnızca biri: imageUrl veya imageBase64)" },
+        imageBase64: { type: "string", description: "Görselin ham base64 verisi (data: öneki OLMADAN). mimeType ile birlikte verilmelidir." },
+        mimeType: { type: "string", enum: ["image/png", "image/jpeg", "image/webp"], description: "imageBase64 kullanılıyorsa zorunlu" },
+        filename: { type: "string", description: "İsteğe bağlı dosya adı ipucu (uzantı mimeType'tan belirlenir)" },
+        productId: { type: "string", description: "İsteğe bağlı — updateProductImage:true ile birlikte hangi ürünün ana görselinin güncelleneceğini belirtir" },
+        updateProductImage: { type: "boolean", description: "true ise ve productId bir Airtable kaydıysa, o ürünün ana Görsel URL alanı bu yüklenen görselle güncellenir (varsayılan false — yalnızca URL döner, katalog görseli değişmez)" },
+        confirmed: { type: "boolean", description: "true olmadan Blob'a yükleme veya Airtable güncellemesi yapılmaz — yalnızca doğrulama/preview sonucu döner" }
+      },
+      required: ["confirmed"]
     }
   },
   {
@@ -295,13 +314,57 @@ async function callTool(name, args) {
       const allProducts = await listProducts();
       const product = allProducts.find((item) => item.id === args.productId);
       if (!product) throw new Error("Ürün bulunamadı.");
+      // imageUrl verilirse ürünün Airtable kaydındaki ana görseli DEĞİŞTİRMEDEN,
+      // yalnızca bu yeni taslak kaydı için geçerli olacak şekilde kullanılır —
+      // createDraftRecord her zaman yeni bir kayıt oluşturur (PATCH değil POST),
+      // bu yüzden orijinal ürün kaydına dokunulmaz.
+      const draftProduct = typeof args.imageUrl === "string" && args.imageUrl.trim()
+        ? { ...product, imageUrl: args.imageUrl.trim() }
+        : product;
       const aiCaption = args.instagramText || args.facebookText
         ? { instagramText: args.instagramText || args.facebookText, facebookText: args.facebookText || args.instagramText, hashtags: args.hashtags || "#Buzsu" }
         : null;
-      const draft = buildDraft(product, { format: args.format, platforms: args.platforms, variant: 0, publishAt: args.publishAt, captionOverride: aiCaption });
+      const draft = buildDraft(draftProduct, { format: args.format, platforms: args.platforms, variant: 0, publishAt: args.publishAt, captionOverride: aiCaption });
       if (!draft.valid) throw new Error(draft.warnings.join(" "));
-      const record = await createDraftRecord({ product, draft, format: args.format, platforms: args.platforms, publishAt: args.publishAt, note: "MCP üzerinden oluşturuldu." });
+      const record = await createDraftRecord({ product: draftProduct, draft, format: args.format, platforms: args.platforms, publishAt: args.publishAt, note: "MCP üzerinden oluşturuldu." });
       return JSON.stringify({ ok: true, id: record.id, status: "Taslak" }, null, 2);
+    }
+    case "upload_media": {
+      const hasUrl = typeof args.imageUrl === "string" && args.imageUrl.trim().length > 0;
+      const hasBase64 = typeof args.imageBase64 === "string" && args.imageBase64.trim().length > 0;
+      if (hasUrl === hasBase64) throw new Error("imageUrl veya imageBase64 alanlarından tam olarak biri verilmelidir.");
+
+      let buffer, mimeType;
+      if (hasUrl) {
+        ({ buffer, mimeType } = await fetchPublicImage(args.imageUrl));
+      } else {
+        if (!args.mimeType) throw new Error("imageBase64 kullanılıyorsa mimeType zorunludur.");
+        mimeType = String(args.mimeType).toLowerCase();
+        buffer = decodeImageBase64(args.imageBase64, mimeType);
+      }
+
+      if (args.confirmed !== true) {
+        return JSON.stringify({ ok: true, confirmed: false, preview: true, mimeType, size: buffer.length, message: "Doğrulama başarılı, henüz yüklenmedi. Gerçekten yüklemek için confirmed:true gönderin." }, null, 2);
+      }
+
+      if (!process.env.BLOB_READ_WRITE_TOKEN) throw new Error("BLOB_READ_WRITE_TOKEN Vercel Production ortamında tanımlı değil.");
+      const safeName = String(args.filename || "gorsel").replace(/\.[a-zA-Z0-9]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80) || "gorsel";
+      const blob = await put(`manual-uploads/${Date.now()}-${safeName}.${imageExtensionFor(mimeType)}`, buffer, { access: "public", contentType: mimeType });
+
+      let productImageUpdated = false;
+      if (args.productId && args.updateProductImage === true) {
+        if (isCatalogProductId(args.productId)) throw new Error("Katalog ürünlerinin (Airtable kaydı olmayan) ana görseli MCP üzerinden güncellenemez.");
+        const patchResponse = await fetch(`https://api.airtable.com/v0/${baseId}/${tableId}/${encodeURIComponent(args.productId)}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: { "Görsel URL": blob.url } })
+        });
+        const patchData = await patchResponse.json();
+        if (!patchResponse.ok) throw new Error(patchData.error?.message || `Airtable HTTP ${patchResponse.status}`);
+        productImageUpdated = true;
+      }
+
+      return JSON.stringify({ ok: true, imageUrl: blob.url, mimeType, size: buffer.length, productId: args.productId || null, productImageUpdated }, null, 2);
     }
     case "update_draft": {
       const fields = {};
