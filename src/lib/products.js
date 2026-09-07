@@ -1,5 +1,6 @@
 import { baseProductTitle } from "./product-title.js";
 import { listCatalogProducts, catalogProductId } from "./product-catalog.js";
+import { findKnownProductPhotos } from "./product-photos.js";
 import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "./config.js";
 
 export async function airtableRequest(path = "", options = {}) {
@@ -42,14 +43,15 @@ export async function listProducts() {
     const fields = record.fields || {};
     const url = fields["Kaynak URL"] || "";
     const title = (url && catalogTitleByUrl.get(url)) || baseProductTitle(fields.Başlık) || "Başlıksız";
-    return { id: record.id, title, url, imageUrl: fields["Görsel URL"] || "", instagramText: fields["Instagram Metni"] || "", facebookText: fields["Facebook Metni"] || "" };
+    const imageUrl = fields["Görsel URL"] || "";
+    return { id: record.id, title, url, imageUrl, imageUrls: imageUrl ? [imageUrl, ...findKnownProductPhotos(url).filter((item) => item !== imageUrl)] : findKnownProductPhotos(url), instagramText: fields["Instagram Metni"] || "", facebookText: fields["Facebook Metni"] || "" };
   }).filter((product) => {
     const key = product.url || product.id;
     if (!product.url || seen.has(key)) return false;
     seen.add(key);
     return true;
   });
-  const catalogProducts = catalog.map((item) => ({ id: catalogProductId(item.url), title: item.title, url: item.url, imageUrl: item.imageUrl || "", instagramText: "", facebookText: "" })).filter((product) => {
+  const catalogProducts = catalog.map((item) => ({ id: catalogProductId(item.url), title: item.title, url: item.url, imageUrl: item.imageUrl || "", imageUrls: item.imageUrls || (item.imageUrl ? [item.imageUrl] : []), instagramText: "", facebookText: "" })).filter((product) => {
     if (seen.has(product.url)) return false;
     seen.add(product.url);
     return true;

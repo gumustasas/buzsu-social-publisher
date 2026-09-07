@@ -85,7 +85,7 @@ export function sceneEditPrompt(sceneDescription, { removeFaucet = false } = {})
 // Gemini'nin images/edits benzeri bir maske uç noktası yok; referans görsel +
 // metin talimatıyla çalışıyor. Maskeleme olmadığı için "koru" talimatı prompt
 // içinde daha güçlü vurgulanıyor (bkz. AI Studio'da elle doğrulanan sürüm).
-export function geminiScenePrompt(sceneDescription, { removeFaucet = false } = {}) {
+export function geminiScenePrompt(sceneDescription, { removeFaucet = false, referenceCount = 1 } = {}) {
   const scene = String(sceneDescription || "").trim() || DEFAULT_SCENE;
   const preserved = removeFaucet
     ? "tasarımını, oranlarını, rengini, logosunu ve etiketini birebir koru — cihazın kendisinde hiçbir değişiklik yapma, yeniden tasarlama"
@@ -93,7 +93,10 @@ export function geminiScenePrompt(sceneDescription, { removeFaucet = false } = {
   const faucetInstruction = removeFaucet
     ? " Musluğu cihazın gövdesinden kaldır; cihazın hemen yanına veya üzerine bitişik yeni bir musluk ekleme, cihazın yanı boş/temiz görünsün. Sahne açıklaması ayrı bir yerde (örn. tezgah üstünde) bağımsız bir musluk tarif ediyorsa, o musluğu sahnenin tarif edilen yerine ekle."
     : "";
-  return `Bu görseldeki su arıtma cihazının ${preserved}. Sadece arka planı ve sahneyi değiştir: ${scene}.${faucetInstruction} ${INSTALLATION_INSTRUCTION} ${WATER_NEGATIVE} ${SIGNAGE_NEGATIVE} ${PROPORTION_INSTRUCTION} Fotoğraf gerçekçi, reklam/katalog kalitesinde, yüksek çözünürlüklü olsun. Ürünün üzerine hiçbir yeni metin, logo veya filigran ekleme; etiket üzerindeki mevcut metni bulanıklaştırma veya değiştirme, olduğu gibi koru.`;
+  const galleryInstruction = referenceCount > 1
+    ? `Aşağıdaki görseller aynı gerçek ürünün farklı açıları/ürün sayfası görselleridir; bunları bir ürün galerisi olarak değerlendir. Görsellerdeki parçaları birleştirip başka bir model icat etme; sette görülen tüm gerçek parçaları (filtre gövdeleri ve varsa Ultramag manyetik kireç önleyici) koru.`
+    : "Referans görseldeki gerçek ürünü tek kaynak kabul et; benzer görünen başka bir cihazla değiştirme.";
+  return `${galleryInstruction} Bu görseldeki su arıtma cihazının ${preserved}. Sadece arka planı ve sahneyi değiştir: ${scene}.${faucetInstruction} ${INSTALLATION_INSTRUCTION} ${WATER_NEGATIVE} ${SIGNAGE_NEGATIVE} ${PROPORTION_INSTRUCTION} Fotoğraf gerçekçi, reklam/katalog kalitesinde, yüksek çözünürlüklü olsun. Ürünün üzerine hiçbir yeni metin, logo veya filigran ekleme; etiket üzerindeki mevcut metni bulanıklaştırma veya değiştirme, olduğu gibi koru.`;
 }
 
 export function applyRemoveBox(isBackground, info, box) {
@@ -131,14 +134,14 @@ async function buildMaskBuffer(sourceBuffer, { removeFaucet = false } = {}) {
   return { basePng, maskPng };
 }
 
-async function callGeminiImageEdit({ basePng, prompt }, env) {
+async function callGeminiImageEdit({ basePng, referencePngs = [], prompt }, env) {
   if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY Vercel Production ortamında tanımlı değil.");
   const model = env.GEMINI_SCENE_MODEL || "gemini-3.1-flash-lite-image";
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: "POST",
     headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json" },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: basePng.toString("base64") } }] }],
+      contents: [{ parts: [{ text: prompt }, ...[basePng, ...referencePngs].map((buffer) => ({ inlineData: { mimeType: "image/png", data: buffer.toString("base64") } }))] }],
       generationConfig: { responseModalities: ["IMAGE"] }
     })
   });
@@ -159,7 +162,7 @@ function openaiImageApiKey(env) {
   return env.OPENAI_IMAGE_API_KEY || env.OPENAI_API_KEY;
 }
 
-async function callOpenAIImageEdit({ basePng, maskPng, prompt, apiKey, quality }, env) {
+async function callOpenAIImageEdit({ basePng, referencePngs = [], maskPng, prompt, apiKey, quality }, env) {
   if (!apiKey) throw new Error("OPENAI_API_KEY Vercel Production ortamında tanımlı değil.");
   const model = env.OPENAI_SCENE_MODEL || "gpt-image-2";
   const form = new FormData();
@@ -168,6 +171,9 @@ async function callOpenAIImageEdit({ basePng, maskPng, prompt, apiKey, quality }
   form.append("size", `${CANVAS_SIZE}x${CANVAS_SIZE}`);
   if (quality) form.append("quality", quality);
   form.append("image", new Blob([basePng], { type: "image/png" }), "product.png");
+  for (const [index, referencePng] of referencePngs.entries()) {
+    form.append("image[]", new Blob([referencePng], { type: "image/png" }), `product-reference-${index + 1}.png`);
+  }
   form.append("mask", new Blob([maskPng], { type: "image/png" }), "mask.png");
 
   const response = await fetch("https://api.openai.com/v1/images/edits", {
@@ -195,25 +201,33 @@ export function availableSceneProviders(env = process.env) {
 }
 
 export async function generateSceneImage(product, sceneDescription, env = process.env, { removeFaucet = false, provider = "gemini" } = {}) {
-  const imageUrl = String(product?.imageUrl || "").trim();
+  const imageUrls = [...new Set((Array.isArray(product?.imageUrls) ? product.imageUrls : [product?.imageUrl]).map((url) => String(url || "").trim()).filter((url) => /^https:\/\//i.test(url)))].slice(0, 4);
+  const imageUrl = imageUrls[0] || "";
   if (!/^https:\/\//i.test(imageUrl)) throw new Error("Ürün görseli herkese açık HTTPS URL olmalı.");
 
-  const upstream = await fetch(imageUrl);
-  if (!upstream.ok) throw new Error("Kaynak ürün görseli alınamadı.");
-  const sourceBuffer = Buffer.from(await upstream.arrayBuffer());
+  const sourceBuffers = await Promise.all(imageUrls.map(async (url) => {
+    const upstream = await fetch(url);
+    if (!upstream.ok) throw new Error("Kaynak ürün görseli alınamadı.");
+    return Buffer.from(await upstream.arrayBuffer());
+  }));
+  const sourceBuffer = sourceBuffers[0];
 
   const { basePng, maskPng } = await buildMaskBuffer(sourceBuffer, { removeFaucet });
+  const referencePngs = [];
+  for (const referenceBuffer of sourceBuffers.slice(1)) {
+    referencePngs.push(await sharp(referenceBuffer).resize(CANVAS_SIZE, CANVAS_SIZE, { fit: "contain", background: { r: 255, g: 255, b: 255, alpha: 1 } }).removeAlpha().png().toBuffer());
+  }
 
   let b64, model, prompt;
   if (provider === "gemini") {
-    prompt = geminiScenePrompt(sceneDescription, { removeFaucet });
+    prompt = geminiScenePrompt(sceneDescription, { removeFaucet, referenceCount: imageUrls.length });
     model = env.GEMINI_SCENE_MODEL || "gemini-3.1-flash-lite-image";
-    b64 = await callGeminiImageEdit({ basePng, prompt }, env);
+    b64 = await callGeminiImageEdit({ basePng, referencePngs, prompt }, env);
   } else if (provider === "openai" || provider === "openai-low") {
-    prompt = sceneEditPrompt(sceneDescription, { removeFaucet });
+    prompt = `${sceneEditPrompt(sceneDescription, { removeFaucet })} ${imageUrls.length > 1 ? "Ek referans görselleri aynı ürünün farklı açılarıdır; tüm gerçek parçaları koru ve yeni model icat etme." : ""}`;
     model = env.OPENAI_SCENE_MODEL || "gpt-image-2";
     const quality = provider === "openai-low" ? "low" : undefined;
-    b64 = await callOpenAIImageEdit({ basePng, maskPng, prompt, apiKey: openaiImageApiKey(env), quality }, env);
+    b64 = await callOpenAIImageEdit({ basePng, referencePngs, maskPng, prompt, apiKey: openaiImageApiKey(env), quality }, env);
   } else {
     throw new Error("Desteklenmeyen sahne üretim sağlayıcısı.");
   }
@@ -224,6 +238,7 @@ export async function generateSceneImage(product, sceneDescription, env = proces
     provider,
     model,
     product: product.title || "",
+    referenceImageCount: imageUrls.length,
     generatedAt: new Date().toISOString()
   };
 }

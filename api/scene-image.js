@@ -6,6 +6,7 @@ import { generateCompositeSceneImage } from "../src/scene-composite.js";
 import { validateScenario, validateScenarioAgainstContext, buildSceneDescriptionFromScenario } from "../src/lib/scenario-schema.js";
 import { baseProductTitle } from "../src/lib/product-title.js";
 import { findCatalogProduct, isCatalogProductId } from "../src/lib/product-catalog.js";
+import { findKnownProductPhotos } from "../src/lib/product-photos.js";
 
 import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "../src/lib/config.js";
 function authorized(request) { return Boolean(getSession(request)); }
@@ -35,16 +36,17 @@ export default async function handler(request, response) {
       if (!catalogProduct) return response.status(400).json({ error: "Ürün bulunamadı." });
       const resolvedImageUrl = manualImageUrl || catalogProduct.imageUrl;
       if (!resolvedImageUrl) return response.status(400).json({ error: "Bu ürünün bilinen bir fotoğrafı yok. Üstteki \"Görsel URL\" alanına ürünün gerçek fotoğraf bağlantısını girin (ör. https://www.buzsu.com.tr/wp-content/uploads/.../urun.jpg) — ürün sayfasının linkini değil." });
-      product = { title: baseProductTitle(catalogProduct.title) || "Buzsu ürünü", imageUrl: resolvedImageUrl };
+      product = { title: baseProductTitle(catalogProduct.title) || "Buzsu ürünü", imageUrl: resolvedImageUrl, imageUrls: manualImageUrl ? [manualImageUrl] : (catalogProduct.imageUrls || [resolvedImageUrl]) };
       recordId = body.productId;
     } else {
       const data = await airtable();
       const record = (data.records || []).find((item) => item.id === body.productId);
       const fields = record?.fields || {};
       if (!record) return response.status(400).json({ error: "Ürün bulunamadı." });
-      const resolvedImageUrl = manualImageUrl || fields["Görsel URL"];
+      const knownImages = findKnownProductPhotos(fields["Kaynak URL"] || "");
+      const resolvedImageUrl = manualImageUrl || fields["Görsel URL"] || knownImages[0];
       if (!resolvedImageUrl) return response.status(400).json({ error: "Ürün görseli eksik." });
-      product = { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", imageUrl: resolvedImageUrl };
+      product = { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", imageUrl: resolvedImageUrl, imageUrls: manualImageUrl ? [manualImageUrl] : [resolvedImageUrl, ...knownImages.filter((item) => item !== resolvedImageUrl)] };
       recordId = record.id;
     }
 

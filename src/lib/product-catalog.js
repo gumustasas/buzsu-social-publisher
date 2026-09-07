@@ -6,7 +6,7 @@
 // bilinen ürünler için imageUrl product-photos.js'teki doğrulanmış eşleme
 // listesinden doldurulur — listede olmayanlar boş kalır ve panelde elle
 // girilmesi gerekir (bkz. dashboard.html).
-import { findKnownProductPhoto } from "./product-photos.js";
+import { findKnownProductPhoto, findKnownProductPhotos } from "./product-photos.js";
 
 const LLMS_FULL_URL = "https://www.buzsu.com.tr/llms-full.txt";
 const SITE_ORIGIN = "https://www.buzsu.com.tr";
@@ -103,7 +103,7 @@ async function fetchCatalog() {
 export async function listCatalogProducts() {
   try {
     const catalog = await fetchCatalog();
-    return catalog.map((item) => ({ ...item, imageUrl: findKnownProductPhoto(item.url) }));
+    return catalog.map((item) => ({ ...item, imageUrl: findKnownProductPhoto(item.url), imageUrls: findKnownProductPhotos(item.url) }));
   } catch {
     return [];
   }
@@ -127,5 +127,5 @@ export async function findCatalogProduct(id) {
   const url = decodeURIComponent(id.slice(CATALOG_ID_PREFIX.length));
   const catalog = await listCatalogProducts();
   const match = catalog.find((item) => item.url === url);
-  return match || { title: titleFromSlug(slugFromUrl(url)), url, imageUrl: findKnownProductPhoto(url) };
+  return match || { title: titleFromSlug(slugFromUrl(url)), url, imageUrl: findKnownProductPhoto(url), imageUrls: findKnownProductPhotos(url) };
 }

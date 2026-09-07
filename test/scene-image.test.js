@@ -75,6 +75,12 @@ test("geminiScenePrompt embeds the scene description and a strong preservation i
   assert.doesNotMatch(prompt, /maskelenmemiş/);
 });
 
+test("geminiScenePrompt treats multiple references as one product gallery and preserves all real components", () => {
+  const prompt = geminiScenePrompt("bina girişi teknik odası", { referenceCount: 4 });
+  assert.match(prompt, /aynı gerçek ürünün farklı açıları/);
+  assert.match(prompt, /filtre gövdeleri ve varsa Ultramag/);
+});
+
 test("geminiScenePrompt instructs the product to look physically installed, not floating or detached from a pipe", () => {
   const prompt = geminiScenePrompt("teknik oda, boru hattı");
   assert.match(prompt, /borunun kendisinin bir parçası gibi göster/);
