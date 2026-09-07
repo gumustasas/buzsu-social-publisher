@@ -52,19 +52,27 @@ export default async function handler(request, response) {
 
     // Opsiyonel yapılandırılmış senaryo (bkz. /api/scene-scenario) — verildiğinde
     // önce YENİDEN doğrulanır (kullanıcı dashboard'da elle düzenlemiş olabilir;
-    // bağlam/yasak listesi çelişkisi burada da engellenir, tek noktaya güvenilmez)
-    // ve tek bir sceneDescription paragrafına indirgenip generateSceneImage'a
-    // AYNI şekilde verilir. body.sceneDescription verildiğinde davranış birebir
-    // eskisi gibi kalır — bu blok yalnızca body.scenario doluyken çalışır.
+    // bağlam/yasak listesi çelişkisi burada da engellenir, tek noktaya güvenilmez).
+    // body.sceneDescription verildiğinde (eski, senaryosuz akış) davranış
+    // birebir eskisi gibi kalır — bu blok yalnızca body.scenario doluyken çalışır.
     let sceneDescription = body.sceneDescription;
+    let scenario = null;
     if (body.scenario && typeof body.scenario === "object") {
-      const scenario = validateScenario(body.scenario);
+      scenario = validateScenario(body.scenario);
       validateScenarioAgainstContext(scenario);
       sceneDescription = buildSceneDescriptionFromScenario(scenario);
     }
 
-    const scene = provider === "composite"
-      ? await generateCompositeSceneImage(product, sceneDescription, process.env)
+    // Yapılandırılmış bir senaryo varsa (yeni, bağlam-doğrulamalı akış) ürün
+    // kimliğinin KESİNLİKLE korunması için her zaman "composite" (piksel
+    // birebir kesim + AI yalnızca arka plan üretir) kullanılır — provider
+    // dropdown'ı bu durumda göz ardı edilir; marka/logo/form/renk zaten
+    // yeniden çizilmediği için değişemez (bkz. src/scene-composite.js).
+    // Senaryo YOKSA (eski serbest-metin akışı) davranış birebir eskisi gibi:
+    // yalnızca kullanıcı elle "composite" seçerse o yol kullanılır.
+    const useComposite = Boolean(scenario) || provider === "composite";
+    const scene = useComposite
+      ? await generateCompositeSceneImage(product, sceneDescription, process.env, scenario ? { usageContext: scenario.usageContext, negativeConstraints: scenario.negativeConstraints } : {})
       : await generateSceneImage(product, sceneDescription, process.env, { removeFaucet: Boolean(body.removeFaucet), provider });
 
     if (process.env.BLOB_READ_WRITE_TOKEN) {

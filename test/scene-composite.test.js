@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import { backgroundOnlyPrompt, buildProductCutout, buildShadowLayer, generateCompositeSceneImage } from "../src/scene-composite.js";
+import { backgroundOnlyPrompt, buildProductCutout, buildShadowLayer, generateCompositeSceneImage, assertReliableCutout } from "../src/scene-composite.js";
+import { INSTALLATION_CONTEXTS } from "../src/lib/product-installation-context.js";
 
 // White canvas with a solid blue square in the middle — mimics a product
 // photo on a white/near-white background (what floodFillBackgroundMask
@@ -108,6 +109,104 @@ test("generateCompositeSceneImage composites the AI-generated background with th
     assert.equal(data[cornerIdx], 255);
     assert.equal(data[cornerIdx + 1], 0);
     assert.equal(data[cornerIdx + 2], 0);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// --- assertReliableCutout: "referans görseli veya güvenilir cutout'u olmayan
+// üründe üretimi durdur" gereksinimi ---
+test("assertReliableCutout rejects a near-empty cutout (product not detected — e.g. an almost entirely white/blank photo)", () => {
+  const size = 64;
+  // Only a 2x2 speck is "product" — far below MIN_PRODUCT_PIXEL_RATIO.
+  const isBackground = new Uint8Array(size * size).fill(1);
+  isBackground[0] = 0; isBackground[1] = 0;
+  assert.throws(() => assertReliableCutout(isBackground, { width: size, height: size }), /ürün tespit edilemedi/);
+});
+
+test("assertReliableCutout rejects a near-full cutout (background not separable — e.g. a busy or non-white-background photo)", () => {
+  const size = 64;
+  const isBackground = new Uint8Array(size * size).fill(0); // everything looks like "product"
+  assert.throws(() => assertReliableCutout(isBackground, { width: size, height: size }), /arka plan ayırt edilemedi/);
+});
+
+test("assertReliableCutout accepts a normal product photo (reasonable product/background split)", async () => {
+  const photo = await makeTestProductPhoto();
+  const { isBackground, info } = await buildProductCutout(photo);
+  assert.doesNotThrow(() => assertReliableCutout(isBackground, info));
+});
+
+test("generateCompositeSceneImage stops BEFORE any AI network call when the cutout is unreliable", async () => {
+  const originalFetch = global.fetch;
+  // An almost entirely white photo — no real product silhouette to detect.
+  const blankPhoto = await sharp(Buffer.alloc(64 * 64 * 3, 255), { raw: { width: 64, height: 64, channels: 3 } }).png().toBuffer();
+  let aiWasCalled = false;
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("example.com")) return { ok: true, arrayBuffer: async () => blankPhoto };
+    aiWasCalled = true;
+    throw new Error(`AI çağrısı yapılmamalıydı: ${u}`);
+  };
+  try {
+    await assert.rejects(
+      () => generateCompositeSceneImage({ title: "Test Ürün", imageUrl: "https://example.com/blank.png" }, "sahne", { GEMINI_API_KEY: "test" }),
+      /güvenilir bir kesim/
+    );
+    assert.equal(aiWasCalled, false, "AI (Gemini) hiç çağrılmamalıydı — cutout güvenilmez olduğu için erken durulmalı");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// --- Bağlam-farkında arka plan üretimi ---
+test("backgroundOnlyPrompt includes the technical_installation guidance and explicitly forbids background hardware/labels that would clash with the real product's own connections", () => {
+  const prompt = backgroundOnlyPrompt("bina giriş noktası", { usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION });
+  assert.match(prompt, /bina girişi\/ana su hattı/);
+  assert.match(prompt, /rakor, valf, conta, vana/);
+});
+
+test("backgroundOnlyPrompt includes the mandatory context-specific negative constraints when given", () => {
+  const prompt = backgroundOnlyPrompt("bina giriş noktası", { usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION, negativeConstraints: ["sahte etiket", "çamaşır odası"] });
+  assert.match(prompt, /KESİNLİKLE ÇİZME: sahte etiket, çamaşır odası/);
+});
+
+test("backgroundOnlyPrompt has no context guidance block when usageContext is omitted (legacy free-text scene-image flow, unchanged)", () => {
+  const prompt = backgroundOnlyPrompt("modern mutfak");
+  assert.doesNotMatch(prompt, /bina girişi/);
+});
+
+// --- REGRESYON: Silifozlu (ana giriş: üçlü filtre + UltraMag) tipi bina
+// girişi setlerinde arka planın kendi (sahte) boru rakorunu/etiketini
+// uydurup gerçek ürünle çakışmaması ---
+test("REGRESSION: generateCompositeSceneImage sends a background prompt for a main-entry multi-filter product that forbids fabricated pipe fittings/labels, and the composited output still preserves the exact original product pixels", async () => {
+  const originalFetch = global.fetch;
+  const productPhoto = await makeTestProductPhoto();
+  const backgroundPhoto = await sharp(Buffer.alloc(64 * 64 * 3, 200), { raw: { width: 64, height: 64, channels: 3 } }).png().toBuffer();
+  let capturedPrompt = null;
+  global.fetch = async (url, options) => {
+    const u = String(url);
+    if (u.includes("example.com")) return { ok: true, arrayBuffer: async () => productPhoto };
+    capturedPrompt = JSON.parse(options.body).contents[0].parts[0].text;
+    return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { data: backgroundPhoto.toString("base64") } }] } }] }) };
+  };
+  try {
+    const result = await generateCompositeSceneImage(
+      { title: "Silifozlu Ev Ana Giriş Su Arıtma Sistemi", imageUrl: "https://example.com/silifozlu.png" },
+      "Cihaz bina ana giriş noktasında, ana su hattına monte edilmiş; üçlü filtre seti ve UltraMag manyetik cihaz ev içi dağıtım hattına doğru sıralı bağlı.",
+      { GEMINI_API_KEY: "test" },
+      { usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION, negativeConstraints: ["sahte etiket", "uydurma yazı", "yanlış bağlantı yönü", "tamamlanmış boru bağlantı parçası"] }
+    );
+    assert.match(capturedPrompt, /sahte etiket/);
+    assert.match(capturedPrompt, /tamamlanmış boru bağlantı parçası/);
+    assert.match(capturedPrompt, /rakor, valf, conta, vana/);
+
+    // Ürün pikselleri (mavi kare) hiç dokunulmadan, birebir korunmuş olmalı.
+    const base64 = result.dataUrl.split(",")[1];
+    const { data, info } = await sharp(Buffer.from(base64, "base64")).raw().ensureAlpha().toBuffer({ resolveWithObject: true });
+    const centerIdx = (Math.floor(info.height / 2) * info.width + Math.floor(info.width / 2)) * 4;
+    assert.equal(data[centerIdx], 10);
+    assert.equal(data[centerIdx + 1], 20);
+    assert.equal(data[centerIdx + 2], 200);
   } finally {
     global.fetch = originalFetch;
   }
