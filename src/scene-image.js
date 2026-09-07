@@ -170,7 +170,11 @@ async function callOpenAIImageEdit({ basePng, referencePngs = [], maskPng, promp
   form.append("prompt", prompt);
   form.append("size", `${CANVAS_SIZE}x${CANVAS_SIZE}`);
   if (quality) form.append("quality", quality);
-  form.append("image", new Blob([basePng], { type: "image/png" }), "product.png");
+  // OpenAI accepts one or more input images, but the multipart field must use
+  // one consistent shape. Mixing `image` with `image[]` makes the request fail
+  // with "image already has a different value". Always send the primary
+  // product image and its gallery references as the array form.
+  form.append("image[]", new Blob([basePng], { type: "image/png" }), "product.png");
   for (const [index, referencePng] of referencePngs.entries()) {
     form.append("image[]", new Blob([referencePng], { type: "image/png" }), `product-reference-${index + 1}.png`);
   }
