@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import { backgroundOnlyPrompt, buildProductCutout, buildShadowLayer, generateCompositeSceneImage, assertReliableCutout } from "../src/scene-composite.js";
+import { backgroundOnlyPrompt, buildProductCutout, buildShadowLayer, generateCompositeSceneImage, assertReliableCutout, adaptiveBackgroundMask } from "../src/scene-composite.js";
+import { floodFillBackgroundMask } from "../src/scene-image.js";
 import { INSTALLATION_CONTEXTS } from "../src/lib/product-installation-context.js";
 
 // White canvas with a solid blue square in the middle — mimics a product
@@ -9,6 +10,20 @@ import { INSTALLATION_CONTEXTS } from "../src/lib/product-installation-context.j
 // treats as background vs. product).
 async function makeTestProductPhoto(size = 64, squareStart = 20, squareEnd = 44) {
   const raw = Buffer.alloc(size * size * 3, 255);
+  for (let y = squareStart; y < squareEnd; y++) {
+    for (let x = squareStart; x < squareEnd; x++) {
+      const o = (y * size + x) * 3;
+      raw[o] = 10; raw[o + 1] = 20; raw[o + 2] = 200; // solid blue "product"
+    }
+  }
+  return sharp(raw, { raw: { width: size, height: size, channels: 3 } }).png().toBuffer();
+}
+
+// Off-white/light-gray studio background (below the old fixed >=235
+// threshold) with a solid blue "product" square — mimics the real Silifozlu
+// catalog photo that triggered the production incident.
+async function makeOffWhiteTestProductPhoto(size = 64, squareStart = 20, squareEnd = 44, bg = 224) {
+  const raw = Buffer.alloc(size * size * 3, bg);
   for (let y = squareStart; y < squareEnd; y++) {
     for (let x = squareStart; x < squareEnd; x++) {
       const o = (y * size + x) * 3;
@@ -44,6 +59,53 @@ test("buildProductCutout keeps the product's real pixels opaque and exact, and m
   // Corner (background): fully transparent.
   const cornerIdx = 0;
   assert.equal(data[cornerIdx + 3], 0);
+});
+
+// --- REGRESYON: gerçek üretim olayı (Silifozlu, kayıtlı stüdyo fotoğrafı) —
+// arka plan saf beyaz değil, hafif gri/off-white idi. Eski sabit eşikli
+// floodFillBackgroundMask (>=235/255) kenarlardan hiç yayılamadı, kesim
+// %98.7 "ürün" (tamamen başarısız) çıktı ve assertReliableCutout kullanıcıyı
+// tamamen durdurdu. adaptiveBackgroundMask (kenar renginin medyanına göre
+// yakınlık eşiği) bu durumu düzgün ele almalı. ---
+test("REGRESSION: the old fixed-threshold mask misclassifies an off-white studio background as product, but adaptiveBackgroundMask correctly recovers it", async () => {
+  const photo = await makeOffWhiteTestProductPhoto(64, 20, 44, 224);
+  const normalized = await sharp(photo).resize(256, 256, { fit: "contain", background: { r: 255, g: 255, b: 255, alpha: 1 } }).removeAlpha().toColourspace("srgb");
+  const { data, info } = await normalized.raw().toBuffer({ resolveWithObject: true });
+
+  const oldMask = floodFillBackgroundMask(data, info);
+  const oldProductRatio = oldMask.reduce((sum, v) => sum + (v ? 0 : 1), 0) / (info.width * info.height);
+  assert.ok(oldProductRatio > 0.92, `eski algoritma bu senaryoda başarısız olmalıydı (ratio=${oldProductRatio})`);
+
+  const newMask = adaptiveBackgroundMask(data, info);
+  const newProductRatio = newMask.reduce((sum, v) => sum + (v ? 0 : 1), 0) / (info.width * info.height);
+  assert.ok(newProductRatio > 0.015 && newProductRatio < 0.92, `yeni algoritma güvenilir bir oran döndürmeli (ratio=${newProductRatio})`);
+});
+
+test("REGRESSION: generateCompositeSceneImage no longer throws on an off-white studio background product photo, and still preserves the exact product pixels", async () => {
+  const originalFetch = global.fetch;
+  const productPhoto = await makeOffWhiteTestProductPhoto();
+  const backgroundPhoto = await sharp(Buffer.alloc(64 * 64 * 3, 200), { raw: { width: 64, height: 64, channels: 3 } }).png().toBuffer();
+  global.fetch = async (url, options) => {
+    const u = String(url);
+    if (u.includes("example.com")) return { ok: true, arrayBuffer: async () => productPhoto };
+    return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { data: backgroundPhoto.toString("base64") } }] } }] }) };
+  };
+  try {
+    const result = await generateCompositeSceneImage(
+      { title: "Silifozlu Ev Ana Giriş Su Arıtma Sistemi", imageUrl: "https://example.com/silifozlu-offwhite.png" },
+      "Bina girişindeki teknik odada, ana su hattı üzerinde profesyonel bir kurulum.",
+      { GEMINI_API_KEY: "test" },
+      { usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION, negativeConstraints: [] }
+    );
+    const base64 = result.dataUrl.split(",")[1];
+    const { data, info } = await sharp(Buffer.from(base64, "base64")).raw().ensureAlpha().toBuffer({ resolveWithObject: true });
+    const centerIdx = (Math.floor(info.height / 2) * info.width + Math.floor(info.width / 2)) * 4;
+    assert.equal(data[centerIdx], 10);
+    assert.equal(data[centerIdx + 1], 20);
+    assert.equal(data[centerIdx + 2], 200);
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test("buildShadowLayer produces a soft dark alpha layer shifted below the product, with no shadow far above it", async () => {

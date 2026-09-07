@@ -1,5 +1,4 @@
 import sharp from "sharp";
-import { floodFillBackgroundMask } from "./scene-image.js";
 import { BACKGROUND_GUIDANCE_BY_CONTEXT } from "./lib/product-installation-context.js";
 
 // Deneysel ikinci yöntem: Gemini/OpenAI'nin referans görseli "koruyarak"
@@ -53,6 +52,76 @@ export function assertReliableCutout(isBackground, info) {
   return ratio;
 }
 
+// buildProductCutout'un piksel-birebir kesim garantisi, arka planın DOĞRU
+// tespit edilmesine bağlı. Daha önce burada scene-image.js'teki
+// floodFillBackgroundMask (sabit, katı bir "neredeyse saf beyaz" eşiği,
+// >=235/255) kullanılıyordu — bu eski maskeli-düzenleme akışı için
+// yeterliydi (maske kusurlu olsa da AI referans görseli görüp telafi
+// edebiliyor), ama composite'te maske TEK gerçek kaynak: hatalıysa cutout
+// tamamen bozuluyor. Gerçek ürün testinde (Silifozlu, kayıtlı stüdyo
+// fotoğrafı) doğrulandı: arka plan saf beyaz değil, hafif gri/off-white —
+// sabit eşik kenarlardan hiç yayılamadı, kesim %98.7 "ürün" (yani
+// tamamen başarısız) çıktı. Bunun yerine gerçek kenar rengi fotoğrafın
+// kendi kenar piksellerinin MEDYANından örneklenir (birkaç ürün pikseli
+// kenara değse bile medyan sağlam kalır), sonra o renge YAKINLIK
+// eşiğiyle flood-fill yapılır — off-white/gri stüdyo fonlarına uyum
+// sağlar, ürünün arka plandan belirgin şekilde farklı renklerini yine de
+// dışarıda bırakır.
+const BACKGROUND_COLOR_TOLERANCE = 26;
+
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+function sampleBorderColor(data, info) {
+  const { width, height, channels } = info;
+  const rs = [], gs = [], bs = [];
+  function collect(x, y) {
+    const idx = (y * width + x) * channels;
+    rs.push(data[idx]); gs.push(data[idx + 1]); bs.push(data[idx + 2]);
+  }
+  for (let x = 0; x < width; x++) { collect(x, 0); collect(x, height - 1); }
+  for (let y = 0; y < height; y++) { collect(0, y); collect(width - 1, y); }
+  return { r: median(rs), g: median(gs), b: median(bs) };
+}
+
+function isNearBackgroundColor(r, g, b, ref) {
+  return Math.abs(r - ref.r) <= BACKGROUND_COLOR_TOLERANCE
+    && Math.abs(g - ref.g) <= BACKGROUND_COLOR_TOLERANCE
+    && Math.abs(b - ref.b) <= BACKGROUND_COLOR_TOLERANCE;
+}
+
+export function adaptiveBackgroundMask(data, info) {
+  const { width, height, channels } = info;
+  const ref = sampleBorderColor(data, info);
+  const visited = new Uint8Array(width * height);
+  const isBackground = new Uint8Array(width * height);
+  const stack = [];
+
+  function visit(x, y) {
+    if (x < 0 || y < 0 || x >= width || y >= height) return;
+    const idx = y * width + x;
+    if (visited[idx]) return;
+    visited[idx] = 1;
+    const pixelIdx = idx * channels;
+    if (!isNearBackgroundColor(data[pixelIdx], data[pixelIdx + 1], data[pixelIdx + 2], ref)) return;
+    isBackground[idx] = 1;
+    stack.push(x, y);
+  }
+
+  for (let x = 0; x < width; x++) { visit(x, 0); visit(x, height - 1); }
+  for (let y = 0; y < height; y++) { visit(0, y); visit(width - 1, y); }
+
+  while (stack.length) {
+    const y = stack.pop();
+    const x = stack.pop();
+    visit(x + 1, y); visit(x - 1, y); visit(x, y + 1); visit(x, y - 1);
+  }
+
+  return isBackground;
+}
+
 async function normalizeToCanvas(sourceBuffer) {
   return sharp(sourceBuffer)
     .resize(CANVAS_SIZE, CANVAS_SIZE, { fit: "contain", background: { r: 255, g: 255, b: 255, alpha: 1 } })
@@ -60,12 +129,13 @@ async function normalizeToCanvas(sourceBuffer) {
     .toColourspace("srgb");
 }
 
-// Ürünü referans fotoğraftan piksel birebir keser; arka plan (beyaza yakın,
-// kenardan bağlantılı alan) şeffaf, ürünün kendisi opak kalır.
+// Ürünü referans fotoğraftan piksel birebir keser; arka plan (kenar
+// rengine yakın, kenardan bağlantılı alan) şeffaf, ürünün kendisi opak
+// kalır.
 export async function buildProductCutout(sourceBuffer) {
   const normalized = await normalizeToCanvas(sourceBuffer);
   const { data, info } = await normalized.raw().toBuffer({ resolveWithObject: true });
-  const isBackground = floodFillBackgroundMask(data, info);
+  const isBackground = adaptiveBackgroundMask(data, info);
 
   const cutoutRaw = Buffer.alloc(info.width * info.height * 4);
   for (let i = 0; i < info.width * info.height; i++) {
