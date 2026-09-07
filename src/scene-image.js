@@ -28,6 +28,7 @@ const SIGNAGE_NEGATIVE = "Sahnede duvara veya herhangi bir yüzeye gerçek olmay
 const PROPORTION_INSTRUCTION = "Cihazın kalınlığını, çapını ve boyunu referans görseldeki orijinal orantılarıyla BİREBİR aynı tut — sahnede cihazı referans görseldekinden daha kalın, daha ince, daha uzun veya daha kısa gösterme. Cihazın boruya/tesisata göre kalınlık oranı (örn. boru çapına kıyasla cihazın gövde çapı) referans görseldeki gibi kalmalı; bu oranı tahmin ederek düzeltmeye çalışma.";
 
 const FILTER_SET_ORIENTATION_INSTRUCTION = "Bu bir filtre + Ultramag manyetik kireç önleyici setiyse, referans görseldeki gerçek Ultramag cihazını yeniden çizme veya başka bir silindirle değiştirme. Ultramag, filtre gövdelerinin yanında ve ana su hattı üzerinde yatay olarak, filtre çıkışından ev/daire içi dağıtım yönüne doğru sıralı biçimde monte edilmiş olmalı; dikey asılı, aşağı sarkan veya filtrelerden kopuk bir parça yapma. Üç filtre gövdesi ve Ultramag aynı gerçek setin parçaları olarak tek bir sürekli boru hattında görünmeli."
+const FILTER_SET_FLOW_INSTRUCTION = "Su akış sırası değişmez: bina/ev/daire ana su girişi → üçlü filtre sistemi → Buzsu Ultramag manyetik kireç önleyici → ev içi su dağıtım hattı. Bu akışı görselde fiziksel boru bağlantılarıyla anlat; ancak IN, OUT, ok, marka veya etiket yazılarını kendin ekleme. Referans fotoğrafta olmayan yazıları ve sahte ürün logolarını üretme."
 
 // assets/code-product.png üzerinde 1024x1024 normalize edilmiş kanvasta elle
 // ölçülmüş musluk bölgesi (kavis, gövde, musluk kolu, ayak, uç). Musluğun üst
@@ -98,7 +99,7 @@ export function geminiScenePrompt(sceneDescription, { removeFaucet = false, refe
   const galleryInstruction = referenceCount > 1
     ? `Aşağıdaki görseller aynı gerçek ürünün farklı açıları/ürün sayfası görselleridir; bunları bir ürün galerisi olarak değerlendir. Görsellerdeki parçaları birleştirip başka bir model icat etme; sette görülen tüm gerçek parçaları (filtre gövdeleri ve varsa Ultramag manyetik kireç önleyici) koru.`
     : "Referans görseldeki gerçek ürünü tek kaynak kabul et; benzer görünen başka bir cihazla değiştirme.";
-  const setOrientation = /filtre|ultramag|manyetik kireç/i.test(scene) ? FILTER_SET_ORIENTATION_INSTRUCTION : "";
+  const setOrientation = /filtre|ultramag|manyetik kireç/i.test(scene) ? `${FILTER_SET_ORIENTATION_INSTRUCTION} ${FILTER_SET_FLOW_INSTRUCTION}` : "";
   return `${galleryInstruction} Bu görseldeki su arıtma cihazının ${preserved}. Sadece arka planı ve sahneyi değiştir: ${scene}.${faucetInstruction} ${INSTALLATION_INSTRUCTION} ${WATER_NEGATIVE} ${SIGNAGE_NEGATIVE} ${PROPORTION_INSTRUCTION} ${setOrientation} Fotoğraf gerçekçi, reklam/katalog kalitesinde, yüksek çözünürlüklü olsun. Ürünün üzerine hiçbir yeni metin, logo veya filigran ekleme; etiket üzerindeki mevcut metni bulanıklaştırma veya değiştirme, olduğu gibi koru.`;
 }
 

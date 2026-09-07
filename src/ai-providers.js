@@ -282,7 +282,7 @@ const scenarioSchemaHint = `{"hook":"kısa açılış cümlesi","sceneDescriptio
 function productIdentityGuidance(product, context) {
   const text = `${product?.title || ""} ${product?.url || ""} ${context || ""}`;
   if (/silifoz|tam koruma|filtreleme seti|filtreli.*manyetik|manyetik.*filtre/i.test(text)) {
-    return "Ürün kimliği: Bu bir bina/ana giriş için filtreli manyetik kireç önleyici SETİDİR. Referans ve ürün bilgisinde görülen çok kademeli filtre gövdeleri ile Buzsu Ultramag/manyetik kireç önleyici ayrı bileşenler olarak birlikte korunmalı; Ultramag filtrelerin yanında ana hatta yatay ve ev/daire dağıtım yönüne doğru sıralı bağlanmalı, dikey asılı veya kopuk gösterilmemeli. Seti tek bir genel cihaz veya yalnızca şeffaf filtre gövdeleri gibi sadeleştirme.";
+    return "Ürün kimliği: Bu bir bina/ana giriş için üçlü filtre + manyetik kireç önleyici SETİDİR. Su akış sırası kesinlikle bina/ev/daire ana su girişi → üçlü filtre sistemi → Buzsu Ultramag/manyetik kireç önleyici → ev içi dağıtım hattıdır. Referans ve ürün bilgisinde görülen filtre gövdeleri ile Buzsu Ultramag ayrı bileşenler olarak birlikte korunmalı; Ultramag filtrelerin yanında ana hatta yatay ve ev/daire dağıtım yönüne doğru sıralı bağlanmalı, dikey asılı veya kopuk gösterilmemeli. IN/OUT yazıları, oklar, sahte marka/ürün etiketleri veya referansta olmayan yazılar ekleme. Seti tek bir genel cihaz veya yalnızca şeffaf filtre gövdeleri gibi sadeleştirme.";
   }
   if (/ultramag|manyetik kireç önleyici|kireç önleyici/i.test(text)) {
     return "Ürün kimliği: Bu bir boru hattına bağlanan manyetik kireç önleyicidir. Referansta şeffaf filtre gövdeleri yoksa filtre gövdesi ekleme; referansta bir set görünüyorsa setin bütün parçalarını koru.";
