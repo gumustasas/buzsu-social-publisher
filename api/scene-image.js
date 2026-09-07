@@ -71,8 +71,17 @@ export default async function handler(request, response) {
     // Senaryo YOKSA (eski serbest-metin akışı) davranış birebir eskisi gibi:
     // yalnızca kullanıcı elle "composite" seçerse o yol kullanılır.
     const useComposite = Boolean(scenario) || provider === "composite";
+    // ÖNEMLİ: composite'in arka plan istemine (backgroundOnlyPrompt) senaryo
+    // varken sceneDescription BOŞ verilir — buildSceneDescriptionFromScenario
+    // ürünün KENDİSİNİ ayrıntılı anlatan bir metin üretir (bkz. yukarıdaki
+    // sceneDescription ataması, serbest-metin/AI-redraw akışı için yazılmış),
+    // ve bunu composite'in "arka planda hiç ürün olmasın" istemine temel
+    // cümle olarak vermek gerçek bir üretim hatasına yol açtı: AI o talimatı
+    // görmezden gelip kendi (yanlış markalı) ürününü çizdi. Boş verildiğinde
+    // backgroundOnlyPrompt, DEFAULT_ENVIRONMENT_BY_CONTEXT'ten (ürün
+    // açıklaması İÇERMEYEN, deterministik) bir taban cümle kullanır.
     const scene = useComposite
-      ? await generateCompositeSceneImage(product, sceneDescription, process.env, scenario ? { usageContext: scenario.usageContext, negativeConstraints: scenario.negativeConstraints } : {})
+      ? await generateCompositeSceneImage(product, scenario ? "" : sceneDescription, process.env, scenario ? { usageContext: scenario.usageContext, negativeConstraints: scenario.negativeConstraints } : {})
       : await generateSceneImage(product, sceneDescription, process.env, { removeFaucet: Boolean(body.removeFaucet), provider });
 
     if (process.env.BLOB_READ_WRITE_TOKEN) {

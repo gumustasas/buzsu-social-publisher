@@ -60,6 +60,23 @@ export const BACKGROUND_GUIDANCE_BY_CONTEXT = {
   [INSTALLATION_CONTEXTS.INDOOR_COUNTERTOP]: "Bu, ev/ofis içi mutfak/tezgah bağlamında kullanılacak bir arka plan. Tezgah, dolap, doğal ışık olabilir; ürünün kendi bağlantılarıyla çakışacak ayrı bir musluk veya cihaz ÇİZME (ürün sahneye ayrıca yapıştırılacak)."
 };
 
+// Composite'in arka plan istemi (bkz. src/scene-composite.js
+// backgroundOnlyPrompt) için bağlama özgü, ürün AÇIKLAMASI İÇERMEYEN sade
+// ortam cümlesi. Gerçek üretim hatası: AI'nın ürettiği senaryo metni
+// (sceneDescription/installationNotes/camera — bkz. scenario-schema.js
+// buildSceneDescriptionFromScenario) ürünün KENDİSİNİ ayrıntılı anlatır
+// (ör. "Şeffaf filtre gövdeleri içinde silifoz kristalleri... metalik
+// Ultramag ünitesi..."), çünkü bu metin normalde serbest-metin/AI-redraw
+// akışı için yazılıyor. Bu metni olduğu gibi composite'in "arka planda
+// HİÇBİR ürün olmasın" istemine temel cümle olarak vermek, AI'nın o
+// talimatı görmezden gelip kendi (yanlış markalı) ürününü çizmesine yol
+// açtı. Bu yüzden composite'in arka plan tabanı, AI'nın yazdığı senaryo
+// metninden değil, TAMAMEN deterministik/sabit bu haritadan gelir.
+export const DEFAULT_ENVIRONMENT_BY_CONTEXT = {
+  [INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION]: "Bina girişinde veya teknik tesisat odasında, duvara monte boru geçişlerinin bulunduğu, sade ve temiz bir teknik alan; doğal, parlak gün ışığı.",
+  [INSTALLATION_CONTEXTS.INDOOR_COUNTERTOP]: "Modern bir mutfak tezgahı, sabah gün ışığı, ahşap dolaplar."
+};
+
 // Kullanıcının serbest metin isteğinin ("evin içine koy" gibi) ürünün gerçek
 // bağlamıyla ÇELİŞİP çelişmediğini kaba bir anahtar kelime taramasıyla tespit
 // eder. Kesin bir NLP çözümü değildir — amaç, en bariz çelişkileri sessizce

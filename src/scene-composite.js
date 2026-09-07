@@ -1,5 +1,5 @@
 import sharp from "sharp";
-import { BACKGROUND_GUIDANCE_BY_CONTEXT } from "./lib/product-installation-context.js";
+import { BACKGROUND_GUIDANCE_BY_CONTEXT, DEFAULT_ENVIRONMENT_BY_CONTEXT } from "./lib/product-installation-context.js";
 
 // Deneysel ikinci yöntem: Gemini/OpenAI'nin referans görseli "koruyarak"
 // düzenlemesine güvenmek yerine (bkz. scene-image.js — bazen ürünü hafifçe
@@ -22,8 +22,18 @@ const SHADOW_OPACITY = 110;
 // BACKGROUND_GUIDANCE_BY_CONTEXT — gerçek hata: Silifozlu gibi bina girişi
 // setlerinde arka plan kendi boru rakorunu/etiketini uydurup gerçek ürünle
 // çakışıyordu).
+//
+// sceneDescription BOŞ bırakılmalı çağıran tarafından — bkz. api/scene-
+// image.js: yapılandırılmış senaryo akışında AI'nın yazdığı sceneDescription
+// ürünün KENDİSİNİ ayrıntılı anlatır (o metin normalde serbest-metin/AI-
+// redraw akışı için yazılıyor), ve bunu burada temel cümle olarak kullanmak
+// "hiç ürün çizme" talimatını geçersiz kılıp AI'nın kendi (yanlış markalı)
+// ürününü çizmesine yol açan gerçek bir üretim hatasına neden oldu
+// (Ultramag/Silifozlu). Boşsa DEFAULT_ENVIRONMENT_BY_CONTEXT'ten (tamamen
+// deterministik, ürün açıklaması İÇERMEYEN) bir taban cümle kullanılır.
 export function backgroundOnlyPrompt(sceneDescription, { usageContext, negativeConstraints = [] } = {}) {
-  const scene = String(sceneDescription || "").trim() || "modern bir mutfak tezgahı, sabah gün ışığı, ahşap dolaplar";
+  const fallback = (usageContext && DEFAULT_ENVIRONMENT_BY_CONTEXT[usageContext]) || "modern bir mutfak tezgahı, sabah gün ışığı, ahşap dolaplar";
+  const scene = String(sceneDescription || "").trim() || fallback;
   const contextGuidance = usageContext && BACKGROUND_GUIDANCE_BY_CONTEXT[usageContext] ? ` ${BACKGROUND_GUIDANCE_BY_CONTEXT[usageContext]}` : "";
   const forbidden = negativeConstraints.length ? ` Ayrıca şunları KESİNLİKLE ÇİZME: ${negativeConstraints.join(", ")}.` : "";
   return `${scene}. Bu sahnede HİÇBİR ürün, cihaz, obje veya insan olmasın — sahne tamamen boş, sadece ortam/arka plan görünsün; üzerine sonradan bir ürün fotoğrafı yapıştırılacak boş bir sahne fotoğrafı.${contextGuidance}${forbidden} Gerçekçi, reklam kalitesinde, yüksek çözünürlüklü, doğal ve yumuşak ışıklı bir fotoğraf olsun. Hiçbir metin, logo veya filigran ekleme.`;
@@ -61,17 +71,38 @@ export function assertReliableCutout(isBackground, info) {
 // tamamen bozuluyor. Gerçek ürün testinde (Silifozlu, kayıtlı stüdyo
 // fotoğrafı) doğrulandı: arka plan saf beyaz değil, hafif gri/off-white —
 // sabit eşik kenarlardan hiç yayılamadı, kesim %98.7 "ürün" (yani
-// tamamen başarısız) çıktı. Bunun yerine gerçek kenar rengi fotoğrafın
-// kendi kenar piksellerinin MEDYANından örneklenir (birkaç ürün pikseli
-// kenara değse bile medyan sağlam kalır), sonra o renge YAKINLIK
-// eşiğiyle flood-fill yapılır — off-white/gri stüdyo fonlarına uyum
-// sağlar, ürünün arka plandan belirgin şekilde farklı renklerini yine de
-// dışarıda bırakır.
-const BACKGROUND_COLOR_TOLERANCE = 26;
+// tamamen başarısız) çıktı.
+//
+// İLK düzeltme (sabit ±26 tolerans) bunu çözdü ama TERSİNE bir regresyona
+// yol açtı: gerçek üretimde (Ultramag/Silifozlu) kompozit, açık renkli/
+// parlak ürün yüzeylerini de arka planla "yeterince yakın" sayıp şeffaf
+// hale getirdi — sonuçta gerçek ürün pikselleri neredeyse hiç kalmadı ve
+// kullanıcı, AI'nın kendi uydurduğu (yanlış markalı) bir görsel gördü. Bu,
+// sessiz bir hata durumundan çok daha kötü: hata vermek yerine SAHTE bir
+// "başarı" üretti.
+//
+// Doğru çözüm: toleransı sabit/geniş bir sayı yerine kenar piksellerinin
+// KENDİ varyansından (medyan mutlak sapma, MAD) türetmek. Gerçek stüdyo
+// fotoğraflarında arka plan neredeyse tekdüzedir (düşük varyans) — bu
+// yüzden tolerans doğal olarak DAR kalır ve ürünün arka plana yakın ama
+// belirgin şekilde farklı (kromlu/açık gri) yüzeylerini yutmaz. Arka
+// planda gerçek bir gradyan/gölge varsa (daha yüksek varyans) tolerans
+// biraz genişler ama MAX_TOLERANCE ile sınırlı kalır.
+const TOLERANCE_MAD_MULTIPLIER = 4;
+const MIN_TOLERANCE = 8;
+const MAX_TOLERANCE = 18;
 
 function median(values) {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.floor(sorted.length / 2)];
+}
+
+function medianAbsoluteDeviation(values, med) {
+  return median(values.map((v) => Math.abs(v - med)));
+}
+
+function channelTolerance(mad) {
+  return Math.min(MAX_TOLERANCE, Math.max(MIN_TOLERANCE, mad * TOLERANCE_MAD_MULTIPLIER));
 }
 
 function sampleBorderColor(data, info) {
@@ -83,18 +114,24 @@ function sampleBorderColor(data, info) {
   }
   for (let x = 0; x < width; x++) { collect(x, 0); collect(x, height - 1); }
   for (let y = 0; y < height; y++) { collect(0, y); collect(width - 1, y); }
-  return { r: median(rs), g: median(gs), b: median(bs) };
+  const ref = { r: median(rs), g: median(gs), b: median(bs) };
+  const tolerance = {
+    r: channelTolerance(medianAbsoluteDeviation(rs, ref.r)),
+    g: channelTolerance(medianAbsoluteDeviation(gs, ref.g)),
+    b: channelTolerance(medianAbsoluteDeviation(bs, ref.b))
+  };
+  return { ref, tolerance };
 }
 
-function isNearBackgroundColor(r, g, b, ref) {
-  return Math.abs(r - ref.r) <= BACKGROUND_COLOR_TOLERANCE
-    && Math.abs(g - ref.g) <= BACKGROUND_COLOR_TOLERANCE
-    && Math.abs(b - ref.b) <= BACKGROUND_COLOR_TOLERANCE;
+function isNearBackgroundColor(r, g, b, ref, tolerance) {
+  return Math.abs(r - ref.r) <= tolerance.r
+    && Math.abs(g - ref.g) <= tolerance.g
+    && Math.abs(b - ref.b) <= tolerance.b;
 }
 
 export function adaptiveBackgroundMask(data, info) {
   const { width, height, channels } = info;
-  const ref = sampleBorderColor(data, info);
+  const { ref, tolerance } = sampleBorderColor(data, info);
   const visited = new Uint8Array(width * height);
   const isBackground = new Uint8Array(width * height);
   const stack = [];
@@ -105,7 +142,7 @@ export function adaptiveBackgroundMask(data, info) {
     if (visited[idx]) return;
     visited[idx] = 1;
     const pixelIdx = idx * channels;
-    if (!isNearBackgroundColor(data[pixelIdx], data[pixelIdx + 1], data[pixelIdx + 2], ref)) return;
+    if (!isNearBackgroundColor(data[pixelIdx], data[pixelIdx + 1], data[pixelIdx + 2], ref, tolerance)) return;
     isBackground[idx] = 1;
     stack.push(x, y);
   }
