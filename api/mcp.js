@@ -131,7 +131,7 @@ const TOOLS = [
       properties: {
         productId: { type: "string", description: "Ürün ID'si" },
         format: { type: "string", enum: ["Gönderi", "Hikâye", "Reel"], description: "Yayın biçimi" },
-        platforms: { type: "array", items: { type: "string", enum: ["Instagram", "Facebook"] }, description: "Hedef platformlar" },
+        platforms: { type: "array", items: { type: "string", enum: ["Instagram", "Facebook", "X", "YouTube"] }, description: "Hedef platformlar — X metni verilmezse Facebook metni 280 karaktere kısaltılıp kullanılır; YouTube yalnızca format 'Reel' iken (video gerektirir) çalışır." },
         publishAt: { type: "string", description: "Yayın zamanı (ISO 8601, örn. 2026-09-05T10:00:00Z)" },
         instagramText: { type: "string", description: "Instagram gönderi metni (isteğe bağlı — verilmezse otomatik üretilir)" },
         facebookText: { type: "string", description: "Facebook gönderi metni (isteğe bağlı)" },
