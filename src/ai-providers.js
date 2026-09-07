@@ -293,6 +293,7 @@ function scenarioPrompt(product, context, { usageContext, userNotes, fixNote } =
   const contextLabel = INSTALLATION_CONTEXT_LABELS[usageContext] || usageContext;
   const forbidden = FORBIDDEN_ELEMENTS_BY_CONTEXT[usageContext] || [];
   const contextRule = `ZORUNLU KULLANIM BAĞLAMI: "${product.title}" ürünü şu bağlamda kullanılıyor: ${contextLabel}. Sahne MUTLAKA bu bağlamda olmalı. "installationNotes" alanına montaj yerini ve boru/bağlantı yönünü AÇIKÇA yaz (ör. "cihaz bina giriş noktasında ana su hattına, borunun iki ucu doğrudan cihaza bağlı şekilde monte edilmiş"). "usageContext" alanına AYNEN "${usageContext}" değerini yaz, başka bir değer üretme. Sahnede şu öğeler KESİNLİKLE OLMAMALI: ${forbidden.join(", ")}.`;
+  const identityRule = `ÜRÜN KİMLİĞİ VE SET BÜTÜNLÜĞÜ: Yukarıdaki ürün bilgisinde birden fazla parça, filtre kademesi, housing, kartuş veya manyetik kireç önleyici birlikte anlatılıyorsa bunların hepsini gerçek setin parçası kabul et. "sceneDescription", "installationNotes" ve "subjectAction" içinde ana parçaları açıkça belirt ve sahnede görünür kıl; ürünü yalnızca genel bir "kompakt cihaz" diye sadeleştirme. Referans/ürün bilgisinde olmayan ek filtre gövdesi, kartuş, musluk veya cihaz icat etme. Ürün fotoğrafı varsa ürünün gerçek şekli ve parça sayısı korunacak.`;
   const sanitizedNotes = userNotes ? sanitizeUserText(userNotes, { maxLength: 300 }) : "";
   const sanitizedFix = fixNote ? sanitizeUserText(fixNote, { maxLength: 300 }) : "";
   const userNotesBlock = sanitizedNotes
@@ -306,6 +307,8 @@ function scenarioPrompt(product, context, { usageContext, userNotes, fixNote } =
 ${grounding}
 
 ${contextRule}
+
+${identityRule}
 
 ${isCategoryLike ? "Bu başlık bir kategori/genel konuya benziyor — TEK bir ürünün kurulum detaylarını iddia etme, genel bir sahne tarif et." : ""}
 
