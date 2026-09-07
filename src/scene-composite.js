@@ -1,5 +1,6 @@
 import sharp from "sharp";
 import { floodFillBackgroundMask } from "./scene-image.js";
+import { BACKGROUND_GUIDANCE_BY_CONTEXT } from "./lib/product-installation-context.js";
 
 // Deneysel ikinci yöntem: Gemini/OpenAI'nin referans görseli "koruyarak"
 // düzenlemesine güvenmek yerine (bkz. scene-image.js — bazen ürünü hafifçe
@@ -14,9 +15,42 @@ const SHADOW_OFFSET_Y = 18;
 const SHADOW_BLUR = 20;
 const SHADOW_OPACITY = 110;
 
-export function backgroundOnlyPrompt(sceneDescription) {
+// usageContext/negativeConstraints verilirse (bkz. api/scene-image.js —
+// yapılandırılmış senaryo akışından geliyor), arka plan üretimi ürünün
+// gerçek bağlamına göre yönlendirilir ve o bağlamda ürünün kendi
+// bağlantılarıyla çakışacak sahte donanım/etiket üretmemesi için açıkça
+// uyarılır (bkz. src/lib/product-installation-context.js
+// BACKGROUND_GUIDANCE_BY_CONTEXT — gerçek hata: Silifozlu gibi bina girişi
+// setlerinde arka plan kendi boru rakorunu/etiketini uydurup gerçek ürünle
+// çakışıyordu).
+export function backgroundOnlyPrompt(sceneDescription, { usageContext, negativeConstraints = [] } = {}) {
   const scene = String(sceneDescription || "").trim() || "modern bir mutfak tezgahı, sabah gün ışığı, ahşap dolaplar";
-  return `${scene}. Bu sahnede HİÇBİR ürün, cihaz, obje veya insan olmasın — sahne tamamen boş, sadece ortam/arka plan görünsün; üzerine sonradan bir ürün fotoğrafı yapıştırılacak boş bir sahne fotoğrafı. Gerçekçi, reklam kalitesinde, yüksek çözünürlüklü, doğal ve yumuşak ışıklı bir fotoğraf olsun. Hiçbir metin, logo veya filigran ekleme.`;
+  const contextGuidance = usageContext && BACKGROUND_GUIDANCE_BY_CONTEXT[usageContext] ? ` ${BACKGROUND_GUIDANCE_BY_CONTEXT[usageContext]}` : "";
+  const forbidden = negativeConstraints.length ? ` Ayrıca şunları KESİNLİKLE ÇİZME: ${negativeConstraints.join(", ")}.` : "";
+  return `${scene}. Bu sahnede HİÇBİR ürün, cihaz, obje veya insan olmasın — sahne tamamen boş, sadece ortam/arka plan görünsün; üzerine sonradan bir ürün fotoğrafı yapıştırılacak boş bir sahne fotoğrafı.${contextGuidance}${forbidden} Gerçekçi, reklam kalitesinde, yüksek çözünürlüklü, doğal ve yumuşak ışıklı bir fotoğraf olsun. Hiçbir metin, logo veya filigran ekleme.`;
+}
+
+// Flood-fill arka plan maskesi, ürün alanını (%) makul bir aralıkta
+// bulamazsa (ör. neredeyse tamamı arka plan = ürün tespit edilemedi; ya da
+// neredeyse tamamı "ürün" = arka planla ayrım net değil, düz renkli/karmaşık
+// fon) kesim GÜVENİLİR SAYILMAZ — sahte bir sonuç üretmek yerine burada
+// durulur (bkz. gereksinim: "referans görseli veya güvenilir cutout'u olmayan
+// üründe üretimi durdur").
+const MIN_PRODUCT_PIXEL_RATIO = 0.015;
+const MAX_PRODUCT_PIXEL_RATIO = 0.92;
+
+export function assertReliableCutout(isBackground, info) {
+  const total = info.width * info.height;
+  let productPixels = 0;
+  for (let i = 0; i < total; i++) if (!isBackground[i]) productPixels++;
+  const ratio = productPixels / total;
+  if (ratio < MIN_PRODUCT_PIXEL_RATIO) {
+    throw new Error(`Ürün fotoğrafından güvenilir bir kesim (cutout) üretilemedi — ürün tespit edilemedi (algılanan ürün alanı: %${(ratio * 100).toFixed(1)}). Düz/tek renkli (tercihen beyaz) arka planlı, ürünün net göründüğü bir referans fotoğrafı yükleyin.`);
+  }
+  if (ratio > MAX_PRODUCT_PIXEL_RATIO) {
+    throw new Error(`Ürün fotoğrafından güvenilir bir kesim (cutout) üretilemedi — arka plan ayırt edilemedi (algılanan ürün alanı: %${(ratio * 100).toFixed(1)}). Fotoğrafın kenarlarında düz/tek renkli bir arka plan boşluğu olmalı.`);
+  }
+  return ratio;
 }
 
 async function normalizeToCanvas(sourceBuffer) {
@@ -82,7 +116,13 @@ async function callGeminiBackgroundGenerate(prompt, env) {
   return Buffer.from(imagePart.inlineData.data, "base64");
 }
 
-export async function generateCompositeSceneImage(product, sceneDescription, env = process.env) {
+// usageContext/negativeConstraints: yapılandırılmış senaryodan geliyorsa
+// (bkz. api/scene-image.js) arka plan bu bağlama göre yönlendirilir. Cutout
+// güvenilirliği (assertReliableCutout) AI'ya HİÇ gidilmeden, ücretsiz ve
+// deterministik olarak kontrol edilir — ürün sabit piksel/foreground olduğu
+// için burada asıl "kalite kapısı" budur (marka/logo/form zaten mutasyona
+// uğrayamaz, çünkü hiç yeniden çizilmiyor — bkz. buildProductCutout).
+export async function generateCompositeSceneImage(product, sceneDescription, env = process.env, { usageContext, negativeConstraints = [] } = {}) {
   const imageUrl = String(product?.imageUrl || "").trim();
   if (!/^https:\/\//i.test(imageUrl)) throw new Error("Ürün görseli herkese açık HTTPS URL olmalı.");
 
@@ -91,9 +131,10 @@ export async function generateCompositeSceneImage(product, sceneDescription, env
   const sourceBuffer = Buffer.from(await upstream.arrayBuffer());
 
   const { cutoutPng, isBackground, info } = await buildProductCutout(sourceBuffer);
+  assertReliableCutout(isBackground, info);
   const shadowPng = await buildShadowLayer(isBackground, info);
 
-  const prompt = backgroundOnlyPrompt(sceneDescription);
+  const prompt = backgroundOnlyPrompt(sceneDescription, { usageContext, negativeConstraints });
   const backgroundPng = await callGeminiBackgroundGenerate(prompt, env);
   const model = env.GEMINI_SCENE_MODEL || "gemini-3.1-flash-lite-image";
 

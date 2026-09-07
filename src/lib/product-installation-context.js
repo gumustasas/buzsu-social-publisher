@@ -37,11 +37,27 @@ export const FORBIDDEN_ELEMENTS_BY_CONTEXT = {
   [INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION]: [
     "çamaşır makinesi", "çamaşır odası", "ev içi dekoratif", "salon", "oturma odası",
     "yatak odası", "banyo lavabosu", "mutfak tezgahı", "mutfak dolabı", "vazo", "dekoratif raf",
-    "halı", "perde", "kanepe"
+    "halı", "perde", "kanepe",
+    // Silifozlu (ana giriş: üçlü filtre + UltraMag) gibi çok parçalı bina
+    // girişi setlerinde gözlemlenen somut hata sınıfı: arka plan üretimi
+    // ürünün kendi bağlantılarıyla ÇAKIŞAN/duplike eden sahte donanım veya
+    // yazı uyduruyor.
+    "sahte etiket", "uydurma yazı", "yanlış bağlantı yönü", "yanlış giriş çıkış",
+    "tamamlanmış boru bağlantı parçası"
   ],
   [INSTALLATION_CONTEXTS.INDOOR_COUNTERTOP]: [
     "bina dışı boru hattı", "dış cephe", "kaldırım", "sokak"
   ]
+};
+
+// Yalnızca ARKA PLAN üretimi (bkz. src/scene-composite.js backgroundOnlyPrompt)
+// için bağlama özgü rehber metin — ürün zaten piksel olarak sabit/değişmez
+// olduğundan (cutout+composite), buradaki asıl risk arka planın ürünle
+// ÇAKIŞACAK sahte donanım/etiket uydurmasıdır (ör. ürünün kendi giriş/çıkış
+// ağızlarıyla çakışan, arka planda ayrıca çizilmiş bir boru rakoru).
+export const BACKGROUND_GUIDANCE_BY_CONTEXT = {
+  [INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION]: "Bu, bina girişi/ana su hattı/teknik tesisat alanı bağlamında kullanılacak bir arka plan. Duvar, zemin, boru geçiş delikleri gibi genel teknik alan öğeleri olabilir; AMA TAMAMLANMIŞ bir boru bağlantısı, rakor, valf, conta, vana veya ÜZERİNDE HERHANGİ BİR YAZI/ETİKET OLAN hiçbir donanım ÇİZME — bunların hepsi sahneye sonradan yapıştırılacak GERÇEK ürünün kendi bağlantı noktalarıyla çakışır/duplike olur ve yanlış görünür. Basit, boş, teknik bir alan/duvar/zemin yeterli.",
+  [INSTALLATION_CONTEXTS.INDOOR_COUNTERTOP]: "Bu, ev/ofis içi mutfak/tezgah bağlamında kullanılacak bir arka plan. Tezgah, dolap, doğal ışık olabilir; ürünün kendi bağlantılarıyla çakışacak ayrı bir musluk veya cihaz ÇİZME (ürün sahneye ayrıca yapıştırılacak)."
 };
 
 // Kullanıcının serbest metin isteğinin ("evin içine koy" gibi) ürünün gerçek
