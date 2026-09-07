@@ -40,13 +40,13 @@ async function resolveProduct(productId) {
   if (isCatalogProductId(productId)) {
     const catalogProduct = await findCatalogProduct(productId);
     if (!catalogProduct) throw new Error("Ürün bulunamadı.");
-    return { title: baseProductTitle(catalogProduct.title) || "Buzsu ürünü", url: catalogProduct.url, imageUrl: catalogProduct.imageUrl || "" };
+    return { title: baseProductTitle(catalogProduct.title) || "Buzsu ürünü", url: catalogProduct.url, imageUrl: catalogProduct.imageUrl || "", imageUrls: catalogProduct.imageUrls || [] };
   }
   const data = await airtableGet();
   const record = (data.records || []).find((item) => item.id === productId);
   if (!record) throw new Error("Ürün bulunamadı.");
   const fields = record.fields || {};
-  return { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", url: fields["Kaynak URL"] || "", imageUrl: fields["Görsel URL"] || "" };
+  return { title: baseProductTitle(fields.Başlık) || "Buzsu ürünü", url: fields["Kaynak URL"] || "", imageUrl: fields["Görsel URL"] || "", imageUrls: fields["Görsel URL"] ? [fields["Görsel URL"]] : [] };
 }
 
 function pickProvider() {

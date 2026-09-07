@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { availableProviders, generateScenePlan, generateCaption, generateMotionPlan, generateReelPackage, generateSeoArticle, generateHashtags } from "../src/ai-providers.js";
+import { availableProviders, generateScenePlan, generateCaption, generateMotionPlan, generateReelPackage, generateSeoArticle, generateHashtags, generateScenario } from "../src/ai-providers.js";
+import { INSTALLATION_CONTEXTS } from "../src/lib/product-installation-context.js";
 
 test("AI provider availability is derived from configured keys", () => {
   assert.deepEqual(availableProviders({ OPENAI_API_KEY: "x", ANTHROPIC_API_KEY: "", GEMINI_API_KEY: "y" }), ["openai", "gemini", "veo"]);
@@ -303,6 +304,172 @@ test("generateHashtags sends the product title and user-written text to the AI a
     assert.match(capturedBody.input, /Code Advantage/);
     assert.match(capturedBody.input, /Mutfaklar için pratik bir çözüm\./);
     assert.equal(hashtags, "#Buzsu #Code #SuArıtma");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// --- generateScenario: yapılandırılmış JSON senaryo akışı ---
+const TECHNICAL_PRODUCT = { title: "Daire Girişi Manyetik Kireç Önleyici Set", url: "https://www.buzsu.com.tr/daire-girisi-celik-filtreli-manyetik-kirec-onleyicili-set/" };
+
+function goodTechnicalScenarioJson() {
+  return JSON.stringify({
+    hook: "Kirece son!",
+    sceneDescription: "Cihaz bina giriş noktasında, ana su hattına doğrudan monte edilmiş.",
+    subjectAction: "",
+    camera: "Yavaş yaklaşma",
+    lighting: "Gündüz doğal ışık",
+    onScreenText: "",
+    captionSuggestion: "Suyunuzu koruyun.",
+    installationNotes: "Borunun iki ucu doğrudan cihazın giriş/çıkış ağızlarına bağlı, bina giriş noktasında teknik alanda.",
+    usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION,
+    negativeConstraints: [],
+    aspectRatio: "9:16",
+    durationSeconds: 20
+  });
+}
+
+test("generateScenario rejects an unsupported provider before any network call", async () => {
+  await assert.rejects(
+    () => generateScenario("anthropic", TECHNICAL_PRODUCT, {}, { usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION }),
+    /Desteklenmeyen AI sağlayıcısı/
+  );
+});
+
+test("generateScenario refuses to run without a pre-determined usageContext (no silent assumption)", async () => {
+  await assert.rejects(
+    () => generateScenario("openai", TECHNICAL_PRODUCT, { OPENAI_API_KEY: "key" }),
+    /kullanım bağlamı/
+  );
+});
+
+// Ürün girdisi: doğru bağlamla üretilen senaryo, mecburi yasak listesiyle
+// birlikte doğrulanmış olarak dönüyor.
+test("generateScenario (product input) returns a validated scenario carrying the mandatory forbidden list for its context", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (url, options) => {
+    if (String(url).includes("llms-full.txt")) return { ok: true, text: async () => "eşleşme yok" };
+    return { ok: true, json: async () => ({ output_text: goodTechnicalScenarioJson() }) };
+  };
+  try {
+    const scenario = await generateScenario("openai", TECHNICAL_PRODUCT, { OPENAI_API_KEY: "key" }, { usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION });
+    assert.equal(scenario.usageContext, INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION);
+    assert.match(scenario.installationNotes, /bina giriş/);
+    assert.ok(scenario.negativeConstraints.includes("çamaşır odası"));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// Fotoğraf girdisi: senaryo üretimi metin tabanlıdır, ürünün imageUrl'inin
+// kayıtlı bir fotoğraf mı yoksa dashboard'da az önce yüklenmiş (Blob) bir
+// fotoğraf mı olduğu senaryo metnini/istemini ETKİLEMEMELİ — kaynak farkı
+// yalnızca asıl görsel üretim adımında (src/scene-image.js, değişmedi) önem
+// taşır.
+test("generateScenario (photo input) produces the same prompt regardless of whether product.imageUrl is a catalog photo or a freshly uploaded one", async () => {
+  const originalFetch = global.fetch;
+  const capturedInputs = [];
+  global.fetch = async (url, options) => {
+    if (String(url).includes("llms-full.txt")) return { ok: true, text: async () => "eşleşme yok" };
+    capturedInputs.push(JSON.parse(options.body).input);
+    return { ok: true, json: async () => ({ output_text: goodTechnicalScenarioJson() }) };
+  };
+  try {
+    await generateScenario("openai", { ...TECHNICAL_PRODUCT, imageUrl: "https://www.buzsu.com.tr/upload/small/katalog-foto.png" }, { OPENAI_API_KEY: "key" }, { usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION });
+    await generateScenario("openai", { ...TECHNICAL_PRODUCT, imageUrl: "https://blob.vercel-storage.com/manual-uploads/yeni-foto.png" }, { OPENAI_API_KEY: "key" }, { usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION });
+    assert.equal(capturedInputs[0], capturedInputs[1]);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateScenario throws a clear error when the provider returns invalid JSON", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => {
+    if (String(url).includes("llms-full.txt")) return { ok: true, text: async () => "eşleşme yok" };
+    return { ok: true, json: async () => ({ output_text: "bu bir JSON değil, sadece düz metin" }) };
+  };
+  try {
+    await assert.rejects(
+      () => generateScenario("openai", TECHNICAL_PRODUCT, { OPENAI_API_KEY: "key" }, { usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION }),
+      /geçerli JSON değil/
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateScenario surfaces the AI provider's own HTTP error message", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => {
+    if (String(url).includes("llms-full.txt")) return { ok: true, text: async () => "eşleşme yok" };
+    return { ok: false, status: 429, json: async () => ({ error: { message: "insufficient_quota" } }) };
+  };
+  try {
+    await assert.rejects(
+      () => generateScenario("openai", TECHNICAL_PRODUCT, { OPENAI_API_KEY: "key" }, { usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION }),
+      /insufficient_quota/
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// Yeniden üretim: "düzelt ve tekrar üret" akışı, önceki bağlam/yasak listesini
+// KORUYARAK yalnızca düzeltme isteğini prompt'a ekler; iki çağrı birbirinden
+// bağımsız (önbelleklenmiş/bayat sonuç dönmez).
+test("generateScenario (regeneration) includes the fix note in the prompt and returns an independent, fresh result each call", async () => {
+  const originalFetch = global.fetch;
+  const capturedInputs = [];
+  global.fetch = async (url, options) => {
+    if (String(url).includes("llms-full.txt")) return { ok: true, text: async () => "eşleşme yok" };
+    capturedInputs.push(JSON.parse(options.body).input);
+    return { ok: true, json: async () => ({ output_text: goodTechnicalScenarioJson() }) };
+  };
+  try {
+    const first = await generateScenario("openai", TECHNICAL_PRODUCT, { OPENAI_API_KEY: "key" }, { usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION });
+    const second = await generateScenario("openai", TECHNICAL_PRODUCT, { OPENAI_API_KEY: "key" }, { usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION, fixNote: "Işık daha sıcak olsun" });
+    assert.notEqual(capturedInputs[0], capturedInputs[1]);
+    assert.match(capturedInputs[1], /Işık daha sıcak olsun/);
+    assert.equal(first.generatedAt <= second.generatedAt, true);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// --- REGRESYON: bildirilen gerçek hata ---
+// Bina girişi/ana hat filtresi iç mekân "çamaşır odası" sahnesinde, yanlış
+// boru bağlamıyla gösterilmişti. AI yanlışlıkla böyle bir senaryo üretse
+// bile generateScenario görsele gitmeden bunu reddetmeli.
+test("REGRESSION: generateScenario rejects an AI response that places a technical_installation product in an indoor laundry room", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => {
+    if (String(url).includes("llms-full.txt")) return { ok: true, text: async () => "eşleşme yok" };
+    return {
+      ok: true,
+      json: async () => ({
+        output_text: JSON.stringify({
+          hook: "Modern bir çözüm",
+          sceneDescription: "Cihaz evin içindeki çamaşır odasında, dekoratif bir dolabın yanında duruyor.",
+          subjectAction: "",
+          camera: "Sabit",
+          lighting: "Sıcak iç mekân ışığı",
+          onScreenText: "",
+          captionSuggestion: "İçiniz rahat olsun.",
+          installationNotes: "Ev içinde çamaşır makinesinin yanına yerleştirildi.",
+          usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION,
+          negativeConstraints: [],
+          aspectRatio: "9:16",
+          durationSeconds: 20
+        })
+      })
+    };
+  };
+  try {
+    await assert.rejects(
+      () => generateScenario("openai", TECHNICAL_PRODUCT, { OPENAI_API_KEY: "key" }, { usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION }),
+      /çamaşır/
+    );
   } finally {
     global.fetch = originalFetch;
   }

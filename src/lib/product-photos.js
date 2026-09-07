@@ -35,10 +35,33 @@ export const KNOWN_PRODUCT_PHOTOS = {
   "https://www.buzsu.com.tr/manyetik-kombi-filtresi/": "https://www.buzsu.com.tr/upload/small/rivermag-1-inc-manyetik-kombi-filtresi-endustriyel-kombi-filtresi-buzsu.jpg"
 };
 
+// Bazı ürünlerde tek bir küçük katalog görseli ürünün bütün setini göstermez.
+// Özellikle filtre + manyetik kireç önleyici setlerinde AI'ya yalnızca ilk
+// görseli vermek, setin bir parçasını (ör. Ultramag gövdesini) yok saymasına
+// neden olur. Bu galeriler ürün sayfasındaki gerçek görsellerdir; sahne
+// üretiminde ilk URL ana referans, diğerleri doğrulayıcı referans olarak
+// kullanılabilir.
+export const KNOWN_PRODUCT_PHOTO_GALLERIES = {
+  "https://www.buzsu.com.tr/silifozlu-ev-ana-giris-su-aritma-sistemi/": [
+    "https://www.buzsu.com.tr/upload/daire-girisi-hd-ultramag2026.png",
+    "https://www.buzsu.com.tr/upload/daire-girisi-manyetik-yeni-3-lu-2025.png",
+    "https://www.buzsu.com.tr/upload/icme-suyuna-cevirmez-buzsu2026.png",
+    "https://www.buzsu.com.tr/upload/daire-girisi-yeni-3-lu-sistem-.png"
+  ],
+  "https://www.buzsu.com.tr/daire-girisi-celik-filtreli-manyetik-kirec-onleyicili-set/": [
+    "https://www.buzsu.com.tr/upload/ultramag-daire-girisi.png"
+  ]
+};
+
 function normalize(url) {
   return String(url || "").replace(/\/+$/, "") + "/";
 }
 
 export function findKnownProductPhoto(url) {
-  return KNOWN_PRODUCT_PHOTOS[normalize(url)] || "";
+  return findKnownProductPhotos(url)[0] || "";
+}
+
+export function findKnownProductPhotos(url) {
+  const key = normalize(url);
+  return KNOWN_PRODUCT_PHOTO_GALLERIES[key] || (KNOWN_PRODUCT_PHOTOS[key] ? [KNOWN_PRODUCT_PHOTOS[key]] : []);
 }
