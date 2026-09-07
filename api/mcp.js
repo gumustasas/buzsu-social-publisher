@@ -136,7 +136,8 @@ const TOOLS = [
         instagramText: { type: "string", description: "Instagram gönderi metni (isteğe bağlı — verilmezse otomatik üretilir)" },
         facebookText: { type: "string", description: "Facebook gönderi metni (isteğe bağlı)" },
         hashtags: { type: "string", description: "Hashtagler (isteğe bağlı, örn. #Buzsu #SuArıtma)" },
-        imageUrl: { type: "string", description: "İsteğe bağlı — verilirse ürünün kayıtlı ana görseli yerine SADECE bu taslak için bu HTTPS görsel URL'i kullanılır (ör. upload_media çıktısı). Ürünün Airtable'daki ana Görsel URL alanı değişmez." }
+        imageUrl: { type: "string", description: "İsteğe bağlı — verilirse ürünün kayıtlı ana görseli yerine SADECE bu taslak için bu HTTPS görsel URL'i kullanılır (ör. upload_media çıktısı). Ürünün Airtable'daki ana Görsel URL alanı değişmez." },
+        videoUrl: { type: "string", description: "format 'Reel' iken ZORUNLU — herkese açık HTTPS video URL'i (ör. generate_video_clip/get_video_clip_status çıktısındaki videoUrl). Reel'de bu verilmezse taslak oluşturulamaz; YouTube platformu da yalnızca bu alan doluyken çalışır." }
       },
       required: ["productId", "format", "platforms", "publishAt"]
     }
@@ -314,13 +315,17 @@ async function callTool(name, args) {
       const allProducts = await listProducts();
       const product = allProducts.find((item) => item.id === args.productId);
       if (!product) throw new Error("Ürün bulunamadı.");
-      // imageUrl verilirse ürünün Airtable kaydındaki ana görseli DEĞİŞTİRMEDEN,
-      // yalnızca bu yeni taslak kaydı için geçerli olacak şekilde kullanılır —
-      // createDraftRecord her zaman yeni bir kayıt oluşturur (PATCH değil POST),
-      // bu yüzden orijinal ürün kaydına dokunulmaz.
-      const draftProduct = typeof args.imageUrl === "string" && args.imageUrl.trim()
-        ? { ...product, imageUrl: args.imageUrl.trim() }
-        : product;
+      // imageUrl/videoUrl verilirse ürünün Airtable kaydındaki ana alanları
+      // DEĞİŞTİRMEDEN, yalnızca bu yeni taslak kaydı için geçerli olacak
+      // şekilde kullanılır — createDraftRecord her zaman yeni bir kayıt
+      // oluşturur (PATCH değil POST), bu yüzden orijinal ürün kaydına
+      // dokunulmaz. videoUrl olmadan format "Reel" olamaz — bkz. buildDraft'ın
+      // "Reel için herkese açık HTTPS video URL'i gerekli" uyarısı.
+      const draftProduct = {
+        ...product,
+        ...(typeof args.imageUrl === "string" && args.imageUrl.trim() ? { imageUrl: args.imageUrl.trim() } : {}),
+        ...(typeof args.videoUrl === "string" && args.videoUrl.trim() ? { videoUrl: args.videoUrl.trim() } : {})
+      };
       const aiCaption = args.instagramText || args.facebookText
         ? { instagramText: args.instagramText || args.facebookText, facebookText: args.facebookText || args.instagramText, hashtags: args.hashtags || "#Buzsu" }
         : null;
