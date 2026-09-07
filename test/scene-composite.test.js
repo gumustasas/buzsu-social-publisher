@@ -33,6 +33,30 @@ async function makeOffWhiteTestProductPhoto(size = 64, squareStart = 20, squareE
   return sharp(raw, { raw: { width: size, height: size, channels: 3 } }).png().toBuffer();
 }
 
+// Uniform off-white background with a LIGHT GRAY ("chrome/reflective")
+// product square whose color is close to, but distinctly different from,
+// the background — mimics a real metallic/plastic housing (e.g. Ultramag)
+// photographed on an off-white studio background. Also includes a clearly
+// different dark "valve" rectangle. This is the scenario that broke in
+// production after the first off-white fix: a too-generous flat tolerance
+// classified the light-gray product surface as background too.
+async function makeReflectiveProductPhoto(size = 64, bg = 224, productTone = 205) {
+  const raw = Buffer.alloc(size * size * 3, bg);
+  for (let y = 16; y < 48; y++) {
+    for (let x = 16; x < 48; x++) {
+      const o = (y * size + x) * 3;
+      raw[o] = productTone; raw[o + 1] = productTone; raw[o + 2] = productTone;
+    }
+  }
+  for (let y = 26; y < 38; y++) {
+    for (let x = 26; x < 38; x++) {
+      const o = (y * size + x) * 3;
+      raw[o] = 200; raw[o + 1] = 30; raw[o + 2] = 30; // dark red "valve"
+    }
+  }
+  return sharp(raw, { raw: { width: size, height: size, channels: 3 } }).png().toBuffer();
+}
+
 test("backgroundOnlyPrompt embeds the scene description and explicitly forbids any product/object in the generated background", () => {
   const prompt = backgroundOnlyPrompt("modern mutfak, sabah ışığı");
   assert.match(prompt, /modern mutfak, sabah ışığı/);
@@ -106,6 +130,30 @@ test("REGRESSION: generateCompositeSceneImage no longer throws on an off-white s
   } finally {
     global.fetch = originalFetch;
   }
+});
+
+// --- REGRESYON: az önceki off-white düzeltmesi (sabit ±26 tolerans) TERSİNE
+// bir hataya yol açtı — gerçek üretimde (Ultramag/Silifozlu) açık renkli/
+// parlak ürün yüzeyleri de arka planla "yeterince yakın" sayılıp şeffaf
+// hale geldi; kullanıcı gerçek ürün yerine AI'nın uydurduğu yanlış markalı
+// bir görsel gördü. MAD-tabanlı (kenar piksellerinin KENDİ varyansından
+// türetilen, sabit ve dar üst sınırlı) tolerans bunu önlemeli: arka plan
+// tekdüze olduğu için tolerans dar kalır ve arka plana yakın ama belirgin
+// şekilde farklı ürün yüzeyini yutmaz. ---
+test("REGRESSION: adaptiveBackgroundMask does not erode a light-gray/reflective product surface into the off-white background (the fixed-tolerance fix's own regression)", async () => {
+  const photo = await makeReflectiveProductPhoto(64, 224, 205);
+  const normalized = await sharp(photo).resize(256, 256, { fit: "contain", background: { r: 255, g: 255, b: 255, alpha: 1 } }).removeAlpha().toColourspace("srgb");
+  const { data, info } = await normalized.raw().toBuffer({ resolveWithObject: true });
+
+  const mask = adaptiveBackgroundMask(data, info);
+  const centerIdx = Math.floor(info.height / 2) * info.width + Math.floor(info.width / 2);
+  assert.equal(mask[centerIdx], 0, "ürünün açık gri yüzeyi (merkez) arka plan sayılmamalı");
+
+  const productRatio = mask.reduce((sum, v) => sum + (v ? 0 : 1), 0) / (info.width * info.height);
+  assert.ok(productRatio > 0.1, `ürün alanının büyük kısmı korunmalı (ratio=${productRatio})`);
+
+  // Uzak köşe (gerçek off-white arka plan) hâlâ doğru şekilde şeffaf olmalı.
+  assert.equal(mask[0], 1, "gerçek arka plan yine de arka plan sayılmalı");
 });
 
 test("buildShadowLayer produces a soft dark alpha layer shifted below the product, with no shadow far above it", async () => {
@@ -235,6 +283,33 @@ test("backgroundOnlyPrompt includes the mandatory context-specific negative cons
 test("backgroundOnlyPrompt has no context guidance block when usageContext is omitted (legacy free-text scene-image flow, unchanged)", () => {
   const prompt = backgroundOnlyPrompt("modern mutfak");
   assert.doesNotMatch(prompt, /bina girişi/);
+});
+
+test("backgroundOnlyPrompt falls back to a context-specific (not the generic kitchen) default base sentence when sceneDescription is empty and usageContext is technical_installation", () => {
+  const prompt = backgroundOnlyPrompt("", { usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION });
+  assert.doesNotMatch(prompt, /mutfak tezgahı/);
+  assert.match(prompt, /teknik tesisat odasında/);
+});
+
+// --- REGRESYON: gerçek üretim olayı — AI'nın yazdığı senaryo metni
+// (sceneDescription, bkz. scenario-schema.js buildSceneDescriptionFromScenario)
+// ürünün KENDİSİNİ ayrıntılı anlatıyordu ("...metalik Buzsu Ultramag
+// manyetik kireç önleyici ünite..."). Bunu composite'in arka plan istemine
+// temel cümle olarak vermek (eski, hatalı çağrı deseni), AI'nın "hiç ürün
+// çizme" talimatını görmezden gelip kendi (yanlış markalı) ürününü
+// çizmesine yol açtı. api/scene-image.js artık senaryo varken BOŞ
+// sceneDescription veriyor — bu test o iki çağrı desenini yan yana koyup
+// farkı doğrudan kanıtlıyor. ---
+test("REGRESSION: passing the AI-authored product-laden sceneDescription into backgroundOnlyPrompt leaks product identity into the prompt, but passing empty (the fixed call pattern) does not", () => {
+  const aiAuthoredSceneDescription = "Bina girişindeki teknik odada, ana su hattı borusuna monte edilmiş Silifozlu Ev Ana Giriş Su Arıtma Sistemi. Filtre çıkışına yatay olarak bağlı olan metalik Buzsu Ultramag manyetik kireç önleyici ünite, temiz boru hatlarıyla bütünleşiktir.";
+
+  const buggyPrompt = backgroundOnlyPrompt(aiAuthoredSceneDescription, { usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION });
+  assert.match(buggyPrompt, /Ultramag/, "eski çağrı deseninin ürün adını sızdırdığını doğrular (bu davranışın neden hatalı olduğunu kanıtlar)");
+
+  const fixedPrompt = backgroundOnlyPrompt("", { usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION });
+  assert.doesNotMatch(fixedPrompt, /Ultramag/i);
+  assert.doesNotMatch(fixedPrompt, /[Ff]iltre/);
+  assert.doesNotMatch(fixedPrompt, /[Ss]ilifoz/);
 });
 
 // --- REGRESYON: Silifozlu (ana giriş: üçlü filtre + UltraMag) tipi bina

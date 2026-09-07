@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { classifyInstallationContext, detectsContextConflict, INSTALLATION_CONTEXTS, FORBIDDEN_ELEMENTS_BY_CONTEXT } from "../src/lib/product-installation-context.js";
+import { classifyInstallationContext, detectsContextConflict, INSTALLATION_CONTEXTS, FORBIDDEN_ELEMENTS_BY_CONTEXT, DEFAULT_ENVIRONMENT_BY_CONTEXT } from "../src/lib/product-installation-context.js";
 
 // Gerçek hata raporu: "Daire Girişi Manyetik Kireç Önleyici" gibi bina
 // girişi/ana hat ürünleri iç mekân (çamaşır odası) sahnesinde, yanlış boru
@@ -50,4 +50,17 @@ test("FORBIDDEN_ELEMENTS_BY_CONTEXT bans the exact elements from the real bug re
   const forbidden = FORBIDDEN_ELEMENTS_BY_CONTEXT[INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION];
   assert.ok(forbidden.includes("çamaşır odası"));
   assert.ok(forbidden.includes("çamaşır makinesi"));
+});
+
+// Gerçek üretim hatası: composite'in arka plan taban cümlesi AI'nın yazdığı,
+// ürünü ayrıntılı anlatan senaryo metninden geliyordu — bu, AI'nın "hiç ürün
+// çizme" talimatını görmezden gelip kendi (yanlış markalı) ürününü
+// çizmesine yol açtı. DEFAULT_ENVIRONMENT_BY_CONTEXT'in kendisi de hiçbir
+// marka/ürün adı içermemeli — aksi halde aynı sızıntı buradan da olur.
+test("DEFAULT_ENVIRONMENT_BY_CONTEXT provides a product-free base sentence for every non-ambiguous context", () => {
+  for (const context of [INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION, INSTALLATION_CONTEXTS.INDOOR_COUNTERTOP]) {
+    const text = DEFAULT_ENVIRONMENT_BY_CONTEXT[context];
+    assert.ok(text && text.length > 0, `${context} için bir varsayılan cümle olmalı`);
+    assert.doesNotMatch(text, /ultramag|silifoz|buzsu/i);
+  }
 });
