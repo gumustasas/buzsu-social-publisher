@@ -1,7 +1,9 @@
 import { createContentVariant } from "./content-variants.js";
 import { baseProductTitle } from "./lib/product-title.js";
 
-const riskyClaims = [/en iyi/gi, /kesinlikle sağlıklı/gi, /tedavi/gi, /hastalığı/gi, /garanti eder/gi, /%100/gi];
+// src/lib/scenario-schema.js (AI senaryo/sahne akışı) da bu listeyi kullanır —
+// kanıtsız iddia politikası tek bir yerde tanımlı kalsın diye export edildi.
+export const riskyClaims = [/en iyi/gi, /kesinlikle sağlıklı/gi, /tedavi/gi, /hastalığı/gi, /garanti eder/gi, /%100/gi];
 
 export function buildDraft(product, { format = "Gönderi", platforms = ["Instagram", "Facebook"], variant = 0, publishAt, captionOverride } = {}) {
   const url = String(product.url || "").trim();

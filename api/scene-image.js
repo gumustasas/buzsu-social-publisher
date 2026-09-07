@@ -3,6 +3,7 @@ import { put } from "@vercel/blob";
 import { getSession } from "../src/auth.js";
 import { availableSceneProviders, generateSceneImage } from "../src/scene-image.js";
 import { generateCompositeSceneImage } from "../src/scene-composite.js";
+import { validateScenario, validateScenarioAgainstContext, buildSceneDescriptionFromScenario } from "../src/lib/scenario-schema.js";
 import { baseProductTitle } from "../src/lib/product-title.js";
 import { findCatalogProduct, isCatalogProductId } from "../src/lib/product-catalog.js";
 
@@ -47,9 +48,22 @@ export default async function handler(request, response) {
       recordId = record.id;
     }
 
+    // Opsiyonel yapılandırılmış senaryo (bkz. /api/scene-scenario) — verildiğinde
+    // önce YENİDEN doğrulanır (kullanıcı dashboard'da elle düzenlemiş olabilir;
+    // bağlam/yasak listesi çelişkisi burada da engellenir, tek noktaya güvenilmez)
+    // ve tek bir sceneDescription paragrafına indirgenip generateSceneImage'a
+    // AYNI şekilde verilir. body.sceneDescription verildiğinde davranış birebir
+    // eskisi gibi kalır — bu blok yalnızca body.scenario doluyken çalışır.
+    let sceneDescription = body.sceneDescription;
+    if (body.scenario && typeof body.scenario === "object") {
+      const scenario = validateScenario(body.scenario);
+      validateScenarioAgainstContext(scenario);
+      sceneDescription = buildSceneDescriptionFromScenario(scenario);
+    }
+
     const scene = provider === "composite"
-      ? await generateCompositeSceneImage(product, body.sceneDescription, process.env)
-      : await generateSceneImage(product, body.sceneDescription, process.env, { removeFaucet: Boolean(body.removeFaucet), provider });
+      ? await generateCompositeSceneImage(product, sceneDescription, process.env)
+      : await generateSceneImage(product, sceneDescription, process.env, { removeFaucet: Boolean(body.removeFaucet), provider });
 
     if (process.env.BLOB_READ_WRITE_TOKEN) {
       const imageBuffer = Buffer.from(scene.dataUrl.split(",")[1], "base64");
