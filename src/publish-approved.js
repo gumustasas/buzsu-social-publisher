@@ -4,6 +4,7 @@ import { publicationFormat, selectDueRecords, withUtm } from "./lib/schedule.js"
 import { buildLease, canProcess, clearLease } from "./lib/queue.js";
 import { AIRTABLE_BASE_ID, AIRTABLE_TABLE_ID, META_GRAPH_VERSION, assertMetaGraphVersionCurrent } from "./lib/config.js";
 import { notifyFailure } from "./lib/notify.js";
+import { publishTweet } from "./x-publish.js";
 
 const livePostingEnabled = process.env.ENABLE_LIVE_POSTING === "true";
 const facebookStoriesEnabled = process.env.ENABLE_FACEBOOK_STORIES === "true";
@@ -14,7 +15,11 @@ const storyImageBaseUrl = process.env.STORY_IMAGE_BASE_URL || "";
 const airtableBaseId = AIRTABLE_BASE_ID;
 const airtableTableId = AIRTABLE_TABLE_ID;
 const required = ["META_ACCESS_TOKEN", "META_FACEBOOK_PAGE_ACCESS_TOKEN", "META_INSTAGRAM_ACCOUNT_ID", "META_FACEBOOK_PAGE_ID", "AIRTABLE_TOKEN"];
-const airtableFields = ["Başlık", "Kaynak URL", "Görsel URL", "Video URL", "Instagram Metni", "Facebook Metni", "Hashtagler", "Platform", "Yayın Biçimi", "Yayın Zamanı", "Durum", "Not", "Deneme Sayısı", "Instagram Yayın ID", "Facebook Yayın ID", "Hata Mesajı"];
+const airtableFields = ["Başlık", "Kaynak URL", "Görsel URL", "Video URL", "Instagram Metni", "Facebook Metni", "X Metni", "Hashtagler", "Platform", "Yayın Biçimi", "Yayın Zamanı", "Durum", "Not", "Deneme Sayısı", "Instagram Yayın ID", "Facebook Yayın ID", "X Yayın ID", "Hata Mesajı"];
+// X (Twitter) 280 karakter sınırı var; t.co her URL'i uzunluğuna bakmaksızın
+// 23 karaktere sarıyor — geri kalan metni buna göre kısaltıyoruz.
+const X_MAX_CHARS = 280;
+const X_URL_WEIGHT = 23;
 
 function assertConfiguration() {
   if (!Number.isInteger(postLimit) || postLimit < 1) throw new Error("SOCIAL_POST_LIMIT en az 1 olmalı.");
@@ -184,6 +189,23 @@ async function publishFacebook(fields, format) {
   return published.post_id || published.id;
 }
 
+function buildXText(fields) {
+  const trackedUrl = withUtm(fields["Kaynak URL"], { source: "x", title: fields["Başlık"] });
+  const base = joinText(fields["X Metni"] || fields["Facebook Metni"], fields["Hashtagler"]);
+  if (!base) throw new Error("X metni boş (Facebook Metni de boş).");
+  const limit = X_MAX_CHARS - X_URL_WEIGHT - 1; // 1 = URL'den önceki satır sonu
+  const truncatedBase = base.length <= limit ? base : `${base.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
+  return `${truncatedBase}\n${trackedUrl}`;
+}
+
+// Video (Reel) desteklenmiyor — X'te chunked medya yüklemesi gerektiriyor,
+// bkz. src/x-publish.js. Bu formatta X sessizce atlanır (hata değil).
+async function publishX(fields, format) {
+  if (format === "Reel") return null;
+  const imageUrl = fields["Görsel URL"] && /^https:\/\//i.test(fields["Görsel URL"]) ? fields["Görsel URL"] : undefined;
+  return publishTweet({ text: buildXText(fields), imageUrl });
+}
+
 export async function runPublisher() {
   assertConfiguration();
   const allRecords = await airtableGetApproved();
@@ -193,7 +215,8 @@ export async function runPublisher() {
     const platforms = Array.isArray(fields.Platform) ? fields.Platform : [];
     const instagramNeeded = platforms.includes("Instagram") && !fields["Instagram Yayın ID"];
     const facebookNeeded = platforms.includes("Facebook") && !fields["Facebook Yayın ID"];
-    return canProcess(fields, now.getTime()) && (instagramNeeded || facebookNeeded);
+    const xNeeded = platforms.includes("X") && !fields["X Yayın ID"];
+    return canProcess(fields, now.getTime()) && (instagramNeeded || facebookNeeded || xNeeded);
   });
   const records = selectDueRecords(eligible, now, postLimit);
   console.log(`Kuyruk: ${allRecords.length}; zamanı gelmiş ve işlenecek: ${records.length}; canlı: ${livePostingEnabled}`);
@@ -224,7 +247,11 @@ export async function runPublisher() {
         const id = await publishFacebook(fields, format);
         if (id) updates["Facebook Yayın ID"] = id;
       }
-      if (!platforms.some((p) => p === "Instagram" || p === "Facebook")) throw new Error("Geçerli platform seçilmemiş.");
+      if (platforms.includes("X") && !fields["X Yayın ID"]) {
+        const id = await publishX(fields, format);
+        if (id) updates["X Yayın ID"] = id;
+      }
+      if (!platforms.some((p) => p === "Instagram" || p === "Facebook" || p === "X")) throw new Error("Geçerli platform seçilmemiş.");
       updates.Durum = "Paylaşıldı";
       updates.Not = clearLease({ ...fields, Not: updates.Not }, { type: "published", platforms, format });
       await updateAirtable(record.id, updates);

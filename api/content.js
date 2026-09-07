@@ -21,7 +21,7 @@ export default async function handler(request, response) {
     const sceneImageUrl = typeof body.imageUrl === "string" && /^https:\/\//i.test(body.imageUrl) ? body.imageUrl : "";
     const videoUrl = typeof body.videoUrl === "string" && /^https:\/\//i.test(body.videoUrl) ? body.videoUrl : "";
     const product = matchedProduct && (sceneImageUrl || videoUrl) ? { ...matchedProduct, ...(sceneImageUrl ? { imageUrl: sceneImageUrl } : {}), ...(videoUrl ? { videoUrl } : {}) } : matchedProduct;
-    const platforms = Array.isArray(body.platforms) ? body.platforms.filter((item) => ["Instagram", "Facebook"].includes(item)) : [];
+    const platforms = Array.isArray(body.platforms) ? body.platforms.filter((item) => ["Instagram", "Facebook", "X"].includes(item)) : [];
     const format = ["Gönderi", "Hikâye", "Reel"].includes(body.format) ? body.format : "Gönderi";
     if (!product) return response.status(400).json({ error: "Ürün seçilmedi veya görsel/URL eksik." });
     if (!platforms.length) return response.status(400).json({ error: "En az bir platform seçin." });
