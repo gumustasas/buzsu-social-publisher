@@ -24,6 +24,7 @@ export function buildDraft(product, { format = "Gönderi", platforms = ["Instagr
   if (!platforms.length) warnings.push("En az bir platform seçilmeli.");
   if (riskyClaims.some((pattern) => pattern.test(allText))) warnings.push("Kanıtsız sağlık veya üstünlük iddiası bulundu.");
   if (format === "Hikâye" && platforms.includes("Instagram")) warnings.push("Instagram hikâyesinde ürün bağlantı etiketi API tarafından otomatik eklenmez.");
+  if (platforms.includes("YouTube") && format !== "Reel") warnings.push("YouTube Shorts için Reel (video) formatı gerekli.");
   return { ...content, title: `${content.title} | ${format}`, publishAt, warnings, valid: warnings.filter((warning) => !warning.startsWith("Instagram hikâyesi")).length === 0 };
 }
 

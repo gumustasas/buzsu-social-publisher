@@ -5,6 +5,7 @@ import { buildLease, canProcess, clearLease } from "./lib/queue.js";
 import { AIRTABLE_BASE_ID, AIRTABLE_TABLE_ID, META_GRAPH_VERSION, assertMetaGraphVersionCurrent } from "./lib/config.js";
 import { notifyFailure } from "./lib/notify.js";
 import { publishTweet } from "./x-publish.js";
+import { uploadShort } from "./youtube-publish.js";
 
 const livePostingEnabled = process.env.ENABLE_LIVE_POSTING === "true";
 const facebookStoriesEnabled = process.env.ENABLE_FACEBOOK_STORIES === "true";
@@ -15,7 +16,7 @@ const storyImageBaseUrl = process.env.STORY_IMAGE_BASE_URL || "";
 const airtableBaseId = AIRTABLE_BASE_ID;
 const airtableTableId = AIRTABLE_TABLE_ID;
 const required = ["META_ACCESS_TOKEN", "META_FACEBOOK_PAGE_ACCESS_TOKEN", "META_INSTAGRAM_ACCOUNT_ID", "META_FACEBOOK_PAGE_ID", "AIRTABLE_TOKEN"];
-const airtableFields = ["Başlık", "Kaynak URL", "Görsel URL", "Video URL", "Instagram Metni", "Facebook Metni", "X Metni", "Hashtagler", "Platform", "Yayın Biçimi", "Yayın Zamanı", "Durum", "Not", "Deneme Sayısı", "Instagram Yayın ID", "Facebook Yayın ID", "X Yayın ID", "Hata Mesajı"];
+const airtableFields = ["Başlık", "Kaynak URL", "Görsel URL", "Video URL", "Instagram Metni", "Facebook Metni", "X Metni", "Hashtagler", "Platform", "Yayın Biçimi", "Yayın Zamanı", "Durum", "Not", "Deneme Sayısı", "Instagram Yayın ID", "Facebook Yayın ID", "X Yayın ID", "YouTube Video ID", "Hata Mesajı"];
 // X (Twitter) 280 karakter sınırı var; t.co her URL'i uzunluğuna bakmaksızın
 // 23 karaktere sarıyor — geri kalan metni buna göre kısaltıyoruz.
 const X_MAX_CHARS = 280;
@@ -206,6 +207,17 @@ async function publishX(fields, format) {
   return publishTweet({ text: buildXText(fields), imageUrl });
 }
 
+// YouTube Shorts yalnızca video ile mümkün — "Reel" dışındaki formatlarda
+// (görsel/hikâye) sessizce atlanır (hata değil), tıpkı X'in video'yu atladığı
+// gibi ama tam tersi yönde.
+async function publishYouTube(fields, format) {
+  if (format !== "Reel") return null;
+  requireHttpsUrl(fields["Video URL"], "Video URL");
+  const title = (fields["Başlık"] || "Buzsu").replace(/\s*\|\s*Reel$/i, "").trim();
+  const description = joinText(fields["X Metni"] || fields["Facebook Metni"] || fields["Instagram Metni"], fields["Hashtagler"], withUtm(fields["Kaynak URL"], { source: "youtube", title: fields["Başlık"] }));
+  return uploadShort({ title: `${title} #Shorts`, description, videoUrl: fields["Video URL"] });
+}
+
 export async function runPublisher() {
   assertConfiguration();
   const allRecords = await airtableGetApproved();
@@ -216,7 +228,8 @@ export async function runPublisher() {
     const instagramNeeded = platforms.includes("Instagram") && !fields["Instagram Yayın ID"];
     const facebookNeeded = platforms.includes("Facebook") && !fields["Facebook Yayın ID"];
     const xNeeded = platforms.includes("X") && !fields["X Yayın ID"];
-    return canProcess(fields, now.getTime()) && (instagramNeeded || facebookNeeded || xNeeded);
+    const youtubeNeeded = platforms.includes("YouTube") && !fields["YouTube Video ID"];
+    return canProcess(fields, now.getTime()) && (instagramNeeded || facebookNeeded || xNeeded || youtubeNeeded);
   });
   const records = selectDueRecords(eligible, now, postLimit);
   console.log(`Kuyruk: ${allRecords.length}; zamanı gelmiş ve işlenecek: ${records.length}; canlı: ${livePostingEnabled}`);
@@ -251,7 +264,11 @@ export async function runPublisher() {
         const id = await publishX(fields, format);
         if (id) updates["X Yayın ID"] = id;
       }
-      if (!platforms.some((p) => p === "Instagram" || p === "Facebook" || p === "X")) throw new Error("Geçerli platform seçilmemiş.");
+      if (platforms.includes("YouTube") && !fields["YouTube Video ID"]) {
+        const id = await publishYouTube(fields, format);
+        if (id) updates["YouTube Video ID"] = id;
+      }
+      if (!platforms.some((p) => p === "Instagram" || p === "Facebook" || p === "X" || p === "YouTube")) throw new Error("Geçerli platform seçilmemiş.");
       updates.Durum = "Paylaşıldı";
       updates.Not = clearLease({ ...fields, Not: updates.Not }, { type: "published", platforms, format });
       await updateAirtable(record.id, updates);
