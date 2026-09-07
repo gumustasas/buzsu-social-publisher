@@ -279,6 +279,20 @@ export async function generateReelPackage(provider, product, env = process.env) 
 
 const scenarioSchemaHint = `{"hook":"kısa açılış cümlesi","sceneDescription":"sahnenin görsel açıklaması","subjectAction":"sahnede kim/ne ne yapıyor","camera":"kamera açısı/hareketi","lighting":"ışık tarifi","onScreenText":"ekran yazısı (istenmiyorsa boş)","captionSuggestion":"kısa paylaşım metni önerisi","negativeConstraints":["kaçınılması gereken öğe", "..."],"installationNotes":"ürünün montaj yeri ve boru/bağlantı yönü — AÇIKÇA yaz","usageContext":"VERİLEN_BAĞLAMI_AYNEN_GERİ_DÖNDÜR","aspectRatio":"9:16","durationSeconds":20}`;
 
+function productIdentityGuidance(product, context) {
+  const text = `${product?.title || ""} ${product?.url || ""} ${context || ""}`;
+  if (/silifoz|tam koruma|filtreleme seti|filtreli.*manyetik|manyetik.*filtre/i.test(text)) {
+    return "Ürün kimliği: Bu bir bina/ana giriş için filtreli manyetik kireç önleyici SETİDİR. Referans ve ürün bilgisinde görülen çok kademeli filtre gövdeleri ile Ultramag/manyetik kireç önleyici ayrı bileşenler olarak birlikte korunmalı; seti tek bir genel cihaz veya yalnızca şeffaf filtre gövdeleri gibi sadeleştirme.";
+  }
+  if (/ultramag|manyetik kireç önleyici|kireç önleyici/i.test(text)) {
+    return "Ürün kimliği: Bu bir boru hattına bağlanan manyetik kireç önleyicidir. Referansta şeffaf filtre gövdeleri yoksa filtre gövdesi ekleme; referansta bir set görünüyorsa setin bütün parçalarını koru.";
+  }
+  if (/filtre seti|filtreli|membran|kartuş|housing/i.test(text)) {
+    return "Ürün kimliği: Bu bir filtreleme ürünü/setidir. Referans görseldeki filtre gövdesi, kartuş ve parça sayısını koru; ürünü başka bir cihaz türüne dönüştürme.";
+  }
+  return "Ürün kimliği: Ürünü yalnızca ürün bilgisi ve gerçek referans görselde görüldüğü şekilde kullan; parça, filtre, musluk veya bağlantı uydurma.";
+}
+
 // usageContext, bu fonksiyona ÇAĞIRAN TARAF tarafından ürün verisinden
 // (bkz. src/lib/product-installation-context.js classifyInstallationContext)
 // önceden belirlenmiş olarak gelir — AI bağlamı kendi tahmin etmez, yalnızca
@@ -294,6 +308,7 @@ function scenarioPrompt(product, context, { usageContext, userNotes, fixNote } =
   const forbidden = FORBIDDEN_ELEMENTS_BY_CONTEXT[usageContext] || [];
   const contextRule = `ZORUNLU KULLANIM BAĞLAMI: "${product.title}" ürünü şu bağlamda kullanılıyor: ${contextLabel}. Sahne MUTLAKA bu bağlamda olmalı. "installationNotes" alanına montaj yerini ve boru/bağlantı yönünü AÇIKÇA yaz (ör. "cihaz bina giriş noktasında ana su hattına, borunun iki ucu doğrudan cihaza bağlı şekilde monte edilmiş"). "usageContext" alanına AYNEN "${usageContext}" değerini yaz, başka bir değer üretme. Sahnede şu öğeler KESİNLİKLE OLMAMALI: ${forbidden.join(", ")}.`;
   const identityRule = `ÜRÜN KİMLİĞİ VE SET BÜTÜNLÜĞÜ: Yukarıdaki ürün bilgisinde birden fazla parça, filtre kademesi, housing, kartuş veya manyetik kireç önleyici birlikte anlatılıyorsa bunların hepsini gerçek setin parçası kabul et. "sceneDescription", "installationNotes" ve "subjectAction" içinde ana parçaları açıkça belirt ve sahnede görünür kıl; ürünü yalnızca genel bir "kompakt cihaz" diye sadeleştirme. Referans/ürün bilgisinde olmayan ek filtre gövdesi, kartuş, musluk veya cihaz icat etme. Ürün fotoğrafı varsa ürünün gerçek şekli ve parça sayısı korunacak.`;
+  const productIdentity = productIdentityGuidance(product, context);
   const sanitizedNotes = userNotes ? sanitizeUserText(userNotes, { maxLength: 300 }) : "";
   const sanitizedFix = fixNote ? sanitizeUserText(fixNote, { maxLength: 300 }) : "";
   const userNotesBlock = sanitizedNotes
@@ -309,6 +324,8 @@ ${grounding}
 ${contextRule}
 
 ${identityRule}
+
+${productIdentity}
 
 ${isCategoryLike ? "Bu başlık bir kategori/genel konuya benziyor — TEK bir ürünün kurulum detaylarını iddia etme, genel bir sahne tarif et." : ""}
 
