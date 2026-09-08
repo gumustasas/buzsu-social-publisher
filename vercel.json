@@ -13,6 +13,13 @@
       "schedule": "0 4 * * *"
     }
   ],
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "/dashboard.html",
+      "permanent": false
+    }
+  ],
   "headers": [
     {
       "source": "/dashboard.html",
