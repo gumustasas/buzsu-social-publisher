@@ -27,13 +27,25 @@ function authorized(request) {
   return typeof queryToken === "string" && queryToken === MCP_API_KEY;
 }
 
-async function airtableGet(path = "") {
-  const response = await fetch(`https://api.airtable.com/v0/${baseId}/${tableId}${path}?pageSize=100`, {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}` }
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error?.message || `Airtable HTTP ${response.status}`);
-  return data;
+// Airtable her sayfada en fazla 100 kayıt döner; kuyruk 100'ü geçtiğinde
+// tek sayfalık bir istek sessizce eksik/kesik veri döner (bkz. list_queue,
+// resolveProduct). Bu yüzden burada offset kürsörünü takip edip tüm
+// sayfaları birleştiriyoruz.
+async function airtableGet() {
+  const records = [];
+  let offset = "";
+  do {
+    const params = new URLSearchParams({ pageSize: "100" });
+    if (offset) params.set("offset", offset);
+    const response = await fetch(`https://api.airtable.com/v0/${baseId}/${tableId}?${params}`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}` }
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error?.message || `Airtable HTTP ${response.status}`);
+    records.push(...(data.records || []));
+    offset = data.offset || "";
+  } while (offset);
+  return { records };
 }
 
 async function resolveProduct(productId) {
@@ -63,7 +75,7 @@ const TOOLS = [
   },
   {
     name: "list_queue",
-    description: "Yayın kuyruğundaki tüm içerikleri listeler (taslak, onaylı, paylaşılmış). Her kaydın id, title, status, format, platforms, publishAt, imageUrl, instagramText, facebookText alanları döner.",
+    description: "Yayın kuyruğundaki tüm içerikleri listeler (taslak, onaylı, paylaşılmış). Her kaydın id, title, status, format, platforms, publishAt, imageUrl, instagramText, facebookText, instagramPostId, facebookPostId, xPostId, youtubeVideoId alanları döner (post ID'leri yalnızca yayınlanmış kayıtlarda dolu olur — ilgili platformun doğrudan linkini oluşturmak için kullanılabilir).",
     inputSchema: { type: "object", properties: {} }
   },
   {
@@ -188,7 +200,7 @@ const TOOLS = [
   },
   {
     name: "publish_now",
-    description: "Onaylandı durumundaki ve yayın zamanı gelmiş (Yayın Zamanı <= şu an) içerikleri hemen yayınlar; normalde bu her 2 saatte bir otomatik çalışır. Belirli bir kaydı hemen yayınlamak için önce update_draft ile yayın zamanını geçmişe/şimdiye çekin, sonra bu tool'u çağırın.",
+    description: "Onaylandı durumundaki ve yayın zamanı gelmiş (Yayın Zamanı <= şu an) içerikleri hemen yayınlar; normalde bu her 2 saatte bir otomatik çalışır. Belirli bir kaydı hemen yayınlamak için önce update_draft ile yayın zamanını geçmişe/şimdiye çekin, sonra bu tool'u çağırın. Dönen results dizisinde her işlenen kaydın status'ü ve instagramPostId/facebookPostId/xPostId/youtubeVideoId'si bulunur.",
     inputSchema: { type: "object", properties: {} }
   },
   {
@@ -245,14 +257,16 @@ async function callTool(name, args) {
       return JSON.stringify(products, null, 2);
     }
     case "list_queue": {
-      const data = await airtableGet("?pageSize=100");
+      const data = await airtableGet();
       const records = (data.records || []).map((record) => {
         const fields = record.fields || {};
         return {
           id: record.id, title: fields["Başlık"] || "Başlıksız", status: fields.Durum || "Taslak",
           format: fields["Yayın Biçimi"] || "Gönderi", platforms: fields.Platform || [],
           publishAt: fields["Yayın Zamanı"] || null, imageUrl: fields["Görsel URL"] || "",
-          instagramText: fields["Instagram Metni"] || "", facebookText: fields["Facebook Metni"] || ""
+          instagramText: fields["Instagram Metni"] || "", facebookText: fields["Facebook Metni"] || "",
+          instagramPostId: fields["Instagram Yayın ID"] || "", facebookPostId: fields["Facebook Yayın ID"] || "",
+          xPostId: fields["X Yayın ID"] || "", youtubeVideoId: fields["YouTube Video ID"] || ""
         };
       });
       return JSON.stringify(records, null, 2);

@@ -218,6 +218,15 @@ async function publishYouTube(fields, format) {
   return uploadShort({ title: `${title} #Shorts`, description, videoUrl: fields["Video URL"] });
 }
 
+function postIdsFor(fields, updates = {}) {
+  return {
+    instagramPostId: updates["Instagram Yayın ID"] || fields["Instagram Yayın ID"] || null,
+    facebookPostId: updates["Facebook Yayın ID"] || fields["Facebook Yayın ID"] || null,
+    xPostId: updates["X Yayın ID"] || fields["X Yayın ID"] || null,
+    youtubeVideoId: updates["YouTube Video ID"] || fields["YouTube Video ID"] || null
+  };
+}
+
 export async function runPublisher() {
   assertConfiguration();
   const allRecords = await airtableGetApproved();
@@ -233,7 +242,7 @@ export async function runPublisher() {
   });
   const records = selectDueRecords(eligible, now, postLimit);
   console.log(`Kuyruk: ${allRecords.length}; zamanı gelmiş ve işlenecek: ${records.length}; canlı: ${livePostingEnabled}`);
-  const summary = { queued: allRecords.length, approved: eligible.length, due: records.length, published: 0, failed: 0, skipped: 0 };
+  const summary = { queued: allRecords.length, approved: eligible.length, due: records.length, published: 0, failed: 0, skipped: 0, results: [] };
   for (const record of records) {
     const fields = record.fields || {};
     const format = publicationFormat(fields);
@@ -246,6 +255,7 @@ export async function runPublisher() {
       console.error(`${fields["Başlık"] || record.id}: maksimum deneme sayısı`);
       await notifyFailure(`Buzsu yayın: "${fields["Başlık"] || record.id}" maksimum deneme sayısına (${maxAttempts}) ulaştı, elle onay bekliyor.`);
       summary.failed += 1;
+      summary.results.push({ id: record.id, title: fields["Başlık"] || record.id, status: "Hata", ...postIdsFor(fields) });
       continue;
     }
     const updates = {
@@ -274,6 +284,7 @@ export async function runPublisher() {
       await updateAirtable(record.id, updates);
       console.log(`${fields["Başlık"] || record.id}: başarılı`);
       summary.published += 1;
+      summary.results.push({ id: record.id, title: fields["Başlık"] || record.id, status: "Paylaşıldı", ...postIdsFor(fields, updates) });
     } catch (error) {
       updates.Durum = "Hata";
       updates["Hata Mesajı"] = String(error.message).slice(0, 10000);
@@ -282,6 +293,7 @@ export async function runPublisher() {
       console.error(`${fields["Başlık"] || record.id}: ${error.message}`);
       await notifyFailure(`Buzsu yayın hatası: "${fields["Başlık"] || record.id}" — ${error.message}`);
       summary.failed += 1;
+      summary.results.push({ id: record.id, title: fields["Başlık"] || record.id, status: "Hata", ...postIdsFor(fields, updates), error: error.message });
     }
   }
   return summary;
