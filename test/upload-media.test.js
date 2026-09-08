@@ -138,6 +138,17 @@ test("decodeImageBase64 accepts a valid PNG and a valid JPEG payload", () => {
   assert.ok(jpeg.length > 0);
 });
 
+test("decodeImageBase64 strips a data: URI prefix before decoding, so a raw copy-pasted data URL is accepted", () => {
+  const withPrefix = decodeImageBase64(`data:image/png;base64,${TINY_PNG_BASE64}`, "image/png");
+  const withoutPrefix = decodeImageBase64(TINY_PNG_BASE64, "image/png");
+  assert.deepEqual(withPrefix, withoutPrefix);
+});
+
+test("decodeImageBase64 strips the data: URI prefix case-insensitively", () => {
+  const decoded = decodeImageBase64(`DATA:image/png;BASE64,${TINY_PNG_BASE64}`, "image/png");
+  assert.deepEqual(decoded, decodeImageBase64(TINY_PNG_BASE64, "image/png"));
+});
+
 test("imageExtensionFor maps mime types to file extensions", () => {
   assert.equal(imageExtensionFor("image/png"), "png");
   assert.equal(imageExtensionFor("image/jpeg"), "jpg");
@@ -186,6 +197,20 @@ test("normalizeImageForMeta re-encodes a PNG source into a clean sRGB PNG", asyn
   const meta = await sharp(buffer).metadata();
   assert.equal(meta.format, "png");
   assert.equal(meta.space, "srgb");
+});
+
+test("normalizeImageForMeta returns the re-encoded image's width and height alongside the buffer", async () => {
+  const source = await sharp({ create: { width: 37, height: 21, channels: 3, background: { r: 44, g: 88, b: 132 } } }).png().toBuffer();
+  const { width, height } = await normalizeImageForMeta(source, "image/png");
+  assert.equal(width, 37);
+  assert.equal(height, 21);
+});
+
+test("normalizeImageForMeta reports width/height for the EXIF-rotated (pixel-baked) output, not the pre-rotation source dimensions", async () => {
+  const base = await sharp({ create: { width: 4, height: 8, channels: 3, background: { r: 1, g: 2, b: 3 } } }).jpeg().withMetadata({ orientation: 6 }).toBuffer();
+  const { width, height } = await normalizeImageForMeta(base, "image/jpeg");
+  assert.equal(width, 8);
+  assert.equal(height, 4);
 });
 
 test("normalizeImageForMeta re-encodes a JPEG source and keeps it a JPEG", async () => {

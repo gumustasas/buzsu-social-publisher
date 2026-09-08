@@ -162,7 +162,7 @@ const TOOLS = [
       type: "object",
       properties: {
         imageUrl: { type: "string", description: "İndirilecek görselin herkese açık HTTPS URL'i (yalnızca biri: imageUrl veya imageBase64)" },
-        imageBase64: { type: "string", description: "Görselin ham base64 verisi (data: öneki OLMADAN). mimeType ile birlikte verilmelidir." },
+        imageBase64: { type: "string", description: "Görselin base64 verisi (ham veya \"data:image/...;base64,\" önekiyle — önek varsa otomatik atılır). mimeType ile birlikte verilmelidir." },
         mimeType: { type: "string", enum: ["image/png", "image/jpeg", "image/webp"], description: "imageBase64 kullanılıyorsa zorunlu" },
         filename: { type: "string", description: "İsteğe bağlı dosya adı ipucu (uzantı mimeType'tan belirlenir)" },
         productId: { type: "string", description: "İsteğe bağlı — updateProductImage:true ile birlikte hangi ürünün ana görselinin güncelleneceğini belirtir" },
@@ -399,10 +399,11 @@ async function callTool(name, args) {
       // JPEG/PNG'ye yeniden kodluyoruz — preview (confirmed:false) yanıtı da
       // gerçekte yüklenecek olanı yansıtsın diye bunu confirmed kontrolünden
       // ÖNCE yapıyoruz.
-      ({ buffer, mimeType } = await normalizeImageForMeta(buffer, mimeType));
+      let width, height;
+      ({ buffer, mimeType, width, height } = await normalizeImageForMeta(buffer, mimeType));
 
       if (args.confirmed !== true) {
-        return JSON.stringify({ ok: true, confirmed: false, preview: true, mimeType, size: buffer.length, message: "Doğrulama başarılı, henüz yüklenmedi. Gerçekten yüklemek için confirmed:true gönderin." }, null, 2);
+        return JSON.stringify({ ok: true, confirmed: false, preview: true, mimeType, size: buffer.length, width, height, message: "Doğrulama başarılı, henüz yüklenmedi. Gerçekten yüklemek için confirmed:true gönderin." }, null, 2);
       }
 
       if (!process.env.BLOB_READ_WRITE_TOKEN) throw new Error("BLOB_READ_WRITE_TOKEN Vercel Production ortamında tanımlı değil.");
@@ -427,7 +428,7 @@ async function callTool(name, args) {
         productImageUpdated = true;
       }
 
-      return JSON.stringify({ ok: true, imageUrl: blob.url, mimeType, size: buffer.length, productId: args.productId || null, productImageUpdated }, null, 2);
+      return JSON.stringify({ ok: true, imageUrl: blob.url, mimeType, size: buffer.length, width, height, productId: args.productId || null, productImageUpdated }, null, 2);
     }
     case "update_draft": {
       const fields = {};
