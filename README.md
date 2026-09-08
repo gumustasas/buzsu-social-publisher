@@ -287,6 +287,14 @@ Dry-run doğru çalıştıktan sonra Meta API için ayrı gönderim scripti ekle
 
 ## Otomatik çalışma
 
-GitHub Actions manuel doğrulama için kullanılabilir. Canlı otomatik çalışma, Windows Görev Zamanlayıcı üzerinden `run-publisher.ps1` ile 5 dakikada bir yapılır. Her çalışmada yalnızca `Onaylandı` durumundaki, yeni `Yayın Zamanı` alanı dolu ve zamanı gelmiş en eski tek kayıt yayınlanır.
+Canlı otomatik yayın **Vercel Cron** ile yapılır — ayrıca bir Windows makinesinin veya zamanlanmış bir görevin açık kalması gerekmez. `vercel.json`'da tanımlı üç cron görevi:
 
-Vercel Pro kurulumu için proje kökü bu reponun kökü (Root Directory boş bırakılır), Build Command boş, Install Command `npm ci`, Output Directory boş ve Cron Secret `CRON_SECRET` olarak ayarlanır. Vercel Cron `/api/publish` adresini `Authorization: Bearer CRON_SECRET` ile çağırır.
+- `/api/publish` — her 2 saatte bir (`0 */2 * * *`). Her çalışmada yalnızca `Onaylandı` durumundaki, `Yayın Zamanı` alanı dolu ve zamanı gelmiş en eski tek kayıt yayınlanır.
+- `/api/autopilot` — günde bir kez, 06:00 UTC.
+- `/api/purge-trash` — günde bir kez, 04:00 UTC.
+
+Vercel Pro kurulumu için proje kökü bu reponun kökü (Root Directory boş bırakılır), Build Command boş, Install Command `npm ci`, Output Directory boş ve Cron Secret `CRON_SECRET` olarak ayarlanır. Vercel Cron bu adresleri `Authorization: Bearer CRON_SECRET` ile çağırır.
+
+`run-publisher.ps1` (`npm run publish` → `src/publish-approved.js`), Windows'ta **yalnızca yerel/manuel** tek seferlik tetikleme için bir seçenektir — production'da buna karşılık gelen, zamanlanmış (Görev Zamanlayıcı) bir görev **yoktur** (doğrulandı). Aynı anda hem bunu zamanlanmış olarak çalıştırıp hem Vercel Cron'u açık bırakmayın: ikisi de aynı Airtable kuyruğuna karşı `runPublisher()`'ı çalıştırır ve lease mekanizması atomik olmadığı için (özellikle saat başlarında, Vercel Cron'un tetiklendiği anlarda) aynı kaydın iki kez yayınlanma riski vardır.
+
+GitHub Actions manuel doğrulama için kullanılabilir.
