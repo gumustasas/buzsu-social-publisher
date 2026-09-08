@@ -1,5 +1,6 @@
 import dns from "node:dns/promises";
 import net from "node:net";
+import sharp from "sharp";
 
 // upload_media MCP aracının (bkz. api/mcp.js) hazır bir görseli (ChatGPT'de
 // üretilmiş veya kullanıcının yüklediği) Vercel Blob'a almadan önce
@@ -174,6 +175,25 @@ export function decodeImageBase64(base64, mimeType, { maxBytes = MAX_MEDIA_BYTES
   if (!buffer.length) throw new Error("Geçerli bir base64 verisi değil.");
   if (buffer.length > maxBytes) throw new Error(`Görsel çok büyük (en fazla ${Math.round(maxBytes / 1024 / 1024)}MB).`);
   return buffer;
+}
+
+// Meta Graph API, kaynağı bizim üretmediğimiz görsellerde (Drive/ChatGPT
+// gibi üçüncü taraf kaynaklar) "desteklenmeyen görsel formatı" hatası
+// verebiliyor — gerçek sebep genelde CMYK renk uzayı, alışılmadık bir ICC
+// profili, progressive JPEG kodlaması veya işlenmemiş EXIF döndürme bilgisi
+// gibi Content-Type başlığından görünmeyen kodlama detaylarıdır. Bu yüzden
+// Blob'a yüklemeden önce görseli HER ZAMAN temiz, sRGB, EXIF-düzeltilmiş bir
+// JPEG/PNG'ye yeniden kodluyoruz — WebP de dahil (Meta'nın gönderi/hikâye
+// için WebP desteği tutarsız, bu yüzden PNG'ye çeviriyoruz).
+export async function normalizeImageForMeta(buffer, mimeType, { maxBytes = MAX_MEDIA_BYTES } = {}) {
+  const image = sharp(buffer).rotate(); // EXIF orientation'ı piksellere göm, meta veri olarak bırakma
+  const normalized = mimeType === "image/jpeg"
+    ? { buffer: await image.toColourspace("srgb").jpeg({ quality: 92, mozjpeg: true }).toBuffer(), mimeType: "image/jpeg" }
+    : { buffer: await image.toColourspace("srgb").png().toBuffer(), mimeType: "image/png" };
+  if (normalized.buffer.length > maxBytes) {
+    throw new Error(`Yeniden kodlanmış görsel çok büyük (en fazla ${Math.round(maxBytes / 1024 / 1024)}MB).`);
+  }
+  return normalized;
 }
 
 export function imageExtensionFor(mimeType) {

@@ -11,7 +11,7 @@ import { runPublisher } from "../src/publish-approved.js";
 import { submitVeoVideo, veoVideoStatus, downloadVeoVideo } from "../src/veo-video.js";
 import { getAutopilotEnabled, setAutopilotEnabled } from "../src/lib/settings.js";
 import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "../src/lib/config.js";
-import { fetchPublicImage, decodeImageBase64, imageExtensionFor, extractDriveFileId, normalizeDriveUrl } from "../src/lib/upload-media.js";
+import { fetchPublicImage, decodeImageBase64, imageExtensionFor, extractDriveFileId, normalizeDriveUrl, normalizeImageForMeta } from "../src/lib/upload-media.js";
 import { validateSceneImage } from "../src/lib/scene-validation.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
@@ -390,6 +390,16 @@ async function callTool(name, args) {
         mimeType = String(args.mimeType).toLowerCase();
         buffer = decodeImageBase64(args.imageBase64, mimeType);
       }
+
+      // Kaynak (özellikle Drive/ChatGPT gibi üçüncü taraf) bizim kontrolümüzde
+      // kodlanmadığı için Meta'nın kabul edeceğini garanti edemeyiz (CMYK,
+      // alışılmadık ICC profili, progressive JPEG, işlenmemiş EXIF döndürme
+      // gibi "format desteklenmiyor" hatalarına yol açan detaylar Content-Type
+      // başlığından görünmez). Blob'a yüklemeden önce her zaman temiz bir
+      // JPEG/PNG'ye yeniden kodluyoruz — preview (confirmed:false) yanıtı da
+      // gerçekte yüklenecek olanı yansıtsın diye bunu confirmed kontrolünden
+      // ÖNCE yapıyoruz.
+      ({ buffer, mimeType } = await normalizeImageForMeta(buffer, mimeType));
 
       if (args.confirmed !== true) {
         return JSON.stringify({ ok: true, confirmed: false, preview: true, mimeType, size: buffer.length, message: "Doğrulama başarılı, henüz yüklenmedi. Gerçekten yüklemek için confirmed:true gönderin." }, null, 2);
