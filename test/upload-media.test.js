@@ -230,3 +230,38 @@ test("normalizeImageForMeta rejects when re-encoding produces a file larger than
   const source = await sharp({ create: { width: 50, height: 50, channels: 3, background: { r: 10, g: 20, b: 30 } } }).png().toBuffer();
   await assert.rejects(() => normalizeImageForMeta(source, "image/png", { maxBytes: 10 }), /çok büyük/);
 });
+
+test("normalizeImageForMeta rejects corrupt/non-decodable bytes instead of silently producing garbage output", async () => {
+  const garbage = Buffer.from("bu gerçek bir görsel değil, düz metin baytları");
+  await assert.rejects(() => normalizeImageForMeta(garbage, "image/jpeg"));
+  await assert.rejects(() => normalizeImageForMeta(garbage, "image/png"));
+});
+
+test("normalizeImageForMeta rejects a truncated/partially-downloaded JPEG rather than accepting a broken file", async () => {
+  const full = await sharp({ create: { width: 40, height: 40, channels: 3, background: { r: 90, g: 90, b: 90 } } }).jpeg().toBuffer();
+  const truncated = full.subarray(0, Math.floor(full.length / 3));
+  await assert.rejects(() => normalizeImageForMeta(truncated, "image/jpeg"));
+});
+
+test("fetchPublicImage does not mistake an HTML response (e.g. Google Drive's viewer/interstitial page) for an image — this is the exact failure mode Drive share links can hit", async () => {
+  const lookup = async () => [{ address: "93.184.216.34" }];
+  const fetchImpl = async () => ({
+    ok: true, status: 200,
+    headers: { get: (name) => (name === "content-type" ? "text/html; charset=utf-8" : null) },
+    arrayBuffer: async () => new TextEncoder().encode("<html><body>Google Drive virüs taraması yapamadı</body></html>").buffer
+  });
+  await assert.rejects(() => fetchPublicImage("https://drive.google.com/uc?export=download&id=abc", { fetchImpl, lookup }), /Desteklenmeyen görsel tipi: text\/html/);
+});
+
+test("normalizeImageForMeta produces a file that is genuinely re-decodable with the expected pixel dimensions and the declared Content-Type — not just bytes that happen not to throw", async () => {
+  const source = await sharp({ create: { width: 37, height: 21, channels: 3, background: { r: 44, g: 88, b: 132 } } }).jpeg().toBuffer();
+  const { buffer, mimeType } = await normalizeImageForMeta(source, "image/jpeg");
+  assert.equal(mimeType, "image/jpeg");
+  const decoded = await sharp(buffer).raw().toBuffer({ resolveWithObject: true });
+  assert.equal(decoded.info.width, 37);
+  assert.equal(decoded.info.height, 21);
+  assert.equal(decoded.info.channels, 3);
+  // İçerik gerçekten piksel verisi mi (rastgele/boş bayt değil) — orta pikseli örnekle
+  const midPixelOffset = (10 * 37 + 18) * 3;
+  assert.ok(decoded.data[midPixelOffset] !== undefined);
+});
