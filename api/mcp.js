@@ -12,6 +12,7 @@ import { submitVeoVideo, veoVideoStatus, downloadVeoVideo } from "../src/veo-vid
 import { getAutopilotEnabled, setAutopilotEnabled } from "../src/lib/settings.js";
 import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "../src/lib/config.js";
 import { fetchPublicImage, decodeImageBase64, imageExtensionFor } from "../src/lib/upload-media.js";
+import { validateSceneImage } from "../src/lib/scene-validation.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
 const SERVER_INFO = { name: "buzsu-social-publisher", version: "1.0.0" };
@@ -122,7 +123,7 @@ const TOOLS = [
   },
   {
     name: "generate_scene_image",
-    description: "Ürünün gerçek fotoğrafını, verilen sahne açıklamasına göre AI ile yeni bir ortam/arka plana yerleştirir (ör. dış mekan boru montajı, mutfak tezgahı). Sonuca isteğe bağlı olarak alt kısımda ürün adı ve Buzsu logosu bindirilir. Üretilen görselin URL'sini döner ve (Airtable ürünüyse) kaydın Görsel URL alanını otomatik günceller — bu sayede create_draft bu görseli otomatik kullanır.",
+    description: "Ürünün gerçek fotoğrafını, verilen sahne açıklamasına göre AI ile yeni bir ortam/arka plana yerleştirir (ör. dış mekan boru montajı, mutfak tezgahı). Sonuca isteğe bağlı olarak alt kısımda ürün adı ve Buzsu logosu bindirilir. Üretilen görselin URL'sini döner ve (Airtable ürünüyse) kaydın Görsel URL alanını otomatik günceller — bu sayede create_draft bu görseli otomatik kullanır. Ayrıca ayrı bir AI çağrısıyla ürün kimliği/parça bütünlüğü/uydurma tabela gibi kriterlere karşı OTOMATİK bir kontrol yapıp needsReview/failedChecks/reviewNotes döner — bu YALNIZCA bir rapordur, görseli asla otomatik reddetmez veya yeniden üretmez; needsReview=true dönerse görseli onaylamadan önce özellikle dikkatli incele.",
     inputSchema: {
       type: "object",
       properties: {
@@ -301,7 +302,8 @@ async function callTool(name, args) {
         removeFaucet: Boolean(args.removeFaucet),
         provider
       });
-      let finalBuffer = Buffer.from(scene.dataUrl.split(",")[1], "base64");
+      const rawBuffer = Buffer.from(scene.dataUrl.split(",")[1], "base64");
+      let finalBuffer = rawBuffer;
       if (args.brand !== false) finalBuffer = await composeBrandedPost(finalBuffer, { title: product.title });
 
       let imageUrl = `data:image/png;base64,${finalBuffer.toString("base64")}`;
@@ -323,7 +325,13 @@ async function callTool(name, args) {
         if (!patchResponse.ok) throw new Error(patchData.error?.message || `Airtable HTTP ${patchResponse.status}`);
       }
 
-      return JSON.stringify({ ok: true, imageUrl, provider: scene.provider, prompt: scene.prompt }, null, 2);
+      // Faz 1 — yalnızca raporlama: sonucu ekleriz ama üretimi/yayını hiçbir
+      // şekilde engellemeyiz (bkz. src/lib/scene-validation.js). Görseli
+      // her zaman ben (Claude) inceleyip onayladan sonra yayınlıyorum; bu
+      // otomatik kontrol o incelemenin YERİNE geçmez, ona ek bir sinyaldir.
+      const validation = await validateSceneImage(rawBuffer, { sceneDescription: args.sceneDescription, productTitle: product.title }, process.env);
+
+      return JSON.stringify({ ok: true, imageUrl, provider: scene.provider, prompt: scene.prompt, needsReview: validation.needsReview, failedChecks: validation.failedChecks, reviewNotes: validation.notes }, null, 2);
     }
     case "create_draft": {
       const allProducts = await listProducts();

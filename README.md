@@ -156,6 +156,17 @@ veya serbest metin).
   değecek kadar yakın olduğundan gövdenin gerçek kenarından dar bir şerit de
   yeniden üretilecek alana giriyor (kenar çentiği riski). Bu yüzden deneysel
   işaretlenmiştir; onaylanmadan yayında kullanılmamalıdır.
+- **Üretim-sonrası otomatik kontrol (Faz 1 — yalnızca raporlama):** Her sahne
+  görseli üretildiğinde (`api/scene-image.js` ve MCP `generate_scene_image`),
+  sahneyi üreten AI'dan bağımsız bir vision çağrısıyla (`src/lib/scene-validation.js`,
+  `validateSceneImage`) 4 sabit kritere karşı denetlenir: ürün kimliği, parça
+  bütünlüğü, hedef bağlamla tutarlılık, uydurma tabela/yazı. Sonuç
+  (`needsReview`, `failedChecks`, `reviewNotes`) yanıta eklenir — **hiçbir
+  zaman otomatik yeniden üretim tetiklemez veya yayını engellemez**, yalnızca
+  bilgi verir. Bilinçli olarak bu aşamada bırakıldı: önce bu kontrolün insan
+  değerlendirmesiyle ne kadar örtüştüğü ölçülmeli, otomatik retry/onay
+  mekanizması ancak ondan sonra eklenmelidir. `GEMINI_API_KEY` tanımlı
+  değilse `checked:false` ile sessizce atlanır, hiçbir şeyi engellemez.
 
 ## AI gönderi metni (SEO/pazarlama)
 

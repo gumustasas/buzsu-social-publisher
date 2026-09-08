@@ -4,6 +4,7 @@ import { getSession } from "../src/auth.js";
 import { availableSceneProviders, generateSceneImage } from "../src/scene-image.js";
 import { generateCompositeSceneImage } from "../src/scene-composite.js";
 import { validateScenario, validateScenarioAgainstContext, buildSceneDescriptionFromScenario } from "../src/lib/scenario-schema.js";
+import { validateSceneImage } from "../src/lib/scene-validation.js";
 import { baseProductTitle } from "../src/lib/product-title.js";
 import { findCatalogProduct, isCatalogProductId } from "../src/lib/product-catalog.js";
 import { findKnownProductPhotos } from "../src/lib/product-photos.js";
@@ -84,12 +85,24 @@ export default async function handler(request, response) {
       ? await generateCompositeSceneImage(product, scenario ? "" : sceneDescription, process.env, scenario ? { usageContext: scenario.usageContext, negativeConstraints: scenario.negativeConstraints } : {})
       : await generateSceneImage(product, sceneDescription, process.env, { removeFaucet: Boolean(body.removeFaucet), provider });
 
+    const imageBuffer = Buffer.from(scene.dataUrl.split(",")[1], "base64");
+
     if (process.env.BLOB_READ_WRITE_TOKEN) {
-      const imageBuffer = Buffer.from(scene.dataUrl.split(",")[1], "base64");
       const safeId = String(recordId).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80);
       const blob = await put(`ai-scenes/${safeId}-${Date.now()}.png`, imageBuffer, { access: "public", contentType: "image/png" });
       scene.imageUrl = blob.url;
     }
+
+    // Faz 1 — yalnızca raporlama: sonucu ekleriz ama üretimi/yayını
+    // hiçbir şekilde engellemeyiz (bkz. src/lib/scene-validation.js).
+    const validation = await validateSceneImage(imageBuffer, {
+      usageContext: scenario?.usageContext,
+      sceneDescription,
+      productTitle: product.title
+    }, process.env);
+    scene.needsReview = validation.needsReview;
+    scene.failedChecks = validation.failedChecks;
+    scene.reviewNotes = validation.notes;
 
     return response.status(200).json({ ok: true, scene });
   } catch (error) {
