@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { put } from "@vercel/blob";
+import { put, del } from "@vercel/blob";
 import { listProducts, createDraftRecord } from "../src/lib/products.js";
 import { generateCaption, generateHashtags, generateScenePlan, generateSeoArticle } from "../src/ai-providers.js";
 import { baseProductTitle } from "../src/lib/product-title.js";
@@ -27,13 +27,25 @@ function authorized(request) {
   return typeof queryToken === "string" && queryToken === MCP_API_KEY;
 }
 
-async function airtableGet(path = "") {
-  const response = await fetch(`https://api.airtable.com/v0/${baseId}/${tableId}${path}?pageSize=100`, {
-    headers: { Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}` }
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error?.message || `Airtable HTTP ${response.status}`);
-  return data;
+// Airtable her sayfada en fazla 100 kayıt döner; kuyruk 100'ü geçtiğinde
+// tek sayfalık bir istek sessizce eksik/kesik veri döner (bkz. list_queue,
+// resolveProduct). Bu yüzden burada offset kürsörünü takip edip tüm
+// sayfaları birleştiriyoruz.
+async function airtableGet() {
+  const records = [];
+  let offset = "";
+  do {
+    const params = new URLSearchParams({ pageSize: "100" });
+    if (offset) params.set("offset", offset);
+    const response = await fetch(`https://api.airtable.com/v0/${baseId}/${tableId}?${params}`, {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}` }
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error?.message || `Airtable HTTP ${response.status}`);
+    records.push(...(data.records || []));
+    offset = data.offset || "";
+  } while (offset);
+  return { records };
 }
 
 async function resolveProduct(productId) {
@@ -63,7 +75,7 @@ const TOOLS = [
   },
   {
     name: "list_queue",
-    description: "Yayın kuyruğundaki tüm içerikleri listeler (taslak, onaylı, paylaşılmış). Her kaydın id, title, status, format, platforms, publishAt, imageUrl, instagramText, facebookText alanları döner.",
+    description: "Yayın kuyruğundaki tüm içerikleri listeler (taslak, onaylı, paylaşılmış). Her kaydın id, title, status, format, platforms, publishAt, imageUrl, instagramText, facebookText, instagramPostId, facebookPostId, xPostId, youtubeVideoId alanları döner (post ID'leri yalnızca yayınlanmış kayıtlarda dolu olur — ilgili platformun doğrudan linkini oluşturmak için kullanılabilir).",
     inputSchema: { type: "object", properties: {} }
   },
   {
@@ -188,7 +200,7 @@ const TOOLS = [
   },
   {
     name: "publish_now",
-    description: "Onaylandı durumundaki ve yayın zamanı gelmiş (Yayın Zamanı <= şu an) içerikleri hemen yayınlar; normalde bu her 2 saatte bir otomatik çalışır. Belirli bir kaydı hemen yayınlamak için önce update_draft ile yayın zamanını geçmişe/şimdiye çekin, sonra bu tool'u çağırın.",
+    description: "Onaylandı durumundaki ve yayın zamanı gelmiş (Yayın Zamanı <= şu an) içerikleri hemen yayınlar; normalde bu her 2 saatte bir otomatik çalışır. Belirli bir kaydı hemen yayınlamak için önce update_draft ile yayın zamanını geçmişe/şimdiye çekin, sonra bu tool'u çağırın. Dönen results dizisinde her işlenen kaydın status'ü ve instagramPostId/facebookPostId/xPostId/youtubeVideoId'si bulunur.",
     inputSchema: { type: "object", properties: {} }
   },
   {
@@ -245,14 +257,16 @@ async function callTool(name, args) {
       return JSON.stringify(products, null, 2);
     }
     case "list_queue": {
-      const data = await airtableGet("?pageSize=100");
+      const data = await airtableGet();
       const records = (data.records || []).map((record) => {
         const fields = record.fields || {};
         return {
           id: record.id, title: fields["Başlık"] || "Başlıksız", status: fields.Durum || "Taslak",
           format: fields["Yayın Biçimi"] || "Gönderi", platforms: fields.Platform || [],
           publishAt: fields["Yayın Zamanı"] || null, imageUrl: fields["Görsel URL"] || "",
-          instagramText: fields["Instagram Metni"] || "", facebookText: fields["Facebook Metni"] || ""
+          instagramText: fields["Instagram Metni"] || "", facebookText: fields["Facebook Metni"] || "",
+          instagramPostId: fields["Instagram Yayın ID"] || "", facebookPostId: fields["Facebook Yayın ID"] || "",
+          xPostId: fields["X Yayın ID"] || "", youtubeVideoId: fields["YouTube Video ID"] || ""
         };
       });
       return JSON.stringify(records, null, 2);
@@ -338,6 +352,14 @@ async function callTool(name, args) {
       const hasUrl = typeof args.imageUrl === "string" && args.imageUrl.trim().length > 0;
       const hasBase64 = typeof args.imageBase64 === "string" && args.imageBase64.trim().length > 0;
       if (hasUrl === hasBase64) throw new Error("imageUrl veya imageBase64 alanlarından tam olarak biri verilmelidir.");
+      const wantsProductUpdate = Boolean(args.productId) && args.updateProductImage === true;
+      // Bu kontrolü Blob'a yüklemeden ÖNCE yapıyoruz: aksi hâlde bilinen-geçersiz
+      // bir kombinasyonda (katalog ürünü) bile önce herkese açık/faturalandırılan
+      // bir Blob oluşturulup sonra hata fırlatılır — o Blob hiçbir yerden
+      // referanslanamayan, sahipsiz kalan bir yük olur.
+      if (wantsProductUpdate && isCatalogProductId(args.productId)) {
+        throw new Error("Katalog ürünlerinin (Airtable kaydı olmayan) ana görseli MCP üzerinden güncellenemez.");
+      }
 
       let buffer, mimeType;
       if (hasUrl) {
@@ -357,15 +379,20 @@ async function callTool(name, args) {
       const blob = await put(`manual-uploads/${Date.now()}-${safeName}.${imageExtensionFor(mimeType)}`, buffer, { access: "public", contentType: mimeType });
 
       let productImageUpdated = false;
-      if (args.productId && args.updateProductImage === true) {
-        if (isCatalogProductId(args.productId)) throw new Error("Katalog ürünlerinin (Airtable kaydı olmayan) ana görseli MCP üzerinden güncellenemez.");
+      if (wantsProductUpdate) {
         const patchResponse = await fetch(`https://api.airtable.com/v0/${baseId}/${tableId}/${encodeURIComponent(args.productId)}`, {
           method: "PATCH",
           headers: { Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}`, "Content-Type": "application/json" },
           body: JSON.stringify({ fields: { "Görsel URL": blob.url } })
         });
-        const patchData = await patchResponse.json();
-        if (!patchResponse.ok) throw new Error(patchData.error?.message || `Airtable HTTP ${patchResponse.status}`);
+        if (!patchResponse.ok) {
+          const patchData = await patchResponse.json().catch(() => ({}));
+          // Ürün kaydı bulunamadı/geçersizse Blob zaten yüklenmiş oluyor —
+          // sahipsiz kalmasın diye burada temizliyoruz. Silme başarısız olsa
+          // bile asıl hatayı (Airtable) gizlemeden fırlatmaya devam ediyoruz.
+          await del(blob.url).catch(() => {});
+          throw new Error(patchData.error?.message || `Airtable HTTP ${patchResponse.status}`);
+        }
         productImageUpdated = true;
       }
 

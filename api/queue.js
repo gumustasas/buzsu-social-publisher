@@ -21,6 +21,22 @@ async function airtable(path = "", options = {}) {
   return data;
 }
 
+// Airtable her sayfada en fazla 100 kayıt döner; kuyruk 100'ü geçtiğinde
+// tek sayfalık bir istek sessizce eksik/kesik veri döner. Tüm sayfaları
+// offset kürsörünü takip ederek birleştiriyoruz.
+async function airtableAll() {
+  const records = [];
+  let offset = "";
+  do {
+    const params = new URLSearchParams({ pageSize: "100" });
+    if (offset) params.set("offset", offset);
+    const data = await airtable(`?${params}`);
+    records.push(...(data.records || []));
+    offset = data.offset || "";
+  } while (offset);
+  return records;
+}
+
 function publicRecord(record) {
   const fields = record.fields || {};
   const state = parseJsonNote(fields.Not).state;
@@ -54,9 +70,9 @@ export default async function handler(request, response) {
   if (!authorized(request)) return response.status(401).json({ error: "Unauthorized" });
   try {
     if (request.method === "GET") {
-      const data = await airtable("?pageSize=100");
-      const records = (data.records || []).map(publicRecord).sort((a, b) => String(a.publishAt || "").localeCompare(String(b.publishAt || "")));
-      return response.status(200).json({ ok: true, records, summary: summarizeRecords(data.records || []) });
+      const allRecords = await airtableAll();
+      const records = allRecords.map(publicRecord).sort((a, b) => String(a.publishAt || "").localeCompare(String(b.publishAt || "")));
+      return response.status(200).json({ ok: true, records, summary: summarizeRecords(allRecords) });
     }
     if (request.method === "DELETE") {
       const body = typeof request.body === "string" ? JSON.parse(request.body) : (request.body || {});
