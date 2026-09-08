@@ -76,8 +76,14 @@ const TOOLS = [
   },
   {
     name: "list_queue",
-    description: "Yayın kuyruğundaki tüm içerikleri listeler (taslak, onaylı, paylaşılmış). Her kaydın id, title, status, format, platforms, publishAt, imageUrl, instagramText, facebookText, instagramPostId, facebookPostId, xPostId, youtubeVideoId alanları döner (post ID'leri yalnızca yayınlanmış kayıtlarda dolu olur — ilgili platformun doğrudan linkini oluşturmak için kullanılabilir).",
-    inputSchema: { type: "object", properties: {} }
+    description: "Yayın kuyruğunu kapsam seçerek listeler. Varsayılan 'recent': aktif kayıtlar ve son 90 günde paylaşılmış kayıtlar. 'active' yalnızca yayınlanmamış aktif kayıtları, 'archive' paylaşılmış kayıtları, 'all' ise çöp kutusu dahil tüm kayıtları döner. Her kaydın id, title, status, format, platforms, publishAt, imageUrl, instagramText, facebookText ve yayın ID alanları bulunur.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scope: { type: "string", enum: ["recent", "active", "archive", "all"], default: "recent", description: "Kuyruk kapsamı. Eski davranışın tamamı için 'all' kullanın." },
+        publishedWithinDays: { type: "integer", minimum: 1, maximum: 365, default: 90, description: "scope='recent' iken kaç günlük paylaşılmış kayıt döndürülecek." }
+      }
+    }
   },
   {
     name: "generate_caption",
@@ -259,7 +265,30 @@ async function callTool(name, args) {
     }
     case "list_queue": {
       const data = await airtableGet();
-      const records = (data.records || []).map((record) => {
+      const allowedScopes = new Set(["recent", "active", "archive", "all"]);
+      const scope = allowedScopes.has(args.scope) ? args.scope : "recent";
+      const requestedDays = Number(args.publishedWithinDays);
+      const publishedWithinDays = Number.isInteger(requestedDays)
+        ? Math.min(365, Math.max(1, requestedDays))
+        : 90;
+      const cutoff = Date.now() - publishedWithinDays * 24 * 60 * 60 * 1000;
+      const records = (data.records || []).filter((record) => {
+        const fields = record.fields || {};
+        const deleted = Boolean(fields["Silinme Tarihi"]);
+        const published = fields.Durum === "Paylaşıldı" || Boolean(
+          fields["Instagram Yayın ID"] ||
+          fields["Facebook Yayın ID"] ||
+          fields["X Yayın ID"] ||
+          fields["YouTube Video ID"]
+        );
+        if (scope === "all") return true;
+        if (deleted) return false;
+        if (scope === "active") return !published;
+        if (scope === "archive") return published;
+        if (!published) return true;
+        const publishedAt = Date.parse(fields["Yayın Zamanı"] || "");
+        return !Number.isNaN(publishedAt) && publishedAt >= cutoff;
+      }).map((record) => {
         const fields = record.fields || {};
         return {
           id: record.id, title: fields["Başlık"] || "Başlıksız", status: fields.Durum || "Taslak",
