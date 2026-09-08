@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { assertPublicHttpsUrl, fetchPublicImage, decodeImageBase64, imageExtensionFor, isPrivateIp } from "../src/lib/upload-media.js";
+import { assertPublicHttpsUrl, fetchPublicImage, decodeImageBase64, imageExtensionFor, isPrivateIp, extractDriveFileId, normalizeDriveUrl } from "../src/lib/upload-media.js";
 
 const TINY_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
@@ -141,4 +141,39 @@ test("imageExtensionFor maps mime types to file extensions", () => {
   assert.equal(imageExtensionFor("image/png"), "png");
   assert.equal(imageExtensionFor("image/jpeg"), "jpg");
   assert.equal(imageExtensionFor("image/webp"), "webp");
+});
+
+test("extractDriveFileId returns null for a non-Drive URL — the normal HTTPS flow must be untouched", () => {
+  assert.equal(extractDriveFileId("https://example.com/photo.png"), null);
+  assert.equal(extractDriveFileId("not a url"), null);
+});
+
+test("extractDriveFileId extracts the file ID from the /file/d/<id>/view share link format", () => {
+  assert.equal(extractDriveFileId("https://drive.google.com/file/d/1_dcL2RNdR75S4Wrtrh6uHnPC45FChMqf/view?usp=drivesdk"), "1_dcL2RNdR75S4Wrtrh6uHnPC45FChMqf");
+  assert.equal(extractDriveFileId("https://drive.google.com/file/d/ABC123/view"), "ABC123");
+});
+
+test("extractDriveFileId extracts the file ID from ?id=<id> query-param formats (open, uc)", () => {
+  assert.equal(extractDriveFileId("https://drive.google.com/open?id=XYZ789"), "XYZ789");
+  assert.equal(extractDriveFileId("https://drive.google.com/uc?id=ALREADY-NORMALIZED&export=download"), "ALREADY-NORMALIZED");
+  assert.equal(extractDriveFileId("https://docs.google.com/uc?id=DOCS-HOST-VARIANT"), "DOCS-HOST-VARIANT");
+});
+
+test("extractDriveFileId returns an empty string (not null) for a recognized Drive host with no extractable ID — distinguishes 'not Drive' from 'bad Drive link'", () => {
+  assert.equal(extractDriveFileId("https://drive.google.com/drive/folders/1P3wglUsB9s_RubZv8MTrpBp-0GipGBfl"), "");
+});
+
+test("normalizeDriveUrl leaves a non-Drive URL completely unchanged", () => {
+  assert.equal(normalizeDriveUrl("https://example.com/photo.png"), "https://example.com/photo.png");
+});
+
+test("normalizeDriveUrl converts a recognized share link into the direct-download endpoint", () => {
+  assert.equal(
+    normalizeDriveUrl("https://drive.google.com/file/d/1_dcL2RNdR75S4Wrtrh6uHnPC45FChMqf/view?usp=drivesdk"),
+    "https://drive.google.com/uc?export=download&id=1_dcL2RNdR75S4Wrtrh6uHnPC45FChMqf"
+  );
+});
+
+test("normalizeDriveUrl throws an explicit error for a Drive URL it cannot extract an ID from, rather than silently falling back to something else", () => {
+  assert.throws(() => normalizeDriveUrl("https://drive.google.com/drive/folders/1P3wglUsB9s_RubZv8MTrpBp-0GipGBfl"), /dosya ID'si çıkarılamadı/);
 });

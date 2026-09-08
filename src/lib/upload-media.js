@@ -181,3 +181,37 @@ export function imageExtensionFor(mimeType) {
   if (mimeType === "image/webp") return "webp";
   return "png";
 }
+
+const GOOGLE_DRIVE_HOSTS = new Set(["drive.google.com", "docs.google.com"]);
+
+// Google Drive paylaşım linkleri (ör. ChatGPT'de üretilip Drive'a kaydedilmiş
+// bir görsel) doğrudan bir görsel dosyası URL'i DEĞİLDİR — bir HTML görüntüleyici
+// sayfasına işaret eder. Dosya ID'sini tanınan biçimlerden çıkarır:
+// /file/d/<ID>/view(?...) ve ?id=<ID> (open?id=..., uc?id=... dahil).
+// Dönüş: bulunan ID (string) | "" (Drive linki ama ID çıkarılamadı) |
+// null (Drive linki değil — hiç dokunulmamalı, normal HTTPS akışı sürer).
+export function extractDriveFileId(rawUrl) {
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (!GOOGLE_DRIVE_HOSTS.has(url.hostname.toLowerCase())) return null;
+  const fileMatch = url.pathname.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (fileMatch) return fileMatch[1];
+  return url.searchParams.get("id") || "";
+}
+
+// Tanınan bir Drive dosya ID'sini, mevcut assertPublicHttpsUrl/fetchPublicImage
+// güvenlik ve içerik-tipi kontrollerinden geçirilebilecek doğrudan bir indirme
+// URL'ine çevirir. Drive linki değilse (extractDriveFileId null döndürürse)
+// rawUrl'i olduğu gibi geri verir — normal HTTPS görsel akışı hiç etkilenmez.
+export function normalizeDriveUrl(rawUrl) {
+  const fileId = extractDriveFileId(rawUrl);
+  if (fileId === null) return rawUrl;
+  if (!fileId) {
+    throw new Error("Google Drive linki tanındı ama dosya ID'si çıkarılamadı. Desteklenen biçimler: https://drive.google.com/file/d/<ID>/view veya https://drive.google.com/open?id=<ID>.");
+  }
+  return `https://drive.google.com/uc?export=download&id=${fileId}`;
+}
