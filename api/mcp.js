@@ -11,7 +11,7 @@ import { runPublisher } from "../src/publish-approved.js";
 import { submitVeoVideo, veoVideoStatus, downloadVeoVideo } from "../src/veo-video.js";
 import { getAutopilotEnabled, setAutopilotEnabled } from "../src/lib/settings.js";
 import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "../src/lib/config.js";
-import { fetchPublicImage, decodeImageBase64, imageExtensionFor } from "../src/lib/upload-media.js";
+import { fetchPublicImage, decodeImageBase64, imageExtensionFor, extractDriveFileId, normalizeDriveUrl } from "../src/lib/upload-media.js";
 import { validateSceneImage } from "../src/lib/scene-validation.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
@@ -157,7 +157,7 @@ const TOOLS = [
   },
   {
     name: "upload_media",
-    description: "ChatGPT'de oluşturulmuş veya kullanıcının yüklediği hazır bir PNG/JPEG/WebP görselini Vercel Blob'a yükleyip herkese açık bir HTTPS URL döner — bu URL create_draft'a imageUrl olarak verilebilir. imageUrl (herkese açık HTTPS, sunucu indirir) veya imageBase64 (+ mimeType) alanlarından tam olarak biri verilmelidir. confirmed:true olmadan hiçbir yükleme/kayıt yapılmaz, yalnızca doğrulama sonucu döner.",
+    description: "ChatGPT'de oluşturulmuş veya kullanıcının yüklediği hazır bir PNG/JPEG/WebP görselini Vercel Blob'a yükleyip herkese açık bir HTTPS URL döner — bu URL create_draft'a imageUrl olarak verilebilir. imageUrl (herkese açık HTTPS, sunucu indirir) veya imageBase64 (+ mimeType) alanlarından tam olarak biri verilmelidir. imageUrl bir Google Drive paylaşım linki ise (https://drive.google.com/file/d/<ID>/view veya .../open?id=<ID>) otomatik olarak doğrudan indirme URL'ine çevrilir — dosyanın (klasörün değil) \"Bağlantıya sahip olan herkes görüntüleyebilir\" ile paylaşılmış olması gerekir. confirmed:true olmadan hiçbir yükleme/kayıt yapılmaz, yalnızca doğrulama sonucu döner.",
     inputSchema: {
       type: "object",
       properties: {
@@ -371,7 +371,20 @@ async function callTool(name, args) {
 
       let buffer, mimeType;
       if (hasUrl) {
-        ({ buffer, mimeType } = await fetchPublicImage(args.imageUrl));
+        // Google Drive paylaşım linkleri (ChatGPT'nin görsel kaydettiği yer)
+        // doğrudan bir görsel URL'i değil, bir görüntüleyici sayfasıdır —
+        // tanınırsa doğrudan indirme URL'ine çevrilir; Drive linki değilse
+        // rawUrl olduğu gibi kullanılır (normal HTTPS akışı etkilenmez).
+        const driveFileId = extractDriveFileId(args.imageUrl);
+        const targetUrl = normalizeDriveUrl(args.imageUrl);
+        try {
+          ({ buffer, mimeType } = await fetchPublicImage(targetUrl));
+        } catch (error) {
+          if (driveFileId && /Desteklenmeyen görsel tipi/.test(error.message)) {
+            throw new Error("Google Drive, ham görsel yerine bir HTML/onay sayfası döndürdü. Dosyanın (klasörün değil, dosyanın kendisinin) \"Bağlantıya sahip olan herkes\" ile paylaşıldığından emin olun.");
+          }
+          throw error;
+        }
       } else {
         if (!args.mimeType) throw new Error("imageBase64 kullanılıyorsa mimeType zorunludur.");
         mimeType = String(args.mimeType).toLowerCase();
