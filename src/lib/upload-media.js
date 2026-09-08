@@ -169,7 +169,14 @@ export function decodeImageBase64(base64, mimeType, { maxBytes = MAX_MEDIA_BYTES
   if (!ALLOWED_IMAGE_MIME_TYPES.has(normalizedMime)) {
     throw new Error(`Desteklenmeyen görsel tipi: ${mimeType || "belirtilmedi"}. Yalnızca PNG/JPEG/WebP kabul edilir.`);
   }
-  const cleaned = String(base64 || "").replace(/\s/g, "");
+  // ChatGPT/tarayıcılar bazen "data:image/png;base64,...." biçiminde bir
+  // data URI öneki gönderir — bu önek gerçek base64 alfabesinde geçerli
+  // olmadığından öneki atmadan doğrudan doğrulamaya çalışmak her zaman
+  // reddedilirdi. Önek varsa (mimeType ile tutarlı olsun olmasın, çünkü
+  // asıl doğrulanan mimeType parametresidir) sessizce atıp geri kalanı
+  // normal base64 olarak doğruluyoruz.
+  const withoutDataUriPrefix = String(base64 || "").replace(/^data:[^;]+;base64,/i, "");
+  const cleaned = withoutDataUriPrefix.replace(/\s/g, "");
   if (!cleaned || !/^[A-Za-z0-9+/]+={0,2}$/.test(cleaned)) throw new Error("Geçerli bir base64 verisi değil.");
   const buffer = Buffer.from(cleaned, "base64");
   if (!buffer.length) throw new Error("Geçerli bir base64 verisi değil.");
@@ -193,7 +200,12 @@ export async function normalizeImageForMeta(buffer, mimeType, { maxBytes = MAX_M
   if (normalized.buffer.length > maxBytes) {
     throw new Error(`Yeniden kodlanmış görsel çok büyük (en fazla ${Math.round(maxBytes / 1024 / 1024)}MB).`);
   }
-  return normalized;
+  // Boyutu SONUÇ arabellekten (normalized.buffer) okuyoruz, orijinal
+  // `buffer`'dan değil — rotate() EXIF döndürmesini piksellere gömdüğü için
+  // 90/270 derece döndürülmüş görsellerde orijinalin metadata'sı en/boy'u
+  // ters verir; kodlanmış çıktı zaten doğru (dikey/yatay düzeltilmiş) yönde.
+  const { width, height } = await sharp(normalized.buffer).metadata();
+  return { ...normalized, width, height };
 }
 
 export function imageExtensionFor(mimeType) {
