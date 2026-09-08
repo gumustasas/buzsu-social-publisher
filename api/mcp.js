@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { put } from "@vercel/blob";
+import { put, del } from "@vercel/blob";
 import { listProducts, createDraftRecord } from "../src/lib/products.js";
 import { generateCaption, generateHashtags, generateScenePlan, generateSeoArticle } from "../src/ai-providers.js";
 import { baseProductTitle } from "../src/lib/product-title.js";
@@ -352,6 +352,14 @@ async function callTool(name, args) {
       const hasUrl = typeof args.imageUrl === "string" && args.imageUrl.trim().length > 0;
       const hasBase64 = typeof args.imageBase64 === "string" && args.imageBase64.trim().length > 0;
       if (hasUrl === hasBase64) throw new Error("imageUrl veya imageBase64 alanlarından tam olarak biri verilmelidir.");
+      const wantsProductUpdate = Boolean(args.productId) && args.updateProductImage === true;
+      // Bu kontrolü Blob'a yüklemeden ÖNCE yapıyoruz: aksi hâlde bilinen-geçersiz
+      // bir kombinasyonda (katalog ürünü) bile önce herkese açık/faturalandırılan
+      // bir Blob oluşturulup sonra hata fırlatılır — o Blob hiçbir yerden
+      // referanslanamayan, sahipsiz kalan bir yük olur.
+      if (wantsProductUpdate && isCatalogProductId(args.productId)) {
+        throw new Error("Katalog ürünlerinin (Airtable kaydı olmayan) ana görseli MCP üzerinden güncellenemez.");
+      }
 
       let buffer, mimeType;
       if (hasUrl) {
@@ -371,15 +379,20 @@ async function callTool(name, args) {
       const blob = await put(`manual-uploads/${Date.now()}-${safeName}.${imageExtensionFor(mimeType)}`, buffer, { access: "public", contentType: mimeType });
 
       let productImageUpdated = false;
-      if (args.productId && args.updateProductImage === true) {
-        if (isCatalogProductId(args.productId)) throw new Error("Katalog ürünlerinin (Airtable kaydı olmayan) ana görseli MCP üzerinden güncellenemez.");
+      if (wantsProductUpdate) {
         const patchResponse = await fetch(`https://api.airtable.com/v0/${baseId}/${tableId}/${encodeURIComponent(args.productId)}`, {
           method: "PATCH",
           headers: { Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}`, "Content-Type": "application/json" },
           body: JSON.stringify({ fields: { "Görsel URL": blob.url } })
         });
-        const patchData = await patchResponse.json();
-        if (!patchResponse.ok) throw new Error(patchData.error?.message || `Airtable HTTP ${patchResponse.status}`);
+        if (!patchResponse.ok) {
+          const patchData = await patchResponse.json().catch(() => ({}));
+          // Ürün kaydı bulunamadı/geçersizse Blob zaten yüklenmiş oluyor —
+          // sahipsiz kalmasın diye burada temizliyoruz. Silme başarısız olsa
+          // bile asıl hatayı (Airtable) gizlemeden fırlatmaya devam ediyoruz.
+          await del(blob.url).catch(() => {});
+          throw new Error(patchData.error?.message || `Airtable HTTP ${patchResponse.status}`);
+        }
         productImageUpdated = true;
       }
 

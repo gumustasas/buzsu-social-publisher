@@ -20,6 +20,13 @@ test("isPrivateIp flags loopback/unique-local/link-local IPv6", () => {
   assert.equal(isPrivateIp("2606:4700:4700::1111"), false);
 });
 
+test("isPrivateIp flags the hex-group form of an IPv4-mapped address, not just the dotted-decimal form (regression: ::ffff:7f00:1 === ::ffff:127.0.0.1)", () => {
+  assert.equal(isPrivateIp("::ffff:7f00:1"), true);
+  assert.equal(isPrivateIp("::ffff:a9fe:a9fe"), true); // 169.254.169.254 — bulut metadata
+  assert.equal(isPrivateIp("::ffff:c0a8:101"), true); // 192.168.1.1
+  assert.equal(isPrivateIp("::ffff:5db8:d822"), false); // 93.184.216.34 (herkese açık)
+});
+
 test("assertPublicHttpsUrl rejects a plain HTTP URL", async () => {
   await assert.rejects(() => assertPublicHttpsUrl("http://example.com/photo.png"), /HTTPS/);
 });
@@ -28,6 +35,10 @@ test("assertPublicHttpsUrl rejects localhost and IP-literal private hosts", asyn
   await assert.rejects(() => assertPublicHttpsUrl("https://localhost/photo.png"), /engellendi/);
   await assert.rejects(() => assertPublicHttpsUrl("https://127.0.0.1/photo.png"), /engellendi/);
   await assert.rejects(() => assertPublicHttpsUrl("https://169.254.169.254/latest/meta-data/"), /engellendi/);
+});
+
+test("assertPublicHttpsUrl rejects a bracketed IPv6 literal written in the hex-mapped form of a loopback address", async () => {
+  await assert.rejects(() => assertPublicHttpsUrl("https://[::ffff:7f00:1]/photo.png"), /engellendi/);
 });
 
 test("assertPublicHttpsUrl rejects a hostname that resolves to a private IP", async () => {
@@ -55,6 +66,30 @@ test("fetchPublicImage rejects a file larger than the byte limit (declared via C
     arrayBuffer: async () => new ArrayBuffer(0)
   });
   await assert.rejects(() => fetchPublicImage("https://example.com/huge.png", { fetchImpl, lookup, maxBytes: 15 * 1024 * 1024 }), /çok büyük/);
+});
+
+test("fetchPublicImage aborts mid-stream once bytes exceed the limit, without buffering the whole body first (Content-Length missing/understated)", async () => {
+  const lookup = async () => [{ address: "93.184.216.34" }];
+  let cancelled = false;
+  let chunksServed = 0;
+  const totalChunks = 100;
+  const chunkSize = 1024 * 1024; // 1MB/parça — 100 parça = 100MB, gerçek limit çok altında
+  const reader = {
+    read: async () => {
+      if (chunksServed >= totalChunks) return { done: true, value: undefined };
+      chunksServed += 1;
+      return { done: false, value: new Uint8Array(chunkSize) };
+    },
+    cancel: async () => { cancelled = true; }
+  };
+  const fetchImpl = async () => ({
+    ok: true, status: 200,
+    headers: { get: (name) => (name === "content-type" ? "image/png" : null) }, // Content-Length yok/eksik
+    body: { getReader: () => reader }
+  });
+  await assert.rejects(() => fetchPublicImage("https://example.com/huge-stream.png", { fetchImpl, lookup, maxBytes: 2 * 1024 * 1024 }), /çok büyük/);
+  assert.equal(cancelled, true, "reader.cancel() çağrılmalı, akış erkenden durdurulmalı");
+  assert.ok(chunksServed < totalChunks, "100MB'lık akışın tamamı tüketilmeden önce durmalı");
 });
 
 test("fetchPublicImage re-validates the SSRF check after following a redirect to a private host", async () => {

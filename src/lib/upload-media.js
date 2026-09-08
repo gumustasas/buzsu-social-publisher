@@ -24,13 +24,49 @@ function isPrivateIPv4(ip) {
   return false;
 }
 
+// IPv6 adresini 8 adet 16-bit gruba açar (:: kısaltmasını ve gömülü
+// noktalı-ondalık IPv4 kuyruğunu çözerek). ::ffff:127.0.0.1 ve
+// ::ffff:7f00:1 aynı adresin iki farklı yazımıdır — ikisini de aynı
+// normalize edilmiş forma getirip tek bir yoldan kontrol etmek gerekir,
+// yoksa yalnızca noktalı-ondalık formu tanıyan bir regex hex formunu
+// (SSRF koruma atlatması) kaçırır.
+function expandIPv6(ip) {
+  let addr = ip;
+  const ipv4Tail = addr.match(/(\d+\.\d+\.\d+\.\d+)$/);
+  if (ipv4Tail) {
+    const parts = ipv4Tail[1].split(".").map(Number);
+    if (parts.length !== 4 || parts.some((part) => Number.isNaN(part) || part < 0 || part > 255)) return null;
+    const hex1 = ((parts[0] << 8) | parts[1]).toString(16);
+    const hex2 = ((parts[2] << 8) | parts[3]).toString(16);
+    addr = addr.slice(0, addr.length - ipv4Tail[1].length) + `${hex1}:${hex2}`;
+  }
+  const doubleColonCount = (addr.match(/::/g) || []).length;
+  if (doubleColonCount > 1) return null;
+  if (addr.includes("::")) {
+    const [head, tail] = addr.split("::");
+    const headParts = head ? head.split(":").filter(Boolean) : [];
+    const tailParts = tail ? tail.split(":").filter(Boolean) : [];
+    const missing = 8 - headParts.length - tailParts.length;
+    if (missing < 0) return null;
+    return [...headParts, ...new Array(missing).fill("0"), ...tailParts].map((g) => g.padStart(4, "0"));
+  }
+  const groups = addr.split(":");
+  return groups.length === 8 ? groups.map((g) => g.padStart(4, "0")) : null;
+}
+
 function isPrivateIPv6(ip) {
   const lower = ip.toLowerCase();
   if (lower === "::1" || lower === "::") return true;
   if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // unique local fc00::/7
   if (/^fe[89ab]/.test(lower)) return true; // link-local fe80::/10
-  const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (mapped) return isPrivateIPv4(mapped[1]);
+  const groups = expandIPv6(lower);
+  if (!groups) return true; // beklenmeyen/ayrıştırılamayan biçim güvensiz kabul edilir
+  // ::ffff:0:0/96 — IPv4-mapped IPv6 (noktalı-ondalık veya hex grup yazımı fark etmeksizin)
+  if (groups.slice(0, 5).every((g) => g === "0000") && groups[5] === "ffff") {
+    const a = Number.parseInt(groups[6].slice(0, 2), 16), b = Number.parseInt(groups[6].slice(2, 4), 16);
+    const c = Number.parseInt(groups[7].slice(0, 2), 16), d = Number.parseInt(groups[7].slice(2, 4), 16);
+    return isPrivateIPv4(`${a}.${b}.${c}.${d}`);
+  }
   return false;
 }
 
@@ -70,6 +106,34 @@ export async function assertPublicHttpsUrl(rawUrl, { lookup = dns.lookup } = {})
   return url;
 }
 
+// Content-Length yalan söylenirse veya hiç verilmezse response.arrayBuffer()
+// tüm gövdeyi belleğe alır — sınırsız/çok büyük bir gövde bu kontrolü
+// beklemeden bellek/süre tüketebilir. Bu yüzden akış hâlinde okuyup
+// maxBytes aşılır aşılmaz durduruyoruz. Test amaçlı basit mock yanıtlarda
+// (body.getReader yoksa) arrayBuffer()'a düşer.
+async function readBodyWithLimit(response, maxBytes) {
+  const body = response.body;
+  if (!body || typeof body.getReader !== "function") {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > maxBytes) throw new Error(`Görsel çok büyük (en fazla ${Math.round(maxBytes / 1024 / 1024)}MB).`);
+    return buffer;
+  }
+  const reader = body.getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw new Error(`Görsel çok büyük (en fazla ${Math.round(maxBytes / 1024 / 1024)}MB).`);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+}
+
 // Herkese açık bir HTTPS görsel URL'ini güvenli şekilde indirir: her
 // yönlendirme adımını yeniden SSRF kontrolünden geçirir, Content-Type'ın
 // PNG/JPEG/WebP olduğunu ve boyutun sınırın altında kaldığını doğrular.
@@ -91,8 +155,7 @@ export async function fetchPublicImage(rawUrl, { maxBytes = MAX_MEDIA_BYTES, fet
     }
     const declaredLength = Number(response.headers?.get?.("content-length") || 0);
     if (declaredLength > maxBytes) throw new Error(`Görsel çok büyük (en fazla ${Math.round(maxBytes / 1024 / 1024)}MB).`);
-    const buffer = Buffer.from(await response.arrayBuffer());
-    if (buffer.length > maxBytes) throw new Error(`Görsel çok büyük (en fazla ${Math.round(maxBytes / 1024 / 1024)}MB).`);
+    const buffer = await readBodyWithLimit(response, maxBytes);
     return { buffer, mimeType: contentType };
   }
   throw new Error("Çok fazla yönlendirme.");
