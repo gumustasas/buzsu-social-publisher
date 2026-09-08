@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { assertPublicHttpsUrl, fetchPublicImage, decodeImageBase64, imageExtensionFor, isPrivateIp, extractDriveFileId, normalizeDriveUrl } from "../src/lib/upload-media.js";
+import sharp from "sharp";
+import { assertPublicHttpsUrl, fetchPublicImage, decodeImageBase64, imageExtensionFor, isPrivateIp, extractDriveFileId, normalizeDriveUrl, normalizeImageForMeta } from "../src/lib/upload-media.js";
 
 const TINY_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
@@ -176,4 +177,91 @@ test("normalizeDriveUrl converts a recognized share link into the direct-downloa
 
 test("normalizeDriveUrl throws an explicit error for a Drive URL it cannot extract an ID from, rather than silently falling back to something else", () => {
   assert.throws(() => normalizeDriveUrl("https://drive.google.com/drive/folders/1P3wglUsB9s_RubZv8MTrpBp-0GipGBfl"), /dosya ID'si çıkarılamadı/);
+});
+
+test("normalizeImageForMeta re-encodes a PNG source into a clean sRGB PNG", async () => {
+  const source = await sharp({ create: { width: 8, height: 8, channels: 3, background: { r: 10, g: 20, b: 30 } } }).png().toBuffer();
+  const { buffer, mimeType } = await normalizeImageForMeta(source, "image/png");
+  assert.equal(mimeType, "image/png");
+  const meta = await sharp(buffer).metadata();
+  assert.equal(meta.format, "png");
+  assert.equal(meta.space, "srgb");
+});
+
+test("normalizeImageForMeta re-encodes a JPEG source and keeps it a JPEG", async () => {
+  const source = await sharp({ create: { width: 8, height: 8, channels: 3, background: { r: 200, g: 50, b: 10 } } }).jpeg().toBuffer();
+  const { buffer, mimeType } = await normalizeImageForMeta(source, "image/jpeg");
+  assert.equal(mimeType, "image/jpeg");
+  const meta = await sharp(buffer).metadata();
+  assert.equal(meta.format, "jpeg");
+  assert.equal(meta.space, "srgb");
+});
+
+test("normalizeImageForMeta converts a CMYK JPEG to sRGB — this is the encoding class Meta's \"image format is not supported\" error is usually caused by", async () => {
+  const rgbSource = await sharp({ create: { width: 8, height: 8, channels: 3, background: { r: 120, g: 60, b: 200 } } }).jpeg().toBuffer();
+  const cmykSource = await sharp(rgbSource).toColourspace("cmyk").jpeg().toBuffer();
+  const cmykMeta = await sharp(cmykSource).metadata();
+  assert.equal(cmykMeta.space, "cmyk"); // doğrulama: test girdisi gerçekten CMYK
+
+  const { buffer, mimeType } = await normalizeImageForMeta(cmykSource, "image/jpeg");
+  assert.equal(mimeType, "image/jpeg");
+  const meta = await sharp(buffer).metadata();
+  assert.equal(meta.space, "srgb");
+});
+
+test("normalizeImageForMeta converts WebP to PNG since Meta's WebP support for feed/story posts is unreliable", async () => {
+  const source = await sharp({ create: { width: 8, height: 8, channels: 3, background: { r: 5, g: 5, b: 5 } } }).webp().toBuffer();
+  const { buffer, mimeType } = await normalizeImageForMeta(source, "image/webp");
+  assert.equal(mimeType, "image/png");
+  const meta = await sharp(buffer).metadata();
+  assert.equal(meta.format, "png");
+});
+
+test("normalizeImageForMeta bakes EXIF orientation into pixels instead of leaving it as metadata a picky consumer might ignore", async () => {
+  const base = await sharp({ create: { width: 4, height: 8, channels: 3, background: { r: 1, g: 2, b: 3 } } }).jpeg().withMetadata({ orientation: 6 }).toBuffer();
+  const { buffer } = await normalizeImageForMeta(base, "image/jpeg");
+  const meta = await sharp(buffer).metadata();
+  assert.equal(meta.width, 8);
+  assert.equal(meta.height, 4);
+  assert.equal(meta.orientation, undefined);
+});
+
+test("normalizeImageForMeta rejects when re-encoding produces a file larger than the byte limit", async () => {
+  const source = await sharp({ create: { width: 50, height: 50, channels: 3, background: { r: 10, g: 20, b: 30 } } }).png().toBuffer();
+  await assert.rejects(() => normalizeImageForMeta(source, "image/png", { maxBytes: 10 }), /çok büyük/);
+});
+
+test("normalizeImageForMeta rejects corrupt/non-decodable bytes instead of silently producing garbage output", async () => {
+  const garbage = Buffer.from("bu gerçek bir görsel değil, düz metin baytları");
+  await assert.rejects(() => normalizeImageForMeta(garbage, "image/jpeg"));
+  await assert.rejects(() => normalizeImageForMeta(garbage, "image/png"));
+});
+
+test("normalizeImageForMeta rejects a truncated/partially-downloaded JPEG rather than accepting a broken file", async () => {
+  const full = await sharp({ create: { width: 40, height: 40, channels: 3, background: { r: 90, g: 90, b: 90 } } }).jpeg().toBuffer();
+  const truncated = full.subarray(0, Math.floor(full.length / 3));
+  await assert.rejects(() => normalizeImageForMeta(truncated, "image/jpeg"));
+});
+
+test("fetchPublicImage does not mistake an HTML response (e.g. Google Drive's viewer/interstitial page) for an image — this is the exact failure mode Drive share links can hit", async () => {
+  const lookup = async () => [{ address: "93.184.216.34" }];
+  const fetchImpl = async () => ({
+    ok: true, status: 200,
+    headers: { get: (name) => (name === "content-type" ? "text/html; charset=utf-8" : null) },
+    arrayBuffer: async () => new TextEncoder().encode("<html><body>Google Drive virüs taraması yapamadı</body></html>").buffer
+  });
+  await assert.rejects(() => fetchPublicImage("https://drive.google.com/uc?export=download&id=abc", { fetchImpl, lookup }), /Desteklenmeyen görsel tipi: text\/html/);
+});
+
+test("normalizeImageForMeta produces a file that is genuinely re-decodable with the expected pixel dimensions and the declared Content-Type — not just bytes that happen not to throw", async () => {
+  const source = await sharp({ create: { width: 37, height: 21, channels: 3, background: { r: 44, g: 88, b: 132 } } }).jpeg().toBuffer();
+  const { buffer, mimeType } = await normalizeImageForMeta(source, "image/jpeg");
+  assert.equal(mimeType, "image/jpeg");
+  const decoded = await sharp(buffer).raw().toBuffer({ resolveWithObject: true });
+  assert.equal(decoded.info.width, 37);
+  assert.equal(decoded.info.height, 21);
+  assert.equal(decoded.info.channels, 3);
+  // İçerik gerçekten piksel verisi mi (rastgele/boş bayt değil) — orta pikseli örnekle
+  const midPixelOffset = (10 * 37 + 18) * 3;
+  assert.ok(decoded.data[midPixelOffset] !== undefined);
 });
