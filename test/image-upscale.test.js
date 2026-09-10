@@ -85,6 +85,63 @@ test("upscaleImage throws on a non-OK HTTP response, including any detail messag
   );
 });
 
+test("upscaleImage retries a 429 rate-limit response, waiting the seconds Replicate reports, then succeeds", async () => {
+  let attempts = 0;
+  const sleepCalls = [];
+  const fetchImpl = async () => {
+    attempts += 1;
+    if (attempts === 1) {
+      return jsonResponse(
+        { detail: "Request was throttled. Your rate limit for creating predictions is reduced to 6 requests per minute with a burst of 1 requests while you have less than $5.0 in credit. Your rate limit resets in ~7s." },
+        { ok: false, status: 429 }
+      );
+    }
+    return jsonResponse({ status: "succeeded", output: "https://replicate.delivery/retried.png" });
+  };
+  const result = await upscaleImage(SAMPLE_BUFFER, "image/png", {
+    apiToken: "tok",
+    fetchImpl,
+    sleepImpl: async (ms) => { sleepCalls.push(ms); }
+  });
+  assert.equal(result, "https://replicate.delivery/retried.png");
+  assert.equal(attempts, 2, "must retry the POST after the 429, not give up immediately");
+  assert.deepEqual(sleepCalls, [7000], "must wait the ~7s Replicate reported before retrying");
+});
+
+test("upscaleImage falls back to a default wait when the 429 detail has no parseable reset time", async () => {
+  let attempts = 0;
+  const sleepCalls = [];
+  const fetchImpl = async () => {
+    attempts += 1;
+    if (attempts === 1) return jsonResponse({ detail: "Request was throttled." }, { ok: false, status: 429 });
+    return jsonResponse({ status: "succeeded", output: "https://replicate.delivery/retried.png" });
+  };
+  await upscaleImage(SAMPLE_BUFFER, "image/png", {
+    apiToken: "tok",
+    fetchImpl,
+    sleepImpl: async (ms) => { sleepCalls.push(ms); }
+  });
+  assert.deepEqual(sleepCalls, [5000]);
+});
+
+test("upscaleImage gives up after exhausting rate-limit retries and throws the 429 detail", async () => {
+  let attempts = 0;
+  const fetchImpl = async () => {
+    attempts += 1;
+    return jsonResponse({ detail: "Your rate limit resets in ~7s." }, { ok: false, status: 429 });
+  };
+  await assert.rejects(
+    () => upscaleImage(SAMPLE_BUFFER, "image/png", {
+      apiToken: "tok",
+      fetchImpl,
+      sleepImpl: async () => {},
+      maxRateLimitRetries: 1
+    }),
+    /HTTP 429.*resets in ~7s/s
+  );
+  assert.equal(attempts, 2, "1 initial attempt + 1 retry, then give up");
+});
+
 test("upscaleImage throws if a non-terminal prediction has no poll URL", async () => {
   const fetchImpl = async () => jsonResponse({ status: "starting" });
   await assert.rejects(

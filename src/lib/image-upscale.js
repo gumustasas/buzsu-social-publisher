@@ -11,11 +11,49 @@ const REPLICATE_MODEL = "nightmareai/real-esrgan";
 const DEFAULT_POLL_INTERVAL_MS = 2000;
 const DEFAULT_TIMEOUT_MS = 60000;
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "canceled"]);
+const MAX_RATE_LIMIT_RETRIES = 3;
+const DEFAULT_RATE_LIMIT_RETRY_MS = 5000;
+const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Replicate, hesap bakiyesi düşükken (<$5) veya kısa süreli organik yoğunlukta
+// tahmin oluşturmayı 429 ile hız sınırlayabiliyor — gerçek bir render'da
+// gözlemlendi ("... resets in ~7s"). Yanıt ne kadar beklenmesi gerektiğini
+// söylüyor; bunu ayrıştırıp o kadar bekliyoruz, ayrıştırılamazsa sabit bir
+// süreye düşüyoruz.
+function parseRetryAfterMs(detail) {
+  const match = /resets in ~?(\d+(?:\.\d+)?)s/i.exec(String(detail || ""));
+  if (!match) return DEFAULT_RATE_LIMIT_RETRY_MS;
+  return Math.ceil(Number(match[1]) * 1000);
+}
+
+async function createPrediction(dataUri, { apiToken, fetchImpl, scale, faceEnhance, sleepImpl, maxRetries = MAX_RATE_LIMIT_RETRIES }) {
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetchImpl(`https://api.replicate.com/v1/models/${REPLICATE_MODEL}/predictions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+        "Content-Type": "application/json",
+        Prefer: "wait=30"
+      },
+      body: JSON.stringify({ input: { image: dataUri, scale, face_enhance: faceEnhance } })
+    });
+    if (response.ok) return response.json();
+
+    let detail = "";
+    try { detail = (await response.json())?.detail || ""; } catch { /* gövde olmayabilir */ }
+
+    if (response.status === 429 && attempt < maxRetries) {
+      await sleepImpl(parseRetryAfterMs(detail));
+      continue;
+    }
+    throw new Error(`Replicate API hatası (HTTP ${response.status})${detail ? `: ${detail}` : "."}`);
+  }
+}
 
 async function pollUntilTerminal(prediction, {
   apiToken,
   fetchImpl,
-  sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  sleepImpl = defaultSleep,
   nowImpl = Date.now,
   pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
   timeoutMs = DEFAULT_TIMEOUT_MS
@@ -44,31 +82,17 @@ export async function upscaleImage(buffer, mimeType, {
   fetchImpl = fetch,
   scale = 4,
   faceEnhance = false,
-  sleepImpl,
+  sleepImpl = defaultSleep,
   nowImpl,
   pollIntervalMs,
-  timeoutMs
+  timeoutMs,
+  maxRateLimitRetries
 } = {}) {
   if (!apiToken) throw new Error("REPLICATE_API_TOKEN tanımlı değil — görsel büyütme yapılamaz.");
   if (!Buffer.isBuffer(buffer) || !buffer.length) throw new Error("Geçerli bir görsel arabelleği gerekli.");
 
   const dataUri = `data:${mimeType};base64,${buffer.toString("base64")}`;
-  const response = await fetchImpl(`https://api.replicate.com/v1/models/${REPLICATE_MODEL}/predictions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiToken}`,
-      "Content-Type": "application/json",
-      Prefer: "wait=30"
-    },
-    body: JSON.stringify({ input: { image: dataUri, scale, face_enhance: faceEnhance } })
-  });
-  if (!response.ok) {
-    let detail = "";
-    try { detail = (await response.json())?.detail || ""; } catch { /* gövde olmayabilir */ }
-    throw new Error(`Replicate API hatası (HTTP ${response.status})${detail ? `: ${detail}` : "."}`);
-  }
-
-  const initial = await response.json();
+  const initial = await createPrediction(dataUri, { apiToken, fetchImpl, scale, faceEnhance, sleepImpl, maxRetries: maxRateLimitRetries });
   const finalPrediction = TERMINAL_STATUSES.has(initial.status)
     ? initial
     : await pollUntilTerminal(initial, { apiToken, fetchImpl, sleepImpl, nowImpl, pollIntervalMs, timeoutMs });
