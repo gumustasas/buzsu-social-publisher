@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { publishInstagram, publishFacebook, publishX, parseMediaItems } from "../src/publish-approved.js";
+import { publishInstagram, publishFacebook, publishX, publishYouTube, parseMediaItems } from "../src/publish-approved.js";
 
 const originalEnv = {
   META_ACCESS_TOKEN: process.env.META_ACCESS_TOKEN,
@@ -327,4 +327,80 @@ test("publishX skips a Carousel draft without posting anything (no partial/degra
   } finally {
     global.fetch = originalFetch;
   }
+});
+
+function fakeYouTubeResponse({ ok = true, status = 200, json = {}, headers = {} } = {}) {
+  return { ok, status, json: async () => json, headers: { get: (name) => headers[name.toLowerCase()] ?? null } };
+}
+
+const YOUTUBE_ENV = { YOUTUBE_CLIENT_ID: "client-id", YOUTUBE_CLIENT_SECRET: "client-secret", YOUTUBE_REFRESH_TOKEN: "refresh-token" };
+
+function withYouTubeEnv(run) {
+  const original = { ...process.env };
+  Object.assign(process.env, YOUTUBE_ENV);
+  return run().finally(() => {
+    for (const key of Object.keys(YOUTUBE_ENV)) delete process.env[key];
+    Object.assign(process.env, original);
+  });
+}
+
+// publishYouTube, "Hashtagler" alanını (Instagram/Facebook metnine eklenen
+// serbest metnin YANINDA, ayrıca) YouTube'un videos.insert snippet.tags
+// dizisine de çevirip geçiriyor mu — # işaretleri temizlenmiş, boşluğa göre
+// ayrılmış anahtar kelimeler olarak (bkz. src/publish-approved.js
+// hashtagsToTags).
+test("publishYouTube converts Hashtagler into YouTube's snippet.tags array (# stripped, space-separated)", async () => {
+  await withYouTubeEnv(async () => {
+    const originalFetch = global.fetch;
+    let initBody;
+    global.fetch = async (url, options = {}) => {
+      const u = String(url);
+      if (u === "https://blob.vercel-storage.com/ultramag.mp4") return { ok: true, arrayBuffer: async () => new Uint8Array([1, 2]).buffer };
+      if (u === "https://oauth2.googleapis.com/token") return fakeYouTubeResponse({ json: { access_token: "access-123" } });
+      if (u.startsWith("https://www.googleapis.com/upload/youtube/v3/videos")) {
+        initBody = JSON.parse(options.body);
+        return fakeYouTubeResponse({ headers: { location: "https://upload.example.com/session-xyz" } });
+      }
+      if (u === "https://upload.example.com/session-xyz") return fakeYouTubeResponse({ json: { id: "yt_video_1" } });
+      throw new Error(`beklenmeyen istek: ${u}`);
+    };
+    try {
+      const fields = {
+        "Video URL": "https://blob.vercel-storage.com/ultramag.mp4",
+        "Başlık": "UltraMag Kireç Önleyici | Reel",
+        "Instagram Metni": "Ürünü keşfedin",
+        "Hashtagler": "#Buzsu #UltraMag #KireçÖnleyici"
+      };
+      const id = await publishYouTube(fields, "Reel");
+      assert.equal(id, "yt_video_1");
+      assert.deepEqual(initBody.snippet.tags, ["Buzsu", "UltraMag", "KireçÖnleyici"]);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+});
+
+test("publishYouTube passes an empty tags array when Hashtagler is missing/blank", async () => {
+  await withYouTubeEnv(async () => {
+    const originalFetch = global.fetch;
+    let initBody;
+    global.fetch = async (url, options = {}) => {
+      const u = String(url);
+      if (u === "https://blob.vercel-storage.com/v.mp4") return { ok: true, arrayBuffer: async () => new Uint8Array([1]).buffer };
+      if (u === "https://oauth2.googleapis.com/token") return fakeYouTubeResponse({ json: { access_token: "access-123" } });
+      if (u.startsWith("https://www.googleapis.com/upload/youtube/v3/videos")) {
+        initBody = JSON.parse(options.body);
+        return fakeYouTubeResponse({ headers: { location: "https://upload.example.com/session-abc" } });
+      }
+      if (u === "https://upload.example.com/session-abc") return fakeYouTubeResponse({ json: { id: "yt_video_2" } });
+      throw new Error(`beklenmeyen istek: ${u}`);
+    };
+    try {
+      const fields = { "Video URL": "https://blob.vercel-storage.com/v.mp4", "Başlık": "Test", "Instagram Metni": "Metin" };
+      await publishYouTube(fields, "Reel");
+      assert.deepEqual(initBody.snippet.tags, []);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
 });
