@@ -56,9 +56,11 @@ test("composeVideoFrame letterboxes a non-9:16 source instead of hard-cropping i
     return [data[idx], data[idx + 1], data[idx + 2]];
   };
   // A 400x400 source, contain-fit into 1080x1920, scales to exactly 1080x1080
-  // centered vertically (rows 420..1500) — sampling within that band and at
-  // its very edges must show the source's own color unchanged (uncropped).
-  for (const y of [420, 960, 1499]) {
+  // centered vertically (rows 420..1500). Sampling a few rows in from each
+  // edge (not the exact boundary row, which the sharpen pass — see
+  // composeFramedBackground — legitimately edge-enhances) must show the
+  // source's own color unchanged (uncropped, unaltered).
+  for (const y of [425, 960, 1494]) {
     const [r, g, b] = pixelAt(540, y);
     assert.deepEqual([r, g, b], [200, 60, 60], `row ${y} (inside the contain-fit image) must match the source exactly, not be cropped/altered`);
   }
