@@ -138,19 +138,31 @@ const TOOLS = [
   },
   {
     name: "create_draft",
-    description: "Yeni bir taslak içerik oluşturup yayın kuyruğuna ekler. Oluşturulan taslak 'Taslak' durumundadır, onaylanması gerekir.",
+    description: "Yeni bir taslak içerik oluşturup yayın kuyruğuna ekler. Oluşturulan taslak 'Taslak' durumundadır, onaylanması gerekir. Carousel ve Reel AYRI gönderilerdir — aynı videoUrl'i hem bir Carousel taslağının mediaItems'ında hem ayrı bir Reel taslağında (tekrar upload etmeden) kullanmak için create_draft'ı iki kez, farklı format ile çağırın.",
     inputSchema: {
       type: "object",
       properties: {
         productId: { type: "string", description: "Ürün ID'si" },
-        format: { type: "string", enum: ["Gönderi", "Hikâye", "Reel"], description: "Yayın biçimi" },
-        platforms: { type: "array", items: { type: "string", enum: ["Instagram", "Facebook", "X", "YouTube"] }, description: "Hedef platformlar — X metni verilmezse Facebook metni 280 karaktere kısaltılıp kullanılır; YouTube yalnızca format 'Reel' iken (video gerektirir) çalışır." },
+        format: { type: "string", enum: ["Gönderi", "Hikâye", "Reel", "Carousel"], description: "Yayın biçimi. 'Carousel' seçilirse mediaItems ZORUNLU (imageUrl/videoUrl yok sayılır); diğer biçimler eskisi gibi imageUrl/videoUrl kullanır." },
+        platforms: { type: "array", items: { type: "string", enum: ["Instagram", "Facebook", "X", "YouTube"] }, description: "Hedef platformlar — X metni verilmezse Facebook metni 280 karaktere kısaltılıp kullanılır; YouTube yalnızca format 'Reel' iken (video gerektirir) çalışır. Carousel'de Facebook yalnızca mediaItems TAMAMEN görsellerden oluşuyorsa desteklenir — karma (görsel+video) bir Carousel'e Facebook eklenirse taslak oluşturulamaz (UNSUPPORTED_FACEBOOK_MEDIA_COMBINATION); bu durumda videoyu ayrı bir Reel taslağı olarak (aynı videoUrl ile) oluşturun." },
         publishAt: { type: "string", description: "Yayın zamanı (ISO 8601, örn. 2026-09-05T10:00:00Z)" },
         instagramText: { type: "string", description: "Instagram gönderi metni (isteğe bağlı — verilmezse otomatik üretilir)" },
         facebookText: { type: "string", description: "Facebook gönderi metni (isteğe bağlı)" },
         hashtags: { type: "string", description: "Hashtagler (isteğe bağlı, örn. #Buzsu #SuArıtma)" },
-        imageUrl: { type: "string", description: "İsteğe bağlı — verilirse ürünün kayıtlı ana görseli yerine SADECE bu taslak için bu HTTPS görsel URL'i kullanılır (ör. upload_media çıktısı). Ürünün Airtable'daki ana Görsel URL alanı değişmez." },
-        videoUrl: { type: "string", description: "format 'Reel' iken ZORUNLU — herkese açık HTTPS video URL'i (ör. generate_video_clip/get_video_clip_status çıktısındaki videoUrl). Reel'de bu verilmezse taslak oluşturulamaz; YouTube platformu da yalnızca bu alan doluyken çalışır." }
+        imageUrl: { type: "string", description: "İsteğe bağlı — verilirse ürünün kayıtlı ana görseli yerine SADECE bu taslak için bu HTTPS görsel URL'i kullanılır (ör. upload_media çıktısı). Ürünün Airtable'daki ana Görsel URL alanı değişmez. format 'Carousel' iken kullanılmaz (bkz. mediaItems)." },
+        videoUrl: { type: "string", description: "format 'Reel' iken ZORUNLU — herkese açık HTTPS video URL'i (ör. generate_video_clip/get_video_clip_status veya upload_media çıktısındaki URL). Reel'de bu verilmezse taslak oluşturulamaz; YouTube platformu da yalnızca bu alan doluyken çalışır. Aynı videoUrl, tekrar upload edilmeden, bir Carousel taslağının mediaItems'ında (type:'video') AYRICA kullanılabilir — ikisi ayrı gönderi/ayrı create_draft çağrısıdır." },
+        mediaItems: {
+          type: "array",
+          description: "YALNIZCA format 'Carousel' iken kullanılır ve zorunludur. En az 2, en fazla 10 öğe (Instagram sınırı). Her öğe zaten herkese açık bir HTTPS URL'e sahip olmalı (ör. upload_media veya generate_video_clip/get_video_clip_status çıktısı) — burada hiçbir upload yapılmaz. Facebook bu formatta yalnızca tüm öğeler 'image' ise desteklenir.",
+          items: {
+            type: "object",
+            properties: {
+              type: { type: "string", enum: ["image", "video"] },
+              url: { type: "string", description: "Herkese açık HTTPS medya URL'i" }
+            },
+            required: ["type", "url"]
+          }
+        }
       },
       required: ["productId", "format", "platforms", "publishAt"]
     }
@@ -346,7 +358,8 @@ async function callTool(name, args) {
       const draftProduct = {
         ...product,
         ...(typeof args.imageUrl === "string" && args.imageUrl.trim() ? { imageUrl: args.imageUrl.trim() } : {}),
-        ...(typeof args.videoUrl === "string" && args.videoUrl.trim() ? { videoUrl: args.videoUrl.trim() } : {})
+        ...(typeof args.videoUrl === "string" && args.videoUrl.trim() ? { videoUrl: args.videoUrl.trim() } : {}),
+        ...(Array.isArray(args.mediaItems) ? { mediaItems: args.mediaItems } : {})
       };
       const aiCaption = args.instagramText || args.facebookText
         ? { instagramText: args.instagramText || args.facebookText, facebookText: args.facebookText || args.instagramText, hashtags: args.hashtags || "#Buzsu" }
