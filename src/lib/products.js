@@ -61,22 +61,35 @@ export async function listProducts() {
 
 // api/content.js (composer) ve api/autopilot.js (otomatik pilot) aynı alan
 // eşlemesiyle taslak kaydı oluşturur — tek kaynak burasıdır.
+//
+// product.mediaItems ([{type:"image"|"video", url}, ...]) verilirse Carousel
+// taslağıdır: JSON string olarak "Media Items" alanına yazılır, "Görsel URL"
+// paneldeki önizleme için ilk görsel öğeden türetilir (product.imageUrl her
+// zaman öncelikli — Carousel dışı akışları hiç etkilemez).
+// typecast:true yalnızca YENİ bir "Yayın Biçimi" seçeneği (Carousel) ilk kez
+// yazıldığında Airtable'ın bunu otomatik seçenek olarak eklemesi içindir;
+// mevcut alan/seçenek değerlerinin hiçbirini değiştirmez.
 export async function createDraftRecord({ product, draft, format, platforms, publishAt, note }) {
-  return airtableRequest("", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fields: {
-    "Başlık": draft.title,
-    "İçerik Türü": "Ürün",
-    "Kaynak URL": product.url,
-    "Görsel URL": product.imageUrl,
-    ...(product.videoUrl ? { "Video URL": product.videoUrl } : {}),
-    "Instagram Metni": draft.instagramText,
-    "Facebook Metni": draft.facebookText,
-    Hashtagler: draft.hashtags,
-    Platform: platforms,
-    "Yayın Biçimi": format,
-    "Yayın Zamanı": publishAt,
-    Durum: "Taslak",
-    Not: note,
-    "Deneme Sayısı": 0,
-    "Hata Mesajı": ""
-  } }) });
+  const firstMediaImageUrl = Array.isArray(product.mediaItems) ? product.mediaItems.find((item) => item.type === "image")?.url || "" : "";
+  return airtableRequest("", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+    typecast: true,
+    fields: {
+      "Başlık": draft.title,
+      "İçerik Türü": "Ürün",
+      "Kaynak URL": product.url,
+      "Görsel URL": product.imageUrl || firstMediaImageUrl,
+      ...(product.videoUrl ? { "Video URL": product.videoUrl } : {}),
+      ...(Array.isArray(product.mediaItems) ? { "Media Items": JSON.stringify(product.mediaItems) } : {}),
+      "Instagram Metni": draft.instagramText,
+      "Facebook Metni": draft.facebookText,
+      Hashtagler: draft.hashtags,
+      Platform: platforms,
+      "Yayın Biçimi": format,
+      "Yayın Zamanı": publishAt,
+      Durum: "Taslak",
+      Not: note,
+      "Deneme Sayısı": 0,
+      "Hata Mesajı": ""
+    }
+  }) });
 }

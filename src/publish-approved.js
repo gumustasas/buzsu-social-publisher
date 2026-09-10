@@ -16,7 +16,13 @@ const storyImageBaseUrl = process.env.STORY_IMAGE_BASE_URL || "";
 const airtableBaseId = AIRTABLE_BASE_ID;
 const airtableTableId = AIRTABLE_TABLE_ID;
 const required = ["META_ACCESS_TOKEN", "META_FACEBOOK_PAGE_ACCESS_TOKEN", "META_INSTAGRAM_ACCOUNT_ID", "META_FACEBOOK_PAGE_ID", "AIRTABLE_TOKEN"];
-const airtableFields = ["Başlık", "Kaynak URL", "Görsel URL", "Video URL", "Instagram Metni", "Facebook Metni", "X Metni", "Hashtagler", "Platform", "Yayın Biçimi", "Yayın Zamanı", "Durum", "Not", "Deneme Sayısı", "Instagram Yayın ID", "Facebook Yayın ID", "X Yayın ID", "YouTube Video ID", "Hata Mesajı"];
+const airtableFields = ["Başlık", "Kaynak URL", "Görsel URL", "Video URL", "Media Items", "Instagram Metni", "Facebook Metni", "X Metni", "Hashtagler", "Platform", "Yayın Biçimi", "Yayın Zamanı", "Durum", "Not", "Deneme Sayısı", "Instagram Yayın ID", "Facebook Yayın ID", "X Yayın ID", "YouTube Video ID", "Hata Mesajı"];
+// Facebook'un resmi Graph API'si tek bir /feed gönderisinde görsel+video
+// karışımını güvenilir desteklemiyor (attached_media içine video ID
+// konulunca izin hatası veriyor) — bu yüzden zorlanmıyor, açık hata dönülüyor.
+// Aynı metin content-worker.js'teki draft-oluşturma-anı uyarısında da
+// kullanılıyor; burada ayrıca yayın anında (defense-in-depth) tekrarlanıyor.
+const FACEBOOK_MIXED_MEDIA_ERROR = "UNSUPPORTED_FACEBOOK_MEDIA_COMBINATION: Facebook mixed image/video feed publication is not enabled. Publish images as a multi-photo post and the video as a separate Reel.";
 // X (Twitter) 280 karakter sınırı var; t.co her URL'i uzunluğuna bakmaksızın
 // 23 karaktere sarıyor — geri kalan metni buna göre kısaltıyoruz.
 const X_MAX_CHARS = 280;
@@ -37,6 +43,17 @@ function requireHttpsUrl(value, label) {
 }
 
 const joinText = (...values) => values.filter(Boolean).join("\n\n").trim();
+
+// "Media Items" alanı Airtable'da JSON string olarak saklanır (bkz.
+// src/lib/products.js createDraftRecord) — burada Carousel yayınlanırken
+// geri çözülür. Bozuk/eksik veri sessizce yutulmaz, açık hata fırlatılır.
+export function parseMediaItems(raw) {
+  if (!raw) return [];
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { throw new Error("Media Items alanı geçerli bir JSON dizisi değil."); }
+  if (!Array.isArray(parsed)) throw new Error("Media Items alanı bir dizi olmalı.");
+  return parsed;
+}
 
 function storyImageUrl(source, fields) {
   requireHttpsUrl(source, "Görsel URL");
@@ -129,8 +146,40 @@ async function publishInstagramReel(fields) {
   return published.id;
 }
 
-async function publishInstagram(fields, format) {
+// Instagram carousel: her mediaItems öğesi için ayrı bir child container
+// oluşturulur (is_carousel_item:true). Child'lar hiçbir zaman REELS değildir
+// — video child'lar normal VIDEO media_type ile oluşturulur (Meta: carousel
+// child'ları Reels olamaz). Görsel processing hızlı olduğundan varsayılan
+// bekleme (waitForInstagramContainer'ın default'u) kullanılır; video
+// child'lar Reel'deki gibi çok daha uzun sürebileceğinden aynı uzun timeout
+// (60 deneme × 5sn) burada da uygulanır. Parent container children'ları
+// zaten işlenmiş olduğundan aggregation hızlıdır, varsayılan bekleme yeterli.
+async function publishInstagramCarousel(fields) {
+  const mediaItems = parseMediaItems(fields["Media Items"]);
+  if (mediaItems.length < 2) throw new Error("Carousel için Media Items alanında en az 2 medya öğesi olmalı.");
+  const caption = joinText(fields["Instagram Metni"], fields["Hashtagler"]);
+  if (!caption) throw new Error("Instagram metni boş.");
+  const accountId = process.env.META_INSTAGRAM_ACCOUNT_ID;
+  const childIds = [];
+  for (const item of mediaItems) {
+    requireHttpsUrl(item.url, "Media Items URL");
+    const isVideo = item.type === "video";
+    const params = isVideo
+      ? { media_type: "VIDEO", video_url: item.url, is_carousel_item: "true" }
+      : { image_url: item.url, is_carousel_item: "true" };
+    const child = await graphPost(`${accountId}/media`, params);
+    await waitForInstagramContainer(child.id, isVideo ? { attempts: 60, intervalMs: 5000 } : undefined);
+    childIds.push(child.id);
+  }
+  const parent = await graphPost(`${accountId}/media`, { media_type: "CAROUSEL", children: childIds.join(","), caption });
+  await waitForInstagramContainer(parent.id);
+  const published = await graphPost(`${accountId}/media_publish`, { creation_id: parent.id });
+  return published.id;
+}
+
+export async function publishInstagram(fields, format) {
   if (format === "Reel") return publishInstagramReel(fields);
+  if (format === "Carousel") return publishInstagramCarousel(fields);
   requireHttpsUrl(fields["Görsel URL"], "Görsel URL");
   const params = { image_url: format === "Hikâye" ? storyImageUrl(fields["Görsel URL"], fields) : fields["Görsel URL"] };
   if (format === "Hikâye") params.media_type = "STORIES";
@@ -173,8 +222,37 @@ async function publishFacebookReel(fields) {
   return started.video_id;
 }
 
-async function publishFacebook(fields, format) {
+// Facebook carousel: yalnızca GÖRSEL-ONLY kombinasyonlar destekleniyor.
+// Meta'nın resmi Graph API'si tek bir /feed gönderisinde attached_media
+// içine video ID koyulmasını güvenilir desteklemiyor (izin hatası) — bu
+// yüzden mixed media zorlanmıyor, açık ve anlaşılır bir hatayla reddediliyor
+// (content-worker.js buildDraft() zaten bunu draft oluşturma anında da
+// engelliyor; bu kontrol ikinci bir güvenlik ağı — ör. kayıt dashboard'dan
+// elle değiştirilmiş olabilir). Her görsel önce yayınlanmamış bir "photo"
+// olarak yüklenir (published:false), dönen photo id'ler attached_media
+// dizisine media_fbid olarak verilip TEK bir /feed gönderisi oluşturulur.
+async function publishFacebookCarousel(fields) {
+  const mediaItems = parseMediaItems(fields["Media Items"]);
+  if (mediaItems.length < 2) throw new Error("Carousel için Media Items alanında en az 2 medya öğesi olmalı.");
+  if (mediaItems.some((item) => item.type === "video")) throw new Error(FACEBOOK_MIXED_MEDIA_ERROR);
+  const token = process.env.META_FACEBOOK_PAGE_ACCESS_TOKEN;
+  const pageId = process.env.META_FACEBOOK_PAGE_ID;
+  const message = joinText(fields["Facebook Metni"], fields["Hashtagler"]);
+  if (!message) throw new Error("Facebook metni boş.");
+  const photoIds = [];
+  for (const item of mediaItems) {
+    requireHttpsUrl(item.url, "Media Items URL");
+    const uploaded = await graphPost(`${pageId}/photos`, { url: item.url, published: "false" }, token);
+    photoIds.push(uploaded.id);
+  }
+  const attachedMediaParams = Object.fromEntries(photoIds.map((id, index) => [`attached_media[${index}]`, JSON.stringify({ media_fbid: id })]));
+  const published = await graphPost(`${pageId}/feed`, { message, ...attachedMediaParams }, token);
+  return published.id;
+}
+
+export async function publishFacebook(fields, format) {
   if (format === "Reel") return publishFacebookReel(fields);
+  if (format === "Carousel") return publishFacebookCarousel(fields);
   requireHttpsUrl(fields["Görsel URL"], "Görsel URL");
   const token = process.env.META_FACEBOOK_PAGE_ACCESS_TOKEN;
   if (format === "Hikâye") {

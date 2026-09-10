@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { listProducts } from "../src/lib/products.js";
+import { listProducts, createDraftRecord } from "../src/lib/products.js";
 
 const LLMS_FULL_SAMPLE = `
 #### ⭐ Ana Ürün: UltraMag Manyetik Kireç Önleyici
@@ -54,6 +54,51 @@ test("listProducts falls back to the Airtable draft title when the product has n
     const products = await listProducts();
     const match = products.find((p) => p.url === "https://www.buzsu.com.tr/code-su-aritma-cihazi/");
     assert.equal(match.title, "Code Su Arıtma Cihazı");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("createDraftRecord writes an existing single-image draft exactly as before (no Media Items field, no behavior change)", async () => {
+  const originalFetch = global.fetch;
+  let capturedBody;
+  global.fetch = async (url, options) => {
+    capturedBody = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ id: "recNEW1", fields: capturedBody.fields }) };
+  };
+  try {
+    const product = { url: "https://www.buzsu.com.tr/code-su-aritma-cihazi/", imageUrl: "https://example.com/code.png" };
+    const draft = { title: "Code | Gönderi", instagramText: "ig", facebookText: "fb", hashtags: "#Buzsu" };
+    await createDraftRecord({ product, draft, format: "Gönderi", platforms: ["Instagram"], publishAt: "2026-08-20T10:00:00.000Z", note: "test" });
+    assert.equal(capturedBody.typecast, true);
+    assert.equal(capturedBody.fields["Görsel URL"], "https://example.com/code.png");
+    assert.equal(capturedBody.fields["Yayın Biçimi"], "Gönderi");
+    assert.ok(!("Media Items" in capturedBody.fields), "tekil görsel taslağında Media Items alanı hiç yazılmamalı");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("createDraftRecord writes mediaItems as a JSON string in the Media Items field for a Carousel draft", async () => {
+  const originalFetch = global.fetch;
+  let capturedBody;
+  global.fetch = async (url, options) => {
+    capturedBody = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ id: "recNEW2", fields: capturedBody.fields }) };
+  };
+  try {
+    const mediaItems = [
+      { type: "image", url: "https://blob.vercel-storage.com/img1.jpg" },
+      { type: "image", url: "https://blob.vercel-storage.com/img2.jpg" },
+      { type: "video", url: "https://blob.vercel-storage.com/video.mp4" }
+    ];
+    const product = { url: "https://www.buzsu.com.tr/code-su-aritma-cihazi/", mediaItems };
+    const draft = { title: "Code | Carousel", instagramText: "ig", facebookText: "fb", hashtags: "#Buzsu" };
+    await createDraftRecord({ product, draft, format: "Carousel", platforms: ["Instagram"], publishAt: "2026-08-20T10:00:00.000Z", note: "test" });
+    assert.equal(capturedBody.fields["Yayın Biçimi"], "Carousel");
+    assert.equal(capturedBody.fields["Media Items"], JSON.stringify(mediaItems));
+    // Panel önizlemesi için ilk görsel öğeden türetilmiş bir "Görsel URL" olmalı.
+    assert.equal(capturedBody.fields["Görsel URL"], "https://blob.vercel-storage.com/img1.jpg");
   } finally {
     global.fetch = originalFetch;
   }
