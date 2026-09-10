@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { publishInstagram, publishFacebook, parseMediaItems } from "../src/publish-approved.js";
+import { publishInstagram, publishFacebook, publishX, parseMediaItems } from "../src/publish-approved.js";
 
 const originalEnv = {
   META_ACCESS_TOKEN: process.env.META_ACCESS_TOKEN,
@@ -298,4 +298,33 @@ test("the same Video URL is reused, unmodified, across an Instagram Reel and a F
       assert.ok(calls.some((call) => call.url.includes("rupload.facebook.com")));
     }
   );
+});
+
+// Regresyon (PR #36 review bulgusu — Codex): publishX önceden Carousel'i
+// "Reel dışı her şey" dalına düşürüp mediaItems'ı yok sayarak SADECE
+// "Görsel URL" alanındaki tek önizleme görseliyle normal bir tweet
+// atıyordu — kayıt "Paylaşıldı" işaretleniyordu ama carousel'in geri kalan
+// görselleri/videosu X'e hiç paylaşılmamış oluyordu. X (bu entegrasyonda)
+// çoklu medya desteklemediği için Reel'deki video atlama deseniyle aynı
+// şekilde sessizce (hatasız) atlanmalı.
+test("publishX skips a Carousel draft without posting anything (no partial/degraded tweet with just the first mediaItem), matching how it already skips Reel", async () => {
+  const originalFetch = global.fetch;
+  let fetchCalled = false;
+  global.fetch = async () => { fetchCalled = true; throw new Error("publishX Carousel'de hiçbir fetch çağrısı yapmamalı"); };
+  try {
+    const fields = {
+      "Görsel URL": "https://blob.vercel-storage.com/img1.jpg",
+      "Facebook Metni": "Karma carousel",
+      "Media Items": JSON.stringify([
+        { type: "image", url: "https://blob.vercel-storage.com/img1.jpg" },
+        { type: "image", url: "https://blob.vercel-storage.com/img2.jpg" },
+        { type: "video", url: "https://blob.vercel-storage.com/video.mp4" }
+      ])
+    };
+    const result = await publishX(fields, "Carousel");
+    assert.equal(result, null);
+    assert.equal(fetchCalled, false);
+  } finally {
+    global.fetch = originalFetch;
+  }
 });

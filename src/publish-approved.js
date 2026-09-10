@@ -279,8 +279,14 @@ function buildXText(fields) {
 
 // Video (Reel) desteklenmiyor — X'te chunked medya yüklemesi gerektiriyor,
 // bkz. src/x-publish.js. Bu formatta X sessizce atlanır (hata değil).
-async function publishX(fields, format) {
-  if (format === "Reel") return null;
+// X (Twitter) API entegrasyonu çoklu medya/carousel paylaşımını desteklemiyor.
+// Carousel'i buradan sessizce (hata vermeden) atlıyoruz — Reel'in video
+// atlanma mantığıyla aynı desen — aksi hâlde "Görsel URL" alanındaki tek
+// önizleme görseliyle sessizce normal bir tweet atılır, mediaItems'taki
+// diğer görseller/video hiç paylaşılmadığı hâlde kayıt "Paylaşıldı" gibi
+// işaretlenmiş olur (bkz. PR #36 review — Codex).
+export async function publishX(fields, format) {
+  if (format === "Reel" || format === "Carousel") return null;
   const imageUrl = fields["Görsel URL"] && /^https:\/\//i.test(fields["Görsel URL"]) ? fields["Görsel URL"] : undefined;
   return publishTweet({ text: buildXText(fields), imageUrl });
 }
