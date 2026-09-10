@@ -53,6 +53,21 @@ jobs:
       - run: npm ci
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      # GEÇİCİ TEŞHİS: iki gerçek render arka arkaya "No space left on device"
+      # ile düştü. RUNNER_TEMP'e geçmek yardımcı olmayabilir (ubuntu-latest'te
+      # /tmp ve RUNNER_TEMP aynı kök dosya sistemi olabilir) — bu adım gerçek
+      # disk durumunu (ve hangi bölümün gerçekten dolduğunu) görmek için;
+      # kök nedeni doğruladıktan sonra kaldırılacak.
+      - name: Disk durumu (teşhis)
+        run: |
+          echo "RUNNER_TEMP=$RUNNER_TEMP"
+          df -h
+          echo "--- /tmp'in bulunduğu aygıt ---"
+          stat -f /tmp
+          echo "--- RUNNER_TEMP'in bulunduğu aygıt ---"
+          stat -f "$RUNNER_TEMP"
+          echo "--- En büyük dizinler (/usr, /opt) ---"
+          du -sh /usr/* /opt/* 2>/dev/null | sort -rh | head -20 || true
       - name: Render video
         env:
           JOB_ID: ${{ inputs.jobId }}
