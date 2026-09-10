@@ -62,3 +62,50 @@ export function clearLease(fields, event) {
 export function isKnownStatus(value) {
   return ACTIVE_STATUSES.has(value);
 }
+
+const MEDIA_ITEM_TYPES = new Set(["image", "video"]);
+
+// Airtable "Media Items" alanı bir JSON string'dir (bkz. src/lib/products.js
+// createDraftRecord, src/publish-approved.js parseMediaItems). O parser
+// YAYIN ANINDA bilinçli olarak throw ediyor (bozuk kayıt yayını durdurmalı).
+// Burada tam tersi gerekiyor: panel kuyruğu (api/queue.js) ve get_draft
+// (api/mcp.js) SALT-OKUNUR yollar — tek bir bozuk/eski kayıt yüzünden tüm
+// kuyruk listesi veya bir get_draft çağrısı asla çökmemeli. Bu yüzden ayrı,
+// hiçbir zaman throw etmeyen bir parser: geçersiz JSON/dizi/öğe sessizce
+// filtrelenir, kısa bir `warning` ile birlikte döner.
+export function parseMediaItemsSafe(raw) {
+  if (!raw) return { mediaItems: [], warning: null };
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { mediaItems: [], warning: "Media Items alanı geçerli bir JSON dizisi değil." };
+  }
+  if (!Array.isArray(parsed)) return { mediaItems: [], warning: "Media Items alanı bir dizi değil." };
+  const mediaItems = parsed.filter((item) => item && MEDIA_ITEM_TYPES.has(item.type) && typeof item.url === "string" && item.url);
+  const warning = mediaItems.length !== parsed.length ? "Media Items içinde bazı öğeler eksik/geçersiz biçimde, atlandı." : null;
+  return { mediaItems, warning };
+}
+
+// api/queue.js (panel) ve api/mcp.js (get_draft MCP aracı) aynı Airtable
+// kaydını iki farklı şekle çeviriyordu — bu, ikisinin de ihtiyaç duyduğu
+// çekirdek alanları (Carousel dahil) tek bir yerden üretir; her çağıran
+// kendi ek alanlarını (events, isArchived, vb.) üstüne ekleyebilir.
+export function normalizeDraftFields(fields) {
+  const { mediaItems, warning } = parseMediaItemsSafe(fields["Media Items"]);
+  return {
+    title: fields["Başlık"] || "Başlıksız içerik",
+    status: fields.Durum || "Taslak",
+    format: fields["Yayın Biçimi"] || "Gönderi",
+    platforms: fields.Platform || [],
+    publishAt: fields["Yayın Zamanı"] || null,
+    instagramText: fields["Instagram Metni"] || "",
+    facebookText: fields["Facebook Metni"] || "",
+    hashtags: fields.Hashtagler || "",
+    imageUrl: fields["Görsel URL"] || "",
+    videoUrl: fields["Video URL"] || "",
+    mediaItems,
+    mediaCount: mediaItems.length,
+    ...(warning ? { mediaItemsWarning: warning } : {})
+  };
+}
