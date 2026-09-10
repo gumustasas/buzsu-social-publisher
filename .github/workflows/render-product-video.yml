@@ -46,13 +46,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      # Kök diskin zaten ~82% dolu başlaması (önceden kurulu dotnet/android
-      # gibi SDK'lardan) gerçek bir sorun ve bu adım onu düzeltiyor — ama bir
-      # gerçek render'da ~22G boşaltmasına rağmen ffmpeg AYNI noktada AYNI
-      # "No space left on device" hatasıyla düşmeyi sürdürdü (35G boşken).
-      # Yani bu artık ANA düzeltme değil, sadece genel runner hijyeni: gerçek
-      # kök neden hâlâ araştırılıyor (bkz. aşağıdaki teşhis adımları).
-      - name: Kullanılmayan SDK'ları silerek disk alanı serbest bırak (runner hijyeni)
+      - name: Kullanılmayan SDK'ları silerek disk alanı serbest bırak
         run: |
           echo "Öncesi:"; df -h /
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL 2>/dev/null || true
@@ -62,72 +56,14 @@ jobs:
           node-version: "24"
           cache: npm
       - run: npm ci
-      - name: Install ffmpeg + strace
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg strace
-      # İki gerçek render de kök disk boşken bile AYNI noktada (~16.5sn,
-      # frame ~477-495 — matematiksel olarak son ürün geçişinden SONRAKİ
-      # kapanış sahnesinin kuyruğu / -movflags +faststart'ın moov atom'u
-      # dosya başına taşımak için yaptığı ikinci geçiş) çöktü. Bu adım kök
-      # disk kapasitesi DIŞINDAKİ sabit boyutlu kaynakları (özellikle
-      # /dev/shm, bellek, ulimit) ffmpeg çalışmadan ÖNCE kaydediyor.
-      - name: Kaynak teşhisi (shm/bellek/limit/mount, render öncesi)
-        run: |
-          echo "=== FILESYSTEMS ==="
-          df -hT
-          df -i
-          echo "=== SHM ==="
-          df -hT /dev/shm || true
-          df -i /dev/shm || true
-          mount | grep shm || true
-          echo "=== MEMORY ==="
-          free -h
-          head -30 /proc/meminfo
-          echo "=== LIMITS ==="
-          ulimit -a
-          echo "=== MOUNTS ==="
-          findmnt
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Render video
         env:
           JOB_ID: ${{ inputs.jobId }}
           BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
           REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
-        run: |
-          set +e
-          # Render sırasında /dev/shm ve kök diski her saniye örnekle — hata
-          # anında hangisinin gerçekten tükendiğini (ya da tükenmediğini)
-          # yakalamak için.
-          (
-            while true; do
-              echo "--- izleme $(date +%T.%N) ---"
-              df -h / /dev/shm 2>/dev/null
-              du -sh /dev/shm 2>/dev/null
-              ls -lah /dev/shm 2>/dev/null
-              sleep 1
-            done
-          ) > /tmp/resource-monitor.log 2>&1 &
-          MONITOR_PID=$!
-          # ENOSPC'nin GERÇEKTEN hangi syscall + hangi path üzerinde geldiğini
-          # yakalamak için ffmpeg'i (execFile ile spawn edilen alt süreç dahil,
-          # -f ile) strace altında çalıştırıyoruz.
-          strace -f -tt -e trace=openat,write,pwrite64,unlink,ftruncate,fallocate,lseek -o /tmp/strace.log -- node scripts/render-product-video.mjs
-          EXIT_CODE=$?
-          kill "$MONITOR_PID" 2>/dev/null
-          wait "$MONITOR_PID" 2>/dev/null
-          echo "=== Kaynak izleme (son 40 satır) ==="
-          tail -n 40 /tmp/resource-monitor.log
-          echo "=== strace: ENOSPC eşleşmeleri ==="
-          grep -n "ENOSPC" /tmp/strace.log | tail -n 40 || echo "ENOSPC eşleşmesi bulunamadı"
-          echo "=== strace: son 80 satır (hata civarı) ==="
-          tail -n 80 /tmp/strace.log
-          exit $EXIT_CODE
-      # Cleanup adımının gerçekten yeterli alan açtığını ve /dev/shm'in
-      # render sonrasında ne durumda olduğunu doğrulamak için — render
-      # başarısız olsa bile (if: always()) çalışır.
-      - name: Disk/shm durumu (render sonrası)
+        run: node scripts/render-product-video.mjs
+      - name: Disk durumu (render sonrası)
         if: always()
-        run: |
-          df -hT
-          echo "--- /dev/shm ---"
-          df -hT /dev/shm || true
-          du -sh /dev/shm 2>/dev/null || true
-          ls -lah /dev/shm 2>/dev/null || true
+        run: df -hT

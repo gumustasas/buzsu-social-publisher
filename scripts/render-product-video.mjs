@@ -8,7 +8,7 @@ import { put } from "@vercel/blob";
 import { readVideoJobStatus, writeVideoJobStatus } from "../src/lib/video-jobs.js";
 import { fetchPublicImage, fetchPublicAudio } from "../src/lib/upload-media.js";
 import { composeVideoFrame, composeClosingScene } from "../src/post-branding.js";
-import { buildFfmpegArgs } from "../src/lib/ffmpeg-command.js";
+import { buildTwoPassFfmpegArgs } from "../src/lib/ffmpeg-command.js";
 import { upscaleImage } from "../src/lib/image-upscale.js";
 
 const execFileAsync = promisify(execFile);
@@ -134,7 +134,7 @@ async function run() {
     }
 
     const outputPath = path.join(workDir, "output.mp4");
-    const { args, totalDurationSeconds } = buildFfmpegArgs({
+    const { clipRenders, concatArgs, totalDurationSeconds } = buildTwoPassFfmpegArgs({
       frames,
       closingFrame: { path: closingPath },
       durationPerImageSeconds,
@@ -142,19 +142,29 @@ async function run() {
       transitionDurationSeconds,
       musicPath,
       musicVolume,
+      clipDir: workDir,
       outputPath
     });
 
-    console.log("ffmpeg çalıştırılıyor:", ["ffmpeg", ...args].join(" "));
+    // Pass 1: Her klibi ayrı render et — tek zoompan filtresi, düşük bellek
+    for (let i = 0; i < clipRenders.length; i++) {
+      console.log(`[Klip ${i + 1}/${clipRenders.length}] render ediliyor...`);
+      try {
+        await execFileAsync("ffmpeg", clipRenders[i].args, { maxBuffer: 1024 * 1024 * 64 });
+      } catch (error) {
+        const stderrTail = String(error.stderr || "").split("\n").slice(-100).join("\n");
+        console.error(`Klip ${i + 1} ffmpeg stderr (son 100 satır):\n` + stderrTail);
+        throw error;
+      }
+    }
+
+    // Pass 2: Önceden render edilmiş klipleri xfade ile birleştir
+    console.log("Klipler birleştiriliyor (xfade + müzik)...");
     try {
-      await execFileAsync("ffmpeg", args, { maxBuffer: 1024 * 1024 * 64 });
+      await execFileAsync("ffmpeg", concatArgs, { maxBuffer: 1024 * 1024 * 64 });
     } catch (error) {
-      // Node'un varsayılan hata serileştirmesi (console.error(error)) stderr'i
-      // birkaç bin karakterden sonra "... N more characters" ile kesiyor —
-      // asıl ffmpeg hatasının (ör. hangi filtrede/aşamada oluştuğu) tam
-      // bağlamını kaybetmemek için son 100 satırı eksiksiz, ayrıca logluyoruz.
       const stderrTail = String(error.stderr || "").split("\n").slice(-100).join("\n");
-      console.error("ffmpeg stderr (son 100 satır, eksiksiz):\n" + stderrTail);
+      console.error("ffmpeg concat stderr (son 100 satır):\n" + stderrTail);
       throw error;
     }
 
