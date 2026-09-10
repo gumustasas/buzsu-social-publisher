@@ -47,6 +47,17 @@ let currentPayload;
 
 async function markFailed(error) {
   console.error(error);
+  if (!currentPayload) {
+    // run()'ın İLK readVideoJobStatus çağrısı (payload henüz hiç okunmamışken)
+    // geçici bir sebeple (Blob list/fetch/JSON hatası) başarısız olmuş olabilir
+    // — "failed" yazmadan önce kaydı bir kez daha okumayı deniyoruz, aksi
+    // halde bu ilk-okuma hatası da payload'u yok ederdi (tam olarak bu
+    // düzeltmenin önlemeye çalıştığı veri kaybı senaryosu).
+    try {
+      const existing = await readVideoJobStatus(jobId);
+      if (existing?.payload) currentPayload = existing.payload;
+    } catch { /* kurtarılamadı — aşağıda payload'sız yazılacak */ }
+  }
   try {
     await writeVideoJobStatus(jobId, {
       status: "failed",
