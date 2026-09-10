@@ -1,4 +1,4 @@
-import { createContentVariant } from "./content-variants.js";
+import { createContentVariant, DEFAULT_HASHTAGS } from "./content-variants.js";
 import { baseProductTitle } from "./lib/product-title.js";
 
 // src/lib/scenario-schema.js (AI senaryo/sahne akışı) da bu listeyi kullanır —
@@ -20,19 +20,47 @@ function validateMediaItems(mediaItems) {
   return null;
 }
 
-export function buildDraft(product, { format = "Gönderi", platforms = ["Instagram", "Facebook"], variant = 0, publishAt, captionOverride } = {}) {
+export function buildDraft(product, { format = "Gönderi", platforms = ["Instagram", "Facebook"], variant = 0, publishAt, captionOverride, allowCatalogCaption = false } = {}) {
   const url = String(product.url || "").trim();
-  const content = captionOverride
-    ? {
-        title: baseProductTitle(product.title) || "Buzsu ürünü",
-        sourceUrl: url,
-        instagramText: `${captionOverride.instagramText}\n\nDetaylar: ${url}`,
-        facebookText: `${captionOverride.facebookText}\n\nÜrünü inceleyin: ${url}`,
-        hashtags: captionOverride.hashtags || "#Buzsu",
-        format,
-        platform: platforms
-      }
-    : createContentVariant({ ...product, format, platform: platforms }, variant);
+  // allowCatalogCaption SADECE create_draft (api/mcp.js) tarafından açılır —
+  // panel composer'ı (api/content.js) bunu hiç göndermez, bu yüzden oradaki
+  // "Metin seçeneği 1/2/3" (variant) seçici her zaman createContentVariant'ın
+  // 3 şablonunu döndürmeye devam eder. product.instagramText/facebookText
+  // burada YALNIZCA gerçekten onaylanmış/yayınlanmış bir kayıttan geliyorsa
+  // dolu olur (bkz. src/lib/products.js REUSABLE_CAPTION_STATUSES) — bir
+  // "Taslak"/"Hata" kaydının incelenmemiş metni asla buraya taşınmaz.
+  const catalogCaption = !captionOverride && allowCatalogCaption && (product.instagramText || product.facebookText)
+    ? { instagramText: product.instagramText || product.facebookText, facebookText: product.facebookText || product.instagramText }
+    : null;
+
+  let content;
+  if (captionOverride) {
+    content = {
+      title: baseProductTitle(product.title) || "Buzsu ürünü",
+      sourceUrl: url,
+      instagramText: `${captionOverride.instagramText}\n\nDetaylar: ${url}`,
+      facebookText: `${captionOverride.facebookText}\n\nÜrünü inceleyin: ${url}`,
+      hashtags: captionOverride.hashtags || "#Buzsu",
+      format,
+      platform: platforms
+    };
+  } else if (catalogCaption) {
+    // Bu metin zaten ÖNCEKİ bir buildDraft/createDraftRecord çıktısı — kendi
+    // "Detaylar: <url>"/"Ürünü inceleyin: <url>" bağlantısını ZATEN içeriyor
+    // (bkz. src/lib/products.js). Üstüne tekrar bir link eklemek aynı linki
+    // iki kez yazdırırdı — bu yüzden burada OLDUĞU GİBİ kullanılıyor.
+    content = {
+      title: baseProductTitle(product.title) || "Buzsu ürünü",
+      sourceUrl: url,
+      instagramText: catalogCaption.instagramText,
+      facebookText: catalogCaption.facebookText,
+      hashtags: DEFAULT_HASHTAGS,
+      format,
+      platform: platforms
+    };
+  } else {
+    content = createContentVariant({ ...product, format, platform: platforms }, variant);
+  }
   const allText = `${content.instagramText}\n${content.facebookText}`;
   const warnings = [];
   if (!product.url || !isHttps(product.url)) warnings.push("Kaynak URL herkese açık HTTPS olmalı.");

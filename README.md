@@ -299,7 +299,10 @@ kullanmadan (yalnızca FFmpeg ile) 9:16 1080x1920 bir Reels/Shorts videosu
 üretir: her ürün ~1.5-2sn gösterilir, hafif zoom/pan (Ken Burns) ve geçiş
 efekti (fade/wipe) uygulanır, ürün adı alt kısımda güvenli alanda gösterilir,
 sabit bir Buzsu kapanış sahnesiyle biter, isteğe bağlı bir royalty-free müzik
-URL'i eklenebilir.
+URL'i eklenebilir — `musicUrl` verilmezse video sessiz kalmaz: 30 parçalık
+ücretsiz, ticari kullanıma açık bir Mixkit havuzundan (`src/lib/music-catalog.js`
+— kurumsal_pozitif, modern_teknoloji, sakin_premium, enerjik_reklam, sinematik)
+otomatik bir parça seçilir; `musicMood` ile tarz yönlendirilebilir.
 
 Render işi birkaç dakika sürebileceğinden ve Vercel serverless fonksiyonlarının
 süre/bellek sınırları (Fluid Compute olmadan klasik Pro planında 15sn) bu iş

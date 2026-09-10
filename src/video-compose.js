@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { writeVideoJobStatus, readVideoJobStatus } from "./lib/video-jobs.js";
 import { GITHUB_REPO_OWNER, GITHUB_REPO_NAME, VIDEO_RENDER_WORKFLOW_FILE, VIDEO_RENDER_REF } from "./lib/config.js";
+import { MUSIC_CATEGORIES, pickMusicTrack } from "./lib/music-catalog.js";
 
 // compose_product_video (bkz. api/mcp.js), Vercel'in serverless süre/bellek
 // sınırları FFmpeg render'ı için riskli olduğundan (bkz. PR açıklaması —
@@ -51,7 +52,7 @@ function normalizeTitle(title) {
 // compose_product_video'nun ham MCP argümanlarını doğrulayıp normalize
 // edilmiş, GitHub Actions worker'ına aynen aktarılacak bir job payload'una
 // çevirir. Ağ/IO içermez — bağımsız test edilebilir.
-export function validateComposeInput(args = {}) {
+export function validateComposeInput(args = {}, { randomImpl = Math.random } = {}) {
   const mediaItemsInput = args.mediaItems;
   if (!Array.isArray(mediaItemsInput) || mediaItemsInput.length < MIN_MEDIA_ITEMS || mediaItemsInput.length > MAX_MEDIA_ITEMS) {
     throw new Error(`mediaItems en az ${MIN_MEDIA_ITEMS}, en fazla ${MAX_MEDIA_ITEMS} öğe içermelidir.`);
@@ -89,13 +90,23 @@ export function validateComposeInput(args = {}) {
   if (args.closingTitle !== undefined) closing.title = normalizeTitle(args.closingTitle) || undefined;
   if (args.closingSubtitle !== undefined) closing.subtitle = normalizeTitle(args.closingSubtitle) || undefined;
 
+  const musicVolume = args.musicVolume === undefined ? 0.5 : Number(args.musicVolume);
+  if (!Number.isFinite(musicVolume) || musicVolume < 0 || musicVolume > 1) {
+    throw new Error("musicVolume 0-1 aralığında olmalıdır.");
+  }
+
   let musicUrl;
   if (typeof args.musicUrl === "string" && args.musicUrl.trim()) {
     musicUrl = assertHttpsUrlSyntax(args.musicUrl, "musicUrl");
-  }
-  const musicVolume = args.musicVolume === undefined ? 0.5 : Number(args.musicVolume);
-  if (musicUrl && (!Number.isFinite(musicVolume) || musicVolume < 0 || musicVolume > 1)) {
-    throw new Error("musicVolume 0-1 aralığında olmalıdır.");
+  } else {
+    // musicUrl verilmezse video sessiz çıkmasın diye ÜCRETSİZ bir arka plan
+    // müziği otomatik seçilir (bkz. src/lib/music-catalog.js — 30 parçalık,
+    // ticari kullanıma açık Mixkit havuzu). musicMood verilirse o kategoriden
+    // seçilir, verilmezse rastgele bir kategoriden.
+    if (args.musicMood !== undefined && !MUSIC_CATEGORIES.includes(args.musicMood)) {
+      throw new Error(`musicMood şunlardan biri olmalıdır: ${MUSIC_CATEGORIES.join(", ")}.`);
+    }
+    musicUrl = pickMusicTrack({ mood: args.musicMood, randomImpl }).audioUrl;
   }
 
   // GERÇEK PARA HARCAR (Replicate/Real-ESRGAN) — varsayılan false, yalnızca
@@ -111,7 +122,7 @@ export function validateComposeInput(args = {}) {
     transitionDurationSeconds,
     closing,
     musicUrl,
-    musicVolume: musicUrl ? musicVolume : undefined,
+    musicVolume,
     upscaleImages
   };
 }
@@ -146,9 +157,10 @@ async function dispatchRenderWorkflow(jobId, { fetchImpl = fetch } = {}) {
 export async function composeProductVideo(args, {
   putImpl,
   fetchImpl = fetch,
-  randomUUIDImpl = crypto.randomUUID
+  randomUUIDImpl = crypto.randomUUID,
+  randomImpl
 } = {}) {
-  const payload = validateComposeInput(args);
+  const payload = validateComposeInput(args, { randomImpl });
   if (payload.upscaleImages && args.confirmed !== true) {
     throw new Error("upscaleImages:true gerçek Replicate API kredisi harcar. Onaylamak için confirmed:true gönderin.");
   }

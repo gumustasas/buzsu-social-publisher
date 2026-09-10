@@ -2,6 +2,12 @@ import { baseProductTitle } from "./lib/product-title.js";
 
 const blockedClaims = [/en iyi/gi, /kesinlikle sağlıklı/gi, /hastalığı/gi, /tedavi/gi, /garanti eder/gi];
 
+// Ürünün gerçek Airtable "Hashtagler" alanına erişimimiz olmadığı (listProducts
+// bu alanı döndürmüyor) her jenerik/otomatik taslak yolunda kullanılan tek
+// varsayılan hashtag seti — src/content-worker.js'teki katalog-metni yolu da
+// bunu paylaşır.
+export const DEFAULT_HASHTAGS = "#Buzsu #SuArıtma #SuArıtmaCihazı";
+
 function cleanClaim(text) {
   return blockedClaims.reduce((value, pattern) => value.replace(pattern, ""), text).replace(/\s{2,}/g, " ").trim();
 }
@@ -22,7 +28,7 @@ export function createContentVariant(product, variant = 0) {
         ? ["Code kapalı kasa su arıtma cihazı, filtre yapısı ve servis desteğiyle ev ve iş yerleri için tasarlanmıştır.", "Code su arıtma cihazının filtre yapısını ve seçeneklerini inceleyin.", "Günlük kullanım için Code modelinin teknik özelliklerine göz atın."]
         : ["Buzsu ürününü özellikleri, kullanım alanı ve teknik detaylarıyla inceleyin.", "İhtiyacınıza uygun su arıtma çözümünü Buzsu'da keşfedin.", "Ürün detayları ve güncel bilgiler için Buzsu sayfasını ziyaret edin."];
   const text = cleanClaim(templates[Math.abs(Number(variant)) % templates.length]);
-  const hashtags = "#Buzsu #SuArıtma #SuArıtmaCihazı";
+  const hashtags = DEFAULT_HASHTAGS;
   return {
     title,
     sourceUrl: url,

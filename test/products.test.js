@@ -59,6 +59,43 @@ test("listProducts falls back to the Airtable draft title when the product has n
   }
 });
 
+test("listProducts only surfaces instagramText/facebookText from a record whose Durum is Onaylandı or Paylaşıldı, never from a Taslak/Hata record", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = mockFetch({
+    airtableRecords: [
+      // İlk kayıt (sıralamada önce gelen) hiç incelenmemiş bir Taslak —
+      // metni asla yeniden kullanılabilir katalog metni olarak görünmemeli.
+      { id: "rec1", fields: { "Başlık": "Code deneme 1", "Kaynak URL": "https://www.buzsu.com.tr/code-su-aritma-cihazi/", "Instagram Metni": "Reddedilen/incelenmemiş metin", "Facebook Metni": "Reddedilen/incelenmemiş metin", Durum: "Taslak" } },
+      { id: "rec2", fields: { "Başlık": "Code deneme 2", "Kaynak URL": "https://www.buzsu.com.tr/code-su-aritma-cihazi/", "Instagram Metni": "Onaylanmış gerçek metin", "Facebook Metni": "Onaylanmış gerçek metin", Durum: "Onaylandı" } }
+    ]
+  });
+  try {
+    const products = await listProducts();
+    const match = products.find((p) => p.url === "https://www.buzsu.com.tr/code-su-aritma-cihazi/");
+    assert.equal(match.instagramText, "Onaylanmış gerçek metin");
+    assert.equal(match.facebookText, "Onaylanmış gerçek metin");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("listProducts leaves instagramText/facebookText empty when every record for a product is still a Taslak/Hata (nothing approved/published yet)", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = mockFetch({
+    airtableRecords: [
+      { id: "rec1", fields: { "Başlık": "Code deneme", "Kaynak URL": "https://www.buzsu.com.tr/code-su-aritma-cihazi/", "Instagram Metni": "İncelenmemiş metin", "Facebook Metni": "İncelenmemiş metin", Durum: "Taslak" } }
+    ]
+  });
+  try {
+    const products = await listProducts();
+    const match = products.find((p) => p.url === "https://www.buzsu.com.tr/code-su-aritma-cihazi/");
+    assert.equal(match.instagramText, "");
+    assert.equal(match.facebookText, "");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("createDraftRecord writes an existing single-image draft exactly as before (no Media Items field, no behavior change)", async () => {
   const originalFetch = global.fetch;
   let capturedBody;

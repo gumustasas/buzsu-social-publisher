@@ -8,6 +8,7 @@ import { buildDraft } from "../src/content-worker.js";
 import { availableSceneProviders, generateSceneImage } from "../src/scene-image.js";
 import { composeBrandedPost } from "../src/post-branding.js";
 import { runPublisher } from "../src/publish-approved.js";
+import { MUSIC_CATEGORIES } from "../src/lib/music-catalog.js";
 import { submitVeoVideo, veoVideoStatus, downloadVeoVideo } from "../src/veo-video.js";
 import { getAutopilotEnabled, setAutopilotEnabled } from "../src/lib/settings.js";
 import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "../src/lib/config.js";
@@ -276,7 +277,7 @@ const TOOLS = [
   },
   {
     name: "compose_product_video",
-    description: "2-10 ürün görselinden ÜCRETSİZ (paid API kullanmadan), FFmpeg ile 9:16 1080x1920 Reels/Shorts videosu üretir — her ürün ~1.5-2sn gösterilir, hafif zoom/pan (Ken Burns) ve geçiş efekti uygulanır, ürün adı alt kısımda güvenli alanda gösterilir, sabit bir Buzsu kapanış sahnesiyle biter. Render işi (birkaç dakika sürebilir) GitHub Actions'ın ücretsiz kuyruğunda arka planda çalışır — bu tool işi başlatıp hemen bir jobId döner, sonucu get_video_render_status ile sorgulayın. Tamamlandığında dönen videoUrl, create_draft(format:'Reel') içinde videoUrl olarak veya bir Carousel'in mediaItems'ında doğrudan kullanılabilir. Kaynak görsel düşük çözünürlüklü (ör. site thumbnail'ı) olduğunda opsiyonel upscaleImages:true ile her görsel Ken Burns animasyonundan ÖNCE Replicate/Real-ESRGAN ile AI büyütülür — bu adım GERÇEK PARA HARCAR, confirmed:true olmadan çalışmaz.",
+    description: "2-10 ürün görselinden ÜCRETSİZ (paid API kullanmadan), FFmpeg ile 9:16 1080x1920 Reels/Shorts videosu üretir — her ürün ~1.5-2sn gösterilir, hafif zoom/pan (Ken Burns) ve geçiş efekti uygulanır, ürün adı alt kısımda güvenli alanda gösterilir, sabit bir Buzsu kapanış sahnesiyle biter. Render işi (birkaç dakika sürebilir) GitHub Actions'ın ücretsiz kuyruğunda arka planda çalışır — bu tool işi başlatıp hemen bir jobId döner, sonucu get_video_render_status ile sorgulayın. Tamamlandığında dönen videoUrl, create_draft(format:'Reel') içinde videoUrl olarak veya bir Carousel'in mediaItems'ında doğrudan kullanılabilir. musicUrl VERİLMEZSE video sessiz çıkmaz — 30 parçalık ücretsiz, ticari kullanıma açık bir müzik havuzundan (Mixkit) otomatik bir arka plan müziği seçilir; musicMood ile hangi tarzdan seçileceği yönlendirilebilir. Kaynak görsel düşük çözünürlüklü (ör. site thumbnail'ı) olduğunda opsiyonel upscaleImages:true ile her görsel Ken Burns animasyonundan ÖNCE Replicate/Real-ESRGAN ile AI büyütülür — bu adım GERÇEK PARA HARCAR, confirmed:true olmadan çalışmaz.",
     inputSchema: {
       type: "object",
       properties: {
@@ -297,8 +298,9 @@ const TOOLS = [
         transitionDurationSeconds: { type: "number", description: "Geçiş efektinin süresi, saniye (varsayılan 0.4, aralık 0.2-1.0; durationPerImageSeconds'tan küçük olmalı)." },
         closingTitle: { type: "string", description: "İsteğe bağlı — kapanış sahnesindeki ana metni değiştirir (varsayılan: 'Buzsu – İhtiyacınıza uygun su çözümünü keşfedin')." },
         closingSubtitle: { type: "string", description: "İsteğe bağlı — kapanış sahnesindeki alt metni değiştirir (varsayılan: 'buzsu.com.tr')." },
-        musicUrl: { type: "string", description: "İsteğe bağlı — herkese açık HTTPS royalty-free müzik URL'i (MP3/MP4/WAV/OGG). Video süresine göre otomatik döngüye alınır ve kırpılır." },
-        musicVolume: { type: "number", description: "musicUrl verilirse müzik ses seviyesi, 0-1 aralığında (varsayılan 0.5)." },
+        musicUrl: { type: "string", description: "İsteğe bağlı — herkese açık HTTPS royalty-free müzik URL'i (MP3/MP4/WAV/OGG). Video süresine göre otomatik döngüye alınır ve kırpılır. Verilmezse ücretsiz havuzdan otomatik bir parça seçilir (bkz. musicMood)." },
+        musicMood: { type: "string", enum: MUSIC_CATEGORIES, description: `İsteğe bağlı — musicUrl verilmediğinde otomatik seçilecek müziğin tarzı (${MUSIC_CATEGORIES.join(", ")}). Verilmezse rastgele bir tarzdan seçilir. musicUrl verilirse yok sayılır.` },
+        musicVolume: { type: "number", description: "Müzik ses seviyesi, 0-1 aralığında (varsayılan 0.5) — hem musicUrl hem otomatik seçilen müzik için geçerli." },
         upscaleImages: { type: "boolean", description: "İsteğe bağlı, varsayılan false. true olursa her ürün görseli render'dan önce Replicate/Real-ESRGAN ile AI büyütülür (düşük çözünürlüklü kaynaklarda netliği belirgin şekilde artırır). GERÇEK PARA HARCAR — confirmed:true olmadan çalışmaz." },
         confirmed: { type: "boolean", description: "yalnızca upscaleImages:true iken gereklidir — true olmadan gerçek Replicate API çağrısı/harcaması yapılmaz." }
       },
@@ -419,7 +421,7 @@ export async function callTool(name, args) {
       const aiCaption = args.instagramText || args.facebookText
         ? { instagramText: args.instagramText || args.facebookText, facebookText: args.facebookText || args.instagramText, hashtags: args.hashtags || "#Buzsu" }
         : null;
-      const draft = buildDraft(draftProduct, { format: args.format, platforms: args.platforms, variant: 0, publishAt: args.publishAt, captionOverride: aiCaption });
+      const draft = buildDraft(draftProduct, { format: args.format, platforms: args.platforms, variant: 0, publishAt: args.publishAt, captionOverride: aiCaption, allowCatalogCaption: true });
       if (!draft.valid) throw new Error(draft.warnings.join(" "));
       const record = await createDraftRecord({ product: draftProduct, draft, format: args.format, platforms: args.platforms, publishAt: args.publishAt, note: "MCP üzerinden oluşturuldu." });
       return JSON.stringify({ ok: true, id: record.id, status: "Taslak" }, null, 2);
