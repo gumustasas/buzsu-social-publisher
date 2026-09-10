@@ -8,7 +8,7 @@ import { put } from "@vercel/blob";
 import { readVideoJobStatus, writeVideoJobStatus } from "../src/lib/video-jobs.js";
 import { fetchPublicImage, fetchPublicAudio } from "../src/lib/upload-media.js";
 import { composeVideoFrame, composeClosingScene } from "../src/post-branding.js";
-import { buildTwoPassFfmpegArgs } from "../src/lib/ffmpeg-command.js";
+import { buildFfmpegArgs } from "../src/lib/ffmpeg-command.js";
 import { upscaleImage } from "../src/lib/image-upscale.js";
 
 const execFileAsync = promisify(execFile);
@@ -134,7 +134,7 @@ async function run() {
     }
 
     const outputPath = path.join(workDir, "output.mp4");
-    const { clipRenders, mergeSteps, totalDurationSeconds } = buildTwoPassFfmpegArgs({
+    const { args: ffmpegArgs, totalDurationSeconds } = buildFfmpegArgs({
       frames,
       closingFrame: { path: closingPath },
       durationPerImageSeconds,
@@ -142,32 +142,16 @@ async function run() {
       transitionDurationSeconds,
       musicPath,
       musicVolume,
-      clipDir: workDir,
       outputPath
     });
 
-    // Pass 1: Her klibi ayrı render et — tek zoompan filtresi, düşük bellek
-    for (let i = 0; i < clipRenders.length; i++) {
-      console.log(`[Klip ${i + 1}/${clipRenders.length}] render ediliyor...`);
-      try {
-        await execFileAsync("ffmpeg", clipRenders[i].args, { maxBuffer: 1024 * 1024 * 64 });
-      } catch (error) {
-        const stderrTail = String(error.stderr || "").split("\n").slice(-100).join("\n");
-        console.error(`Klip ${i + 1} ffmpeg stderr (son 100 satır):\n` + stderrTail);
-        throw error;
-      }
-    }
-
-    // Pass 2: Ardışık ikili birleştirme — her adımda 2 input, düşük bellek
-    for (let i = 0; i < mergeSteps.length; i++) {
-      console.log(`[Birleştirme ${i + 1}/${mergeSteps.length}] xfade...`);
-      try {
-        await execFileAsync("ffmpeg", mergeSteps[i].args, { maxBuffer: 1024 * 1024 * 64 });
-      } catch (error) {
-        const stderrTail = String(error.stderr || "").split("\n").slice(-100).join("\n");
-        console.error(`Birleştirme ${i + 1} ffmpeg stderr (son 100 satır):\n` + stderrTail);
-        throw error;
-      }
+    console.log("FFmpeg render başlıyor (tek geçiş)...");
+    try {
+      await execFileAsync("ffmpeg", ffmpegArgs, { maxBuffer: 1024 * 1024 * 64 });
+    } catch (error) {
+      const stderrTail = String(error.stderr || "").split("\n").slice(-100).join("\n");
+      console.error("ffmpeg stderr (son 100 satır):\n" + stderrTail);
+      throw error;
     }
 
     const stat = await fs.stat(outputPath);

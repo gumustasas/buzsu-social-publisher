@@ -128,6 +128,22 @@ test("buildFfmpegArgs adds an audio input, volume/afade filter and -c:a aac when
   assert.deepEqual(mapIndices, ["[vout]", "[aout]"]);
 });
 
+test("buildFfmpegArgs limits music input duration with -t and does not use -shortest", () => {
+  const { args, totalDurationSeconds } = buildFfmpegArgs({
+    frames: [{ path: "f1.png" }, { path: "f2.png" }],
+    closingFrame: { path: "closing.png" },
+    durationPerImageSeconds: 1.5,
+    musicPath: "music.mp3",
+    outputPath: "out.mp4"
+  });
+  const streamLoopIdx = args.indexOf("-stream_loop");
+  assert.ok(streamLoopIdx !== -1);
+  const tIdx = args.indexOf("-t", streamLoopIdx);
+  assert.ok(tIdx !== -1 && tIdx < args.indexOf("-i", streamLoopIdx + 1));
+  assert.equal(args[tIdx + 1], String(totalDurationSeconds + 1));
+  assert.ok(!args.includes("-shortest"));
+});
+
 test("buildFfmpegArgs omits audio mapping and adds -an when no musicPath is given", () => {
   const { args } = buildFfmpegArgs({
     frames: [{ path: "f1.png" }],
@@ -238,6 +254,24 @@ test("buildTwoPassFfmpegArgs handles music only in the last merge step", () => {
   assert.match(filterComplex, /\[aout\]$/);
   assert.ok(lastStep.args.includes("-c:a"));
   assert.ok(lastStep.args.includes("aac"));
+});
+
+test("buildTwoPassFfmpegArgs limits music input duration with -t and does not use -shortest", () => {
+  const { mergeSteps, totalDurationSeconds } = buildTwoPassFfmpegArgs({
+    frames: [{ path: "f1.png" }],
+    closingFrame: { path: "closing.png" },
+    durationPerImageSeconds: 1.5,
+    musicPath: "music.mp3",
+    clipDir: "/tmp/clips",
+    outputPath: "out.mp4"
+  });
+  const lastStep = mergeSteps[mergeSteps.length - 1];
+  const streamLoopIdx = lastStep.args.indexOf("-stream_loop");
+  assert.ok(streamLoopIdx !== -1);
+  const tIdx = lastStep.args.indexOf("-t", streamLoopIdx);
+  assert.ok(tIdx !== -1 && tIdx < lastStep.args.indexOf("-i", streamLoopIdx + 1));
+  assert.equal(lastStep.args[tIdx + 1], String(totalDurationSeconds + 1));
+  assert.ok(!lastStep.args.includes("-shortest"));
 });
 
 test("buildTwoPassFfmpegArgs clip renders use CRF 18, intermediate merges CRF 18, final merge CRF 21", () => {
