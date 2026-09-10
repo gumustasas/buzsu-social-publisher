@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { appendEvent, parseJsonNote } from "../src/lib/queue.js";
+import { appendEvent, parseJsonNote, parseMediaItemsSafe } from "../src/lib/queue.js";
 import { summarizeRecords } from "../src/lib/metrics.js";
 import { getSession } from "../src/auth.js";
 
@@ -43,6 +43,10 @@ function publicRecord(record) {
   const allEvents = Array.isArray(state.events) ? state.events : [];
   const lastStatusEvent = [...allEvents].reverse().find((event) => event.type === "status_changed" && event.to);
   const effectiveStatus = lastStatusEvent?.to || fields.Durum || "Taslak";
+  // Carousel olmayan kayıtlarda "Media Items" alanı hiç yok — parseMediaItemsSafe
+  // bunu sessizce [] olarak döner, hiçbir eski kaydı etkilemez. Bozuk/eski
+  // veride de (JSON parse hatası vb.) panel çökmez, mediaItems boş kalır.
+  const { mediaItems, warning: mediaItemsWarning } = parseMediaItemsSafe(fields["Media Items"]);
   return {
     id: record.id,
     title: fields["Başlık"] || "Başlıksız içerik",
@@ -54,6 +58,10 @@ function publicRecord(record) {
     imageUrl: fields["Görsel URL"] || "",
     instagramText: fields["Instagram Metni"] || "",
     facebookText: fields["Facebook Metni"] || "",
+    hashtags: fields.Hashtagler || "",
+    mediaItems,
+    mediaCount: mediaItems.length,
+    ...(mediaItemsWarning ? { mediaItemsWarning } : {}),
     attempts: Number(fields["Deneme Sayısı"] || 0),
     instagramId: fields["Instagram Yayın ID"] || "",
     facebookId: fields["Facebook Yayın ID"] || "",

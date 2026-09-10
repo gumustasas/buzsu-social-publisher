@@ -13,6 +13,7 @@ import { getAutopilotEnabled, setAutopilotEnabled } from "../src/lib/settings.js
 import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "../src/lib/config.js";
 import { fetchPublicImage, decodeImageBase64, imageExtensionFor, extractDriveFileId, normalizeDriveUrl, normalizeImageForMeta } from "../src/lib/upload-media.js";
 import { validateSceneImage } from "../src/lib/scene-validation.js";
+import { normalizeDraftFields } from "../src/lib/queue.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
 const SERVER_INFO = { name: "buzsu-social-publisher", version: "1.0.0" };
@@ -185,6 +186,17 @@ const TOOLS = [
     }
   },
   {
+    name: "get_draft",
+    description: "Kuyruktaki mevcut bir kaydın (taslak, onaylı veya yayınlanmış) tam, normalize edilmiş verisini okur — salt-okunur, hiçbir şeyi değiştirmez. Carousel kayıtlarında mediaItems dizisini ve mediaCount'u da döner; Carousel olmayan kayıtlarda mediaItems boş bir dizidir. Bozuk/eski bir Media Items alanı bu aracı asla çökertmez — mediaItems boş döner ve mediaItemsWarning ile sebep belirtilir.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        recordId: { type: "string", description: "Airtable kayıt ID'si (rec...) — list_queue veya create_draft çıktısından alınır." }
+      },
+      required: ["recordId"]
+    }
+  },
+  {
     name: "update_draft",
     description: "Kuyruktaki mevcut bir taslağın Instagram/Facebook metnini, hashtag'lerini veya yayın zamanını günceller (ör. WhatsApp numarası veya ek bilgi eklemek için). Yalnızca verilen alanlar değiştirilir, diğerleri olduğu gibi kalır.",
     inputSchema: {
@@ -263,7 +275,7 @@ const TOOLS = [
   }
 ];
 
-async function callTool(name, args) {
+export async function callTool(name, args) {
   switch (name) {
     case "list_products": {
       const products = await listProducts();
@@ -368,6 +380,15 @@ async function callTool(name, args) {
       if (!draft.valid) throw new Error(draft.warnings.join(" "));
       const record = await createDraftRecord({ product: draftProduct, draft, format: args.format, platforms: args.platforms, publishAt: args.publishAt, note: "MCP üzerinden oluşturuldu." });
       return JSON.stringify({ ok: true, id: record.id, status: "Taslak" }, null, 2);
+    }
+    case "get_draft": {
+      if (!String(args.recordId || "").trim()) throw new Error("recordId gerekli.");
+      const response = await fetch(`https://api.airtable.com/v0/${baseId}/${tableId}/${encodeURIComponent(args.recordId)}`, {
+        headers: { Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}` }
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error?.message || `Airtable HTTP ${response.status}`);
+      return JSON.stringify({ ok: true, id: data.id, ...normalizeDraftFields(data.fields || {}) }, null, 2);
     }
     case "upload_media": {
       const hasUrl = typeof args.imageUrl === "string" && args.imageUrl.trim().length > 0;
