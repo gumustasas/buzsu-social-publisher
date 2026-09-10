@@ -136,13 +136,35 @@ function videoTitleBarSvg(title, barTop) {
   </svg>`);
 }
 
-// Ürün fotoğrafını 9:16'ya (cover ile) kırpar; title verilirse alt güvenli
-// alana markalı bir ürün adı bandı bindirir, verilmezse çıplak kareyi döner.
+// Ürün fotoğrafı çoğunlukla kare/yatay geliyor (site thumbnail'ları) — bunu
+// doğrudan "cover" ile 9:16'ya sığdırmak görselin büyük bir kısmını KIRPARAK
+// ortadaki dar bir dikey şeridi doldurur; bu hem ürünün "aşırı yakınlaşmış/
+// kırpılmış" görünmesine hem de zaten küçük olan kaynağın daha da büyütülüp
+// bulanıklaşmasına yol açar. Reels/Shorts araçlarının (vidIQ dahil) standart
+// çözümü: görseli hiç kırpmadan ("contain") ortala, üstte/altta kalan boşluğu
+// aynı görselin bulanıklaştırılmış/karartılmış büyük hâliyle doldur — hem
+// hiçbir parça kaybolmaz hem de düz boşluk yerine ürünle uyumlu bir arka
+// plan görünür. Kaynak zaten 9:16 ise (contain==cover) bu katman görünmez.
+async function composeFramedBackground(imageBuffer) {
+  const background = await sharp(imageBuffer)
+    .resize(VIDEO_WIDTH, VIDEO_HEIGHT, { fit: "cover" })
+    .blur(48)
+    .modulate({ brightness: 0.55 })
+    .toBuffer();
+  const foreground = await sharp(imageBuffer)
+    .resize(VIDEO_WIDTH, VIDEO_HEIGHT, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .toBuffer();
+  return sharp(background).composite([{ input: foreground }]).png().toBuffer();
+}
+
+// Ürün fotoğrafını 9:16 kareye kırpmadan sığdırır (bkz. composeFramedBackground);
+// title verilirse alt güvenli alana markalı bir ürün adı bandı bindirir,
+// verilmezse çıplak kareyi döner.
 export async function composeVideoFrame(imageBuffer, { title } = {}) {
-  const base = sharp(imageBuffer).resize(VIDEO_WIDTH, VIDEO_HEIGHT, { fit: "cover" });
-  if (!title) return base.png().toBuffer();
+  const framed = await composeFramedBackground(imageBuffer);
+  if (!title) return framed;
   const barTop = VIDEO_HEIGHT - VIDEO_SAFE_BOTTOM_MARGIN - VIDEO_BAR_HEIGHT;
-  return base.composite([{ input: videoTitleBarSvg(title, barTop) }]).png().toBuffer();
+  return sharp(framed).composite([{ input: videoTitleBarSvg(title, barTop) }]).png().toBuffer();
 }
 
 // compose_product_video'nun sabit kapanış sahnesi: düz marka arka planı +

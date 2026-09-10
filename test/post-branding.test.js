@@ -47,6 +47,30 @@ test("composeVideoFrame outputs a 1080x1920 (9:16) PNG regardless of the source 
   assert.equal(meta.format, "png");
 });
 
+test("composeVideoFrame letterboxes a non-9:16 source instead of hard-cropping it, filling the bars with a dimmed/blurred backdrop of the same image", async () => {
+  const square = await sharp({ create: { width: 400, height: 400, channels: 3, background: { r: 200, g: 60, b: 60 } } }).png().toBuffer();
+  const out = await composeVideoFrame(square, {});
+  const { data, info } = await sharp(out).raw().ensureAlpha().toBuffer({ resolveWithObject: true });
+  const pixelAt = (x, y) => {
+    const idx = (y * info.width + x) * info.channels;
+    return [data[idx], data[idx + 1], data[idx + 2]];
+  };
+  // A 400x400 source, contain-fit into 1080x1920, scales to exactly 1080x1080
+  // centered vertically (rows 420..1500) — sampling within that band and at
+  // its very edges must show the source's own color unchanged (uncropped).
+  for (const y of [420, 960, 1499]) {
+    const [r, g, b] = pixelAt(540, y);
+    assert.deepEqual([r, g, b], [200, 60, 60], `row ${y} (inside the contain-fit image) must match the source exactly, not be cropped/altered`);
+  }
+  // The letterbox rows above/below must be a dimmed, still-reddish backdrop
+  // of the SAME image — not a hard crop's edge color and not a flat black/white pad.
+  for (const y of [100, 1800]) {
+    const [r, g, b] = pixelAt(540, y);
+    assert.ok(r > 20 && r < 180, `letterbox row ${y} should be dimmed, not flat black/white (got r=${r})`);
+    assert.ok(r > g && r > b, `letterbox row ${y} should still carry the source's reddish hue (got [${r},${g},${b}])`);
+  }
+});
+
 test("composeVideoFrame returns the plain cropped frame (no title bar drawn) when no title is given", async () => {
   const scene = await makeScenePng(1080, 1920);
   const withTitle = await composeVideoFrame(scene, { title: "Test Ürün" });
