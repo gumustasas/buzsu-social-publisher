@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { validateComposeInput, composeProductVideo, getVideoRenderStatus } from "../src/video-compose.js";
+import { MUSIC_CATALOG, MUSIC_CATEGORIES } from "../src/lib/music-catalog.js";
 
 const VALID_ITEM = (n) => ({ imageUrl: `https://example.com/p${n}.jpg`, title: `Ürün ${n}` });
 
@@ -19,8 +20,31 @@ test("validateComposeInput accepts 2-10 mediaItems and applies defaults", () => 
   assert.equal(result.durationPerImageSeconds, 1.8);
   assert.equal(result.transition, "fade");
   assert.equal(result.transitionDurationSeconds, 0.4);
-  assert.equal(result.musicUrl, undefined);
+  assert.match(result.musicUrl, /^https:\/\/assets\.mixkit\.co\/music\//, "no musicUrl given -> a free track must be auto-picked, never silence");
+  assert.equal(result.musicVolume, 0.5);
   assert.equal(result.upscaleImages, false, "upscaleImages must default to false — a paid step must never trigger silently");
+});
+
+test("validateComposeInput auto-picks a free track deterministically via randomImpl when musicUrl is omitted", () => {
+  const result = validateComposeInput({ mediaItems: [VALID_ITEM(1), VALID_ITEM(2)] }, { randomImpl: () => 0 });
+  assert.equal(result.musicUrl, MUSIC_CATALOG[MUSIC_CATEGORIES[0]][0].audioUrl);
+});
+
+test("validateComposeInput honors musicMood when auto-picking a free track", () => {
+  const result = validateComposeInput({ mediaItems: [VALID_ITEM(1), VALID_ITEM(2)], musicMood: "sinematik" }, { randomImpl: () => 0 });
+  assert.equal(result.musicUrl, MUSIC_CATALOG.sinematik[0].audioUrl);
+});
+
+test("validateComposeInput rejects an unknown musicMood", () => {
+  assert.throws(
+    () => validateComposeInput({ mediaItems: [VALID_ITEM(1), VALID_ITEM(2)], musicMood: "eglenceli" }),
+    /musicMood/
+  );
+});
+
+test("validateComposeInput uses the explicit musicUrl instead of auto-picking when both are relevant", () => {
+  const result = validateComposeInput({ mediaItems: [VALID_ITEM(1), VALID_ITEM(2)], musicUrl: "https://example.com/song.mp3" });
+  assert.equal(result.musicUrl, "https://example.com/song.mp3");
 });
 
 test("validateComposeInput passes through upscaleImages:true", () => {

@@ -1,4 +1,4 @@
-import { createContentVariant } from "./content-variants.js";
+import { createContentVariant, DEFAULT_HASHTAGS } from "./content-variants.js";
 import { baseProductTitle } from "./lib/product-title.js";
 
 // src/lib/scenario-schema.js (AI senaryo/sahne akışı) da bu listeyi kullanır —
@@ -22,13 +22,25 @@ function validateMediaItems(mediaItems) {
 
 export function buildDraft(product, { format = "Gönderi", platforms = ["Instagram", "Facebook"], variant = 0, publishAt, captionOverride } = {}) {
   const url = String(product.url || "").trim();
-  const content = captionOverride
+  // Açık bir captionOverride verilmediğinde, ürünün Airtable kaydındaki
+  // MEVCUT metinleri (listProducts'ın döndürdüğü instagramText/facebookText —
+  // önceki bir onaylı gönderiden kalan, ürüne özel yazılmış metin) varsa
+  // onları kullanıyoruz; createContentVariant'ın jenerik 3-şablonluk yedeği
+  // yalnızca ürünün GERÇEKTEN hiç metni yoksa devreye giriyor. Aksi halde
+  // create_draft, metni/hashtag'i açıkça verilmeyen her çağrıda ürüne özel
+  // mevcut içeriği yok sayıp alakasız bir jenerik metne düşüyordu.
+  const effectiveCaption = captionOverride || (
+    (product.instagramText || product.facebookText)
+      ? { instagramText: product.instagramText || product.facebookText, facebookText: product.facebookText || product.instagramText, hashtags: DEFAULT_HASHTAGS }
+      : null
+  );
+  const content = effectiveCaption
     ? {
         title: baseProductTitle(product.title) || "Buzsu ürünü",
         sourceUrl: url,
-        instagramText: `${captionOverride.instagramText}\n\nDetaylar: ${url}`,
-        facebookText: `${captionOverride.facebookText}\n\nÜrünü inceleyin: ${url}`,
-        hashtags: captionOverride.hashtags || "#Buzsu",
+        instagramText: `${effectiveCaption.instagramText}\n\nDetaylar: ${url}`,
+        facebookText: `${effectiveCaption.facebookText}\n\nÜrünü inceleyin: ${url}`,
+        hashtags: effectiveCaption.hashtags || "#Buzsu",
         format,
         platform: platforms
       }
