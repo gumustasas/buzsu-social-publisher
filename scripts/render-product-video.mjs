@@ -134,7 +134,7 @@ async function run() {
     }
 
     const outputPath = path.join(workDir, "output.mp4");
-    const { clipRenders, concatArgs, totalDurationSeconds } = buildTwoPassFfmpegArgs({
+    const { clipRenders, mergeSteps, totalDurationSeconds } = buildTwoPassFfmpegArgs({
       frames,
       closingFrame: { path: closingPath },
       durationPerImageSeconds,
@@ -158,14 +158,16 @@ async function run() {
       }
     }
 
-    // Pass 2: Önceden render edilmiş klipleri xfade ile birleştir
-    console.log("Klipler birleştiriliyor (xfade + müzik)...");
-    try {
-      await execFileAsync("ffmpeg", concatArgs, { maxBuffer: 1024 * 1024 * 64 });
-    } catch (error) {
-      const stderrTail = String(error.stderr || "").split("\n").slice(-100).join("\n");
-      console.error("ffmpeg concat stderr (son 100 satır):\n" + stderrTail);
-      throw error;
+    // Pass 2: Ardışık ikili birleştirme — her adımda 2 input, düşük bellek
+    for (let i = 0; i < mergeSteps.length; i++) {
+      console.log(`[Birleştirme ${i + 1}/${mergeSteps.length}] xfade...`);
+      try {
+        await execFileAsync("ffmpeg", mergeSteps[i].args, { maxBuffer: 1024 * 1024 * 64 });
+      } catch (error) {
+        const stderrTail = String(error.stderr || "").split("\n").slice(-100).join("\n");
+        console.error(`Birleştirme ${i + 1} ffmpeg stderr (son 100 satır):\n` + stderrTail);
+        throw error;
+      }
     }
 
     const stat = await fs.stat(outputPath);

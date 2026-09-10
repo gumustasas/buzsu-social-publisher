@@ -171,7 +171,7 @@ test("buildFfmpegArgs scales total duration correctly for the maximum of 10 prod
 // === buildTwoPassFfmpegArgs ===
 
 test("buildTwoPassFfmpegArgs returns one clip render per frame+closing, each with a single zoompan filter", () => {
-  const { clipRenders, concatArgs, totalDurationSeconds } = buildTwoPassFfmpegArgs({
+  const { clipRenders, mergeSteps, totalDurationSeconds } = buildTwoPassFfmpegArgs({
     frames: [{ path: "f1.png" }, { path: "f2.png" }, { path: "f3.png" }],
     closingFrame: { path: "closing.png" },
     durationPerImageSeconds: 1.5,
@@ -186,14 +186,19 @@ test("buildTwoPassFfmpegArgs returns one clip render per frame+closing, each wit
     assert.equal((fc.match(/zoompan=/g) || []).length, 1);
   }
   assert.equal(totalDurationSeconds, 5.8);
-  const concatFc = concatArgs[concatArgs.indexOf("-filter_complex") + 1];
-  assert.ok(!concatFc.includes("zoompan"));
-  assert.match(concatFc, /xfade/);
-  assert.match(concatFc, /\[vout\]$/);
+  assert.equal(mergeSteps.length, 3);
+  for (const step of mergeSteps) {
+    const fc = step.args[step.args.indexOf("-filter_complex") + 1];
+    assert.ok(!fc.includes("zoompan"));
+    assert.match(fc, /xfade/);
+    assert.match(fc, /\[vout\]/);
+    const inputs = step.args.filter((a, i) => i > 0 && step.args[i - 1] === "-i");
+    assert.equal(inputs.length, 2);
+  }
 });
 
-test("buildTwoPassFfmpegArgs concat pass has correct xfade offsets matching the single-pass version", () => {
-  const { concatArgs, totalDurationSeconds } = buildTwoPassFfmpegArgs({
+test("buildTwoPassFfmpegArgs sequential merge steps produce correct cumulative offsets", () => {
+  const { mergeSteps, totalDurationSeconds } = buildTwoPassFfmpegArgs({
     frames: [{ path: "f1.png" }, { path: "f2.png" }, { path: "f3.png" }],
     closingFrame: { path: "closing.png" },
     durationPerImageSeconds: 1.5,
@@ -202,15 +207,19 @@ test("buildTwoPassFfmpegArgs concat pass has correct xfade offsets matching the 
     clipDir: "/tmp/clips",
     outputPath: "out.mp4"
   });
-  const filterComplex = concatArgs[concatArgs.indexOf("-filter_complex") + 1];
-  assert.match(filterComplex, /offset=1\.100/);
-  assert.match(filterComplex, /offset=2\.200/);
-  assert.match(filterComplex, /offset=3\.300/);
+  // step 0: clip0(1.5s) + clip1(1.5s) → offset=1.100, duration=2.6
+  // step 1: merge1(2.6s) + clip2(1.5s) → offset=2.200, duration=3.7
+  // step 2: merge2(3.7s) + closing(2.5s) → offset=3.300, duration=5.8
+  const offsets = mergeSteps.map((s) => {
+    const fc = s.args[s.args.indexOf("-filter_complex") + 1];
+    return fc.match(/offset=(\d+\.\d+)/)[1];
+  });
+  assert.deepEqual(offsets, ["1.100", "2.200", "3.300"]);
   assert.equal(totalDurationSeconds, 5.8);
 });
 
-test("buildTwoPassFfmpegArgs handles music in concat pass", () => {
-  const { concatArgs } = buildTwoPassFfmpegArgs({
+test("buildTwoPassFfmpegArgs handles music only in the last merge step", () => {
+  const { mergeSteps } = buildTwoPassFfmpegArgs({
     frames: [{ path: "f1.png" }],
     closingFrame: { path: "closing.png" },
     durationPerImageSeconds: 1.5,
@@ -219,19 +228,21 @@ test("buildTwoPassFfmpegArgs handles music in concat pass", () => {
     clipDir: "/tmp/clips",
     outputPath: "out.mp4"
   });
-  assert.ok(concatArgs.includes("music.mp3"));
-  assert.ok(concatArgs.includes("-stream_loop"));
-  const filterComplex = concatArgs[concatArgs.indexOf("-filter_complex") + 1];
+  assert.equal(mergeSteps.length, 1);
+  const lastStep = mergeSteps[mergeSteps.length - 1];
+  assert.ok(lastStep.args.includes("music.mp3"));
+  assert.ok(lastStep.args.includes("-stream_loop"));
+  const filterComplex = lastStep.args[lastStep.args.indexOf("-filter_complex") + 1];
   assert.match(filterComplex, /volume=0\.3/);
   assert.match(filterComplex, /afade=t=out/);
   assert.match(filterComplex, /\[aout\]$/);
-  assert.ok(concatArgs.includes("-c:a"));
-  assert.ok(concatArgs.includes("aac"));
+  assert.ok(lastStep.args.includes("-c:a"));
+  assert.ok(lastStep.args.includes("aac"));
 });
 
-test("buildTwoPassFfmpegArgs clip renders use CRF 18 (intermediate quality) while concat uses CRF 21", () => {
-  const { clipRenders, concatArgs } = buildTwoPassFfmpegArgs({
-    frames: [{ path: "f1.png" }],
+test("buildTwoPassFfmpegArgs clip renders use CRF 18, intermediate merges CRF 18, final merge CRF 21", () => {
+  const { clipRenders, mergeSteps } = buildTwoPassFfmpegArgs({
+    frames: [{ path: "f1.png" }, { path: "f2.png" }],
     closingFrame: { path: "closing.png" },
     durationPerImageSeconds: 1.5,
     clipDir: "/tmp/clips",
@@ -241,6 +252,10 @@ test("buildTwoPassFfmpegArgs clip renders use CRF 18 (intermediate quality) whil
     const crfIdx = clip.args.indexOf("-crf");
     assert.equal(clip.args[crfIdx + 1], "18");
   }
-  const concatCrfIdx = concatArgs.indexOf("-crf");
-  assert.equal(concatArgs[concatCrfIdx + 1], "21");
+  for (let i = 0; i < mergeSteps.length - 1; i++) {
+    const crfIdx = mergeSteps[i].args.indexOf("-crf");
+    assert.equal(mergeSteps[i].args[crfIdx + 1], "18");
+  }
+  const lastCrfIdx = mergeSteps[mergeSteps.length - 1].args.indexOf("-crf");
+  assert.equal(mergeSteps[mergeSteps.length - 1].args[lastCrfIdx + 1], "21");
 });

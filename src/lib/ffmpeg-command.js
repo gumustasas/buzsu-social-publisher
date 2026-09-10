@@ -118,61 +118,68 @@ export function buildTwoPassFfmpegArgs({
     return { args, outputPath: clipOutputPath, exactDurationSeconds };
   });
 
-  const concatArgs = ["-y"];
-  for (const render of clipRenders) {
-    concatArgs.push("-i", render.outputPath);
-  }
   const hasMusic = Boolean(musicPath);
-  if (hasMusic) {
-    concatArgs.push("-stream_loop", "-1", "-i", musicPath);
-  }
+  const totalDurationSeconds = clipRenders.reduce((sum, c) => sum + c.exactDurationSeconds, 0)
+    - (clipRenders.length - 1) * transitionDurationSeconds;
 
-  const filterParts = [];
-  let prevLabel = "0:v";
-  let cumulativeDuration = clipRenders[0].exactDurationSeconds;
+  // Ardışık ikili birleştirme: her adımda yalnızca 2 video input açık
+  // olur — 11 input'u tek filter_complex'te birleştirmek runner RAM'ini
+  // taşırıyordu (concat pass da ENOSPC verdi).
+  const mergeSteps = [];
+  let prevMergePath = clipRenders[0].outputPath;
+  let prevMergeDuration = clipRenders[0].exactDurationSeconds;
 
   for (let i = 1; i < clipRenders.length; i++) {
-    const outLabel = i === clipRenders.length - 1 ? "vout" : `vx${i}`;
-    const offset = cumulativeDuration - i * transitionDurationSeconds;
+    const isLast = i === clipRenders.length - 1;
+    const mergeOutputPath = isLast ? outputPath : `${clipDir}/merge-${i}.mp4`;
+    const offset = prevMergeDuration - transitionDurationSeconds;
+
+    const filterParts = [];
     filterParts.push(
-      `[${prevLabel}][${i}:v]xfade=transition=${transitionName}:duration=${transitionDurationSeconds}:offset=${offset.toFixed(3)}[${outLabel}]`
+      `[0:v][1:v]xfade=transition=${transitionName}:duration=${transitionDurationSeconds}:offset=${offset.toFixed(3)}[vout]`
     );
-    cumulativeDuration += clipRenders[i].exactDurationSeconds;
-    prevLabel = outLabel;
-  }
-  const totalDurationSeconds = cumulativeDuration - (clipRenders.length - 1) * transitionDurationSeconds;
 
-  if (hasMusic) {
-    const musicIndex = clipRenders.length;
-    const fadeOutStart = Math.max(0, totalDurationSeconds - 1);
-    const fadeOutDuration = Math.min(1, totalDurationSeconds);
-    filterParts.push(
-      `[${musicIndex}:a]volume=${musicVolume},afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOutDuration.toFixed(3)}[aout]`
+    const args = ["-y", "-i", prevMergePath, "-i", clipRenders[i].outputPath];
+    if (isLast && hasMusic) {
+      args.push("-stream_loop", "-1", "-i", musicPath);
+      const fadeOutStart = Math.max(0, totalDurationSeconds - 1);
+      const fadeOutDuration = Math.min(1, totalDurationSeconds);
+      filterParts.push(
+        `[2:a]volume=${musicVolume},afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOutDuration.toFixed(3)}[aout]`
+      );
+    }
+
+    args.push("-filter_complex", filterParts.join(";"));
+    args.push("-map", "[vout]");
+    if (isLast && hasMusic) {
+      args.push("-map", "[aout]");
+    }
+    args.push(
+      "-c:v", "libx264",
+      "-pix_fmt", "yuv420p",
+      "-r", String(fps),
+      "-crf", isLast ? "21" : "18",
+      "-preset", "veryfast",
+      "-movflags", "+faststart"
     );
+    if (isLast && hasMusic) {
+      args.push("-c:a", "aac", "-b:a", "128k");
+    } else {
+      args.push("-an");
+    }
+    if (isLast) {
+      args.push("-shortest");
+    }
+    args.push(mergeOutputPath);
+
+    const mergeDuration = prevMergeDuration + clipRenders[i].exactDurationSeconds - transitionDurationSeconds;
+    mergeSteps.push({ args, outputPath: mergeOutputPath, duration: mergeDuration });
+
+    prevMergePath = mergeOutputPath;
+    prevMergeDuration = mergeDuration;
   }
 
-  concatArgs.push("-filter_complex", filterParts.join(";"));
-  concatArgs.push("-map", "[vout]");
-  if (hasMusic) {
-    concatArgs.push("-map", "[aout]");
-  }
-  concatArgs.push(
-    "-c:v", "libx264",
-    "-pix_fmt", "yuv420p",
-    "-r", String(fps),
-    "-crf", "21",
-    "-preset", "veryfast",
-    "-movflags", "+faststart"
-  );
-  if (hasMusic) {
-    concatArgs.push("-c:a", "aac", "-b:a", "128k");
-  } else {
-    concatArgs.push("-an");
-  }
-  concatArgs.push("-shortest");
-  concatArgs.push(outputPath);
-
-  return { clipRenders, concatArgs, totalDurationSeconds };
+  return { clipRenders, mergeSteps, totalDurationSeconds };
 }
 
 export function buildFfmpegArgs({
