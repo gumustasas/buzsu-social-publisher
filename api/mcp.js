@@ -421,7 +421,7 @@ export async function callTool(name, args) {
       const aiCaption = args.instagramText || args.facebookText
         ? { instagramText: args.instagramText || args.facebookText, facebookText: args.facebookText || args.instagramText, hashtags: args.hashtags || "#Buzsu" }
         : null;
-      const draft = buildDraft(draftProduct, { format: args.format, platforms: args.platforms, variant: 0, publishAt: args.publishAt, captionOverride: aiCaption });
+      const draft = buildDraft(draftProduct, { format: args.format, platforms: args.platforms, variant: 0, publishAt: args.publishAt, captionOverride: aiCaption, allowCatalogCaption: true });
       if (!draft.valid) throw new Error(draft.warnings.join(" "));
       const record = await createDraftRecord({ product: draftProduct, draft, format: args.format, platforms: args.platforms, publishAt: args.publishAt, note: "MCP üzerinden oluşturuldu." });
       return JSON.stringify({ ok: true, id: record.id, status: "Taslak" }, null, 2);

@@ -32,21 +32,29 @@ test("content worker uses the AI caption override instead of the canned template
   assert.equal(draft.hashtags, "#Buzsu #Test");
 });
 
-test("content worker uses the product's existing catalog text (Airtable Instagram/Facebook Metni) instead of the generic template when no captionOverride is given", () => {
+test("content worker uses the product's existing catalog text (Airtable Instagram/Facebook Metni) as-is, with no extra link appended, when allowCatalogCaption is set and no captionOverride is given", () => {
   const productWithCatalogText = {
     ...product,
-    instagramText: "Evde taze, temiz ve alkali suya ulaşmak artık çok kolay! Naturalsnet ile mutfağınızda kesintisiz suyun keyfini çıkarın.",
-    facebookText: "Mutfakta konforu ve temiz suyu bir arada yaşamak isteyenler için harika bir öneri: Naturalsnet."
+    // Gerçek katalog metinleri her zaman kendi "Detaylar:"/"Ürünü inceleyin:"
+    // linkini zaten içerir (bkz. src/lib/products.js) — burada da öyle.
+    instagramText: "Evde taze, temiz ve alkali suya ulaşmak artık çok kolay!\n\nDetaylar: https://www.buzsu.com.tr/code-su-aritma-cihazi/",
+    facebookText: "Mutfakta konforu ve temiz suyu bir arada yaşamak isteyenler için harika bir öneri.\n\nÜrünü inceleyin: https://www.buzsu.com.tr/code-su-aritma-cihazi/"
   };
-  const draft = buildDraft(productWithCatalogText, { format: "Gönderi", platforms: ["Instagram", "Facebook"], publishAt: "2026-08-20T10:00:00.000Z" });
-  assert.match(draft.instagramText, /^Evde taze, temiz ve alkali suya/, "must use the product's own catalog text, not the generic 3-template fallback");
-  assert.match(draft.facebookText, /^Mutfakta konforu ve temiz suyu/);
-  assert.match(draft.instagramText, /code-su-aritma-cihazi/, "the product link must still be appended");
+  const draft = buildDraft(productWithCatalogText, { format: "Gönderi", platforms: ["Instagram", "Facebook"], publishAt: "2026-08-20T10:00:00.000Z", allowCatalogCaption: true });
+  assert.equal(draft.instagramText, productWithCatalogText.instagramText, "must be used verbatim — the catalog text already ends with its own link, appending another would duplicate it");
+  assert.equal(draft.facebookText, productWithCatalogText.facebookText);
+  assert.equal((draft.instagramText.match(/https:\/\//g) || []).length, 1, "must not contain a duplicated link");
   assert.equal(draft.hashtags, "#Buzsu #SuArıtma #SuArıtmaCihazı");
 });
 
-test("content worker still falls back to the generic template when the product has no catalog text at all", () => {
-  const draft = buildDraft({ ...product, instagramText: "", facebookText: "" }, { format: "Gönderi", platforms: ["Instagram", "Facebook"], publishAt: "2026-08-20T10:00:00.000Z" });
+test("content worker ignores the product's catalog text when allowCatalogCaption is not set (dashboard composer path — variant selection must keep working)", () => {
+  const productWithCatalogText = { ...product, instagramText: "Katalogdaki metin", facebookText: "Katalogdaki metin" };
+  const draft = buildDraft(productWithCatalogText, { format: "Gönderi", platforms: ["Instagram", "Facebook"], publishAt: "2026-08-20T10:00:00.000Z", variant: 1 });
+  assert.doesNotMatch(draft.instagramText, /Katalogdaki metin/, "without allowCatalogCaption the generic, variant-driven template must be used, exactly as before this feature existed");
+});
+
+test("content worker still falls back to the generic template when the product has no catalog text at all, even with allowCatalogCaption:true", () => {
+  const draft = buildDraft({ ...product, instagramText: "", facebookText: "" }, { format: "Gönderi", platforms: ["Instagram", "Facebook"], publishAt: "2026-08-20T10:00:00.000Z", allowCatalogCaption: true });
   assert.match(draft.instagramText, /Code kapalı kasa su arıtma cihazı|filtre yapısını ve seçeneklerini|Günlük kullanım için Code/);
 });
 
@@ -56,6 +64,7 @@ test("content worker prefers an explicit captionOverride over the product's own 
     format: "Gönderi",
     platforms: ["Instagram", "Facebook"],
     publishAt: "2026-08-20T10:00:00.000Z",
+    allowCatalogCaption: true,
     captionOverride: { instagramText: "Yeni AI metni", facebookText: "Yeni AI metni", hashtags: "#Buzsu #Test" }
   });
   assert.match(draft.instagramText, /^Yeni AI metni/);

@@ -18,6 +18,12 @@ export async function listRawRecords() {
   return data.records || [];
 }
 
+// create_draft'ın "mevcut metni yeniden kullan" yolu (bkz. src/content-worker.js
+// buildDraft) SADECE gerçekten onaylanmış/yayınlanmış bir kayıttan gelen metni
+// güvenilir sayar — bir "Taslak" (hiç incelenmemiş) veya "Hata" kaydının metnini
+// asla yeni bir taslağa taşımaz.
+const REUSABLE_CAPTION_STATUSES = new Set(["Onaylandı", "Paylaşıldı"]);
+
 // Ürün listesi iki kaynağın birleşimidir: (1) Airtable'daki mevcut Sosyal
 // Medya Takvimi kayıtları — bunlar daha önce paylaşılmış/taslak ürünlerdir
 // ve genelde bir Görsel URL'e sahiptir; (2) buzsu.com.tr'nin llms-full.txt
@@ -38,13 +44,25 @@ export async function listProducts() {
   // "DENEME" bug'ı). Bu yüzden llms-full.txt kataloğunda bu URL için
   // resmi bir ürün adı varsa, Airtable kaydının başlığı yerine o kullanılır.
   const catalogTitleByUrl = new Map(catalog.map((item) => [item.url, item.title]));
+  // Aynı URL'e ait birden fazla Airtable kaydı olabilir (her paylaşım denemesi
+  // ayrı bir kayıttır); bunlardan yeniden kullanılabilir metni (varsa) yalnızca
+  // REUSABLE_CAPTION_STATUSES'taki bir durumdan taşırız — sıralamadaki "ilk"
+  // kayıt bu değilse (ör. bir "Taslak" veya "Hata" kaydıysa) metin boş kalır.
+  const captionByUrl = new Map();
+  for (const record of records) {
+    const fields = record.fields || {};
+    const url = fields["Kaynak URL"] || "";
+    if (!url || captionByUrl.has(url) || !REUSABLE_CAPTION_STATUSES.has(fields.Durum)) continue;
+    captionByUrl.set(url, { instagramText: fields["Instagram Metni"] || "", facebookText: fields["Facebook Metni"] || "" });
+  }
   const seen = new Set();
   const airtableProducts = records.map((record) => {
     const fields = record.fields || {};
     const url = fields["Kaynak URL"] || "";
     const title = (url && catalogTitleByUrl.get(url)) || baseProductTitle(fields.Başlık) || "Başlıksız";
     const imageUrl = fields["Görsel URL"] || "";
-    return { id: record.id, title, url, imageUrl, imageUrls: imageUrl ? [imageUrl, ...findKnownProductPhotos(url).filter((item) => item !== imageUrl)] : findKnownProductPhotos(url), instagramText: fields["Instagram Metni"] || "", facebookText: fields["Facebook Metni"] || "" };
+    const caption = captionByUrl.get(url) || { instagramText: "", facebookText: "" };
+    return { id: record.id, title, url, imageUrl, imageUrls: imageUrl ? [imageUrl, ...findKnownProductPhotos(url).filter((item) => item !== imageUrl)] : findKnownProductPhotos(url), ...caption };
   }).filter((product) => {
     const key = product.url || product.id;
     if (!product.url || seen.has(key)) return false;
