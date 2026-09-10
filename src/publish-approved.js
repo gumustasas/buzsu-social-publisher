@@ -44,6 +44,19 @@ function requireHttpsUrl(value, label) {
 
 const joinText = (...values) => values.filter(Boolean).join("\n\n").trim();
 
+// "Hashtagler" alanı Airtable'da boşlukla ayrılmış tek bir metin olarak
+// tutulur (ör. "#Buzsu #UltraMag") — YouTube'un videos.insert snippet.tags
+// alanı ise ayrı, "#" işareti olmayan anahtar kelimelerden oluşan bir dizi
+// bekler (bkz. src/youtube-publish.js uploadShort). Description'a zaten
+// olduğu gibi metin olarak eklenen hashtag'lerden bağımsız, video sayfasının
+// arama/keşif metadata'sını da doldurmak için burada ayrıca diziye çevrilir.
+function hashtagsToTags(hashtags) {
+  return String(hashtags || "")
+    .split(/\s+/)
+    .map((tag) => tag.replace(/^#/, "").trim())
+    .filter(Boolean);
+}
+
 // "Media Items" alanı Airtable'da JSON string olarak saklanır (bkz.
 // src/lib/products.js createDraftRecord) — burada Carousel yayınlanırken
 // geri çözülür. Bozuk/eksik veri sessizce yutulmaz, açık hata fırlatılır.
@@ -294,12 +307,13 @@ export async function publishX(fields, format) {
 // YouTube Shorts yalnızca video ile mümkün — "Reel" dışındaki formatlarda
 // (görsel/hikâye) sessizce atlanır (hata değil), tıpkı X'in video'yu atladığı
 // gibi ama tam tersi yönde.
-async function publishYouTube(fields, format) {
+export async function publishYouTube(fields, format) {
   if (format !== "Reel") return null;
   requireHttpsUrl(fields["Video URL"], "Video URL");
   const title = (fields["Başlık"] || "Buzsu").replace(/\s*\|\s*Reel$/i, "").trim();
   const description = joinText(fields["X Metni"] || fields["Facebook Metni"] || fields["Instagram Metni"], fields["Hashtagler"], withUtm(fields["Kaynak URL"], { source: "youtube", title: fields["Başlık"] }));
-  return uploadShort({ title: `${title} #Shorts`, description, videoUrl: fields["Video URL"] });
+  const tags = hashtagsToTags(fields["Hashtagler"]);
+  return uploadShort({ title: `${title} #Shorts`, description, videoUrl: fields["Video URL"], tags });
 }
 
 function postIdsFor(fields, updates = {}) {
