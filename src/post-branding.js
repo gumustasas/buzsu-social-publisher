@@ -151,8 +151,14 @@ async function composeFramedBackground(imageBuffer) {
     .blur(48)
     .modulate({ brightness: 0.55 })
     .toBuffer();
+  // Kaynak (özellikle site thumbnail'ları) genelde 1080px'ten küçük olduğu
+  // için "contain" büyütmesi kaçınılmaz bir miktar yumuşama getiriyor —
+  // sharpen kayıp detayı geri getirmez, yalnızca kenar kontrastını artırıp
+  // algılanan netliği bir miktar toparlar (endüstride FFmpeg'in unsharp
+  // filtresiyle aynı amaçla kullanılan standart, ücretsiz bir teknik).
   const foreground = await sharp(imageBuffer)
     .resize(VIDEO_WIDTH, VIDEO_HEIGHT, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .sharpen({ sigma: 1.5 })
     .toBuffer();
   return sharp(background).composite([{ input: foreground }]).png().toBuffer();
 }
