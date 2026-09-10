@@ -146,7 +146,17 @@ async function run() {
     });
 
     console.log("ffmpeg çalıştırılıyor:", ["ffmpeg", ...args].join(" "));
-    await execFileAsync("ffmpeg", args, { maxBuffer: 1024 * 1024 * 64 });
+    try {
+      await execFileAsync("ffmpeg", args, { maxBuffer: 1024 * 1024 * 64 });
+    } catch (error) {
+      // Node'un varsayılan hata serileştirmesi (console.error(error)) stderr'i
+      // birkaç bin karakterden sonra "... N more characters" ile kesiyor —
+      // asıl ffmpeg hatasının (ör. hangi filtrede/aşamada oluştuğu) tam
+      // bağlamını kaybetmemek için son 100 satırı eksiksiz, ayrıca logluyoruz.
+      const stderrTail = String(error.stderr || "").split("\n").slice(-100).join("\n");
+      console.error("ffmpeg stderr (son 100 satır, eksiksiz):\n" + stderrTail);
+      throw error;
+    }
 
     const stat = await fs.stat(outputPath);
     const realDurationSeconds = await probeDurationSeconds(outputPath, totalDurationSeconds);
