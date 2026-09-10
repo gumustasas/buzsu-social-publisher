@@ -101,3 +101,17 @@ test("get_draft surfaces the Airtable error when the record cannot be found", as
     else process.env.AIRTABLE_TOKEN = originalAirtableToken;
   }
 });
+
+test("get_video_render_status requires jobId", async () => {
+  await assert.rejects(() => callTool("get_video_render_status", {}), /jobId gerekli/);
+});
+
+// compose_product_video, gerçek Blob/GitHub API çağrılarından ÖNCE
+// mediaItems'ı doğrular (bkz. src/video-compose.js validateComposeInput) —
+// bu yüzden geçersiz bir mediaItems, BLOB_READ_WRITE_TOKEN/
+// GITHUB_DISPATCH_TOKEN tanımlı olmadan da güvenle test edilebilir; gerçek
+// ağ/Blob mock'lu kapsamlı akış testleri test/video-compose.test.js'te.
+test("compose_product_video validates mediaItems before any network/Blob access", async () => {
+  await assert.rejects(() => callTool("compose_product_video", { mediaItems: [{ imageUrl: "https://example.com/a.jpg" }] }), /en az 2/);
+  await assert.rejects(() => callTool("compose_product_video", { mediaItems: [] }), /en az 2/);
+});

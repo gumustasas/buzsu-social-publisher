@@ -28,6 +28,16 @@ function parseMetaGraphVersionNumber(version) {
   return match ? Number.parseFloat(match[1]) : null;
 }
 
+// compose_product_video, render işini kendi projesinde değil (Vercel'in
+// süre/bellek sınırları riskli olduğu için) GitHub Actions'ın ücretsiz kuyruğunda
+// çalıştırır (bkz. src/video-compose.js, .github/workflows/render-product-video.yml).
+// Varsayılanlar bu deponun kendisine işaret eder; farklı bir fork/repo'da
+// çalıştırılıyorsa env ile override edilmelidir.
+export const GITHUB_REPO_OWNER = process.env.GITHUB_REPO_OWNER || "gumustasas";
+export const GITHUB_REPO_NAME = process.env.GITHUB_REPO_NAME || "buzsu-social-publisher";
+export const VIDEO_RENDER_WORKFLOW_FILE = process.env.VIDEO_RENDER_WORKFLOW_FILE || "render-product-video.yml";
+export const VIDEO_RENDER_REF = process.env.VIDEO_RENDER_REF || "main";
+
 export function assertMetaGraphVersionCurrent() {
   const parsed = parseMetaGraphVersionNumber(META_GRAPH_VERSION);
   if (parsed === null) {

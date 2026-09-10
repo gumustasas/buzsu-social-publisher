@@ -135,10 +135,13 @@ async function readBodyWithLimit(response, maxBytes) {
   return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
 }
 
-// Herkese açık bir HTTPS görsel URL'ini güvenli şekilde indirir: her
-// yönlendirme adımını yeniden SSRF kontrolünden geçirir, Content-Type'ın
-// PNG/JPEG/WebP olduğunu ve boyutun sınırın altında kaldığını doğrular.
-export async function fetchPublicImage(rawUrl, { maxBytes = MAX_MEDIA_BYTES, fetchImpl = fetch, lookup } = {}) {
+// fetchPublicImage/fetchPublicAudio'nun ortak çekirdeği: her yönlendirme
+// adımını yeniden SSRF kontrolünden geçirir, Content-Type'ın izin verilen
+// MIME kümesinde olduğunu ve boyutun sınırın altında kaldığını doğrular.
+// Hata mesajları mediaLabel/mediaTypesLabel ile parametrize edilir —
+// fetchPublicImage'ın döndürdüğü mesajlar (ve dolayısıyla onu test eden
+// mevcut testler) birebir korunur.
+async function fetchPublicMediaFile(rawUrl, { maxBytes, fetchImpl = fetch, lookup, allowedMimeTypes, mediaLabel, mediaTypesLabel }) {
   let currentUrl = rawUrl;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const url = await assertPublicHttpsUrl(currentUrl, lookup ? { lookup } : {});
@@ -149,17 +152,34 @@ export async function fetchPublicImage(rawUrl, { maxBytes = MAX_MEDIA_BYTES, fet
       currentUrl = new URL(location, url).toString();
       continue;
     }
-    if (!response.ok) throw new Error(`Görsel indirilemedi (HTTP ${response.status}).`);
+    if (!response.ok) throw new Error(`${mediaLabel} indirilemedi (HTTP ${response.status}).`);
     const contentType = String(response.headers?.get?.("content-type") || "").split(";")[0].trim().toLowerCase();
-    if (!ALLOWED_IMAGE_MIME_TYPES.has(contentType)) {
-      throw new Error(`Desteklenmeyen görsel tipi: ${contentType || "bilinmiyor"}. Yalnızca PNG/JPEG/WebP kabul edilir.`);
+    if (!allowedMimeTypes.has(contentType)) {
+      throw new Error(`Desteklenmeyen ${mediaLabel.toLocaleLowerCase("tr-TR")} tipi: ${contentType || "bilinmiyor"}. Yalnızca ${mediaTypesLabel} kabul edilir.`);
     }
     const declaredLength = Number(response.headers?.get?.("content-length") || 0);
-    if (declaredLength > maxBytes) throw new Error(`Görsel çok büyük (en fazla ${Math.round(maxBytes / 1024 / 1024)}MB).`);
+    if (declaredLength > maxBytes) throw new Error(`${mediaLabel} çok büyük (en fazla ${Math.round(maxBytes / 1024 / 1024)}MB).`);
     const buffer = await readBodyWithLimit(response, maxBytes);
     return { buffer, mimeType: contentType };
   }
   throw new Error("Çok fazla yönlendirme.");
+}
+
+// Herkese açık bir HTTPS görsel URL'ini güvenli şekilde indirir: her
+// yönlendirme adımını yeniden SSRF kontrolünden geçirir, Content-Type'ın
+// PNG/JPEG/WebP olduğunu ve boyutun sınırın altında kaldığını doğrular.
+export async function fetchPublicImage(rawUrl, { maxBytes = MAX_MEDIA_BYTES, fetchImpl = fetch, lookup } = {}) {
+  return fetchPublicMediaFile(rawUrl, { maxBytes, fetchImpl, lookup, allowedMimeTypes: ALLOWED_IMAGE_MIME_TYPES, mediaLabel: "Görsel", mediaTypesLabel: "PNG/JPEG/WebP" });
+}
+
+// compose_product_video'nun opsiyonel müzik URL'i için — fetchPublicImage ile
+// aynı SSRF-güvenli indirme/boyut sınırı mantığını paylaşır, yalnızca izin
+// verilen MIME türleri farklıdır.
+export const ALLOWED_AUDIO_MIME_TYPES = new Set(["audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav", "audio/ogg"]);
+export const MAX_AUDIO_BYTES = 20 * 1024 * 1024;
+
+export async function fetchPublicAudio(rawUrl, { maxBytes = MAX_AUDIO_BYTES, fetchImpl = fetch, lookup } = {}) {
+  return fetchPublicMediaFile(rawUrl, { maxBytes, fetchImpl, lookup, allowedMimeTypes: ALLOWED_AUDIO_MIME_TYPES, mediaLabel: "Müzik", mediaTypesLabel: "MP3/MP4/WAV/OGG" });
 }
 
 // ChatGPT/kullanıcı tarafından doğrudan base64 olarak gönderilen bir

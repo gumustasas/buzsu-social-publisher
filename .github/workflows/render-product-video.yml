@@ -1,0 +1,38 @@
+name: Render Product Video
+
+# Yalnızca compose_product_video MCP aracı (src/video-compose.js) tarafından
+# workflow_dispatch API'si üzerinden tetiklenir — push/PR ile OTOMATİK
+# çalışmaz. Vercel serverless'ın süre/bellek sınırları FFmpeg render'ı için
+# riskli olduğundan (klasik/Fluid olmayan Pro planında 15sn sınırı var),
+# ağır render işi burada, GitHub Actions'ın ücretsiz dakika kotasında
+# çalıştırılır. İş durumu GitHub'ın kendisinden değil, Vercel Blob'daki
+# video-jobs/<jobId>.json dosyasından okunur (bkz. src/lib/video-jobs.js) —
+# workflow_dispatch 204 No Content döner ve bir run ID vermez.
+on:
+  workflow_dispatch:
+    inputs:
+      jobId:
+        description: "video-jobs/<jobId>.json içindeki işin ID'si"
+        required: true
+        type: string
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    # Ken Burns/xfade filtre grafiği + libx264 kodlama birkaç dakika sürebilir;
+    # takılı kalan bir işi süresiz beklemek yerine erken sonlandırıyoruz.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Render video
+        env:
+          JOB_ID: ${{ inputs.jobId }}
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+        run: node scripts/render-product-video.mjs

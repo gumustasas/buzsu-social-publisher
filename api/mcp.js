@@ -14,6 +14,7 @@ import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "../src
 import { fetchPublicImage, decodeImageBase64, imageExtensionFor, extractDriveFileId, normalizeDriveUrl, normalizeImageForMeta } from "../src/lib/upload-media.js";
 import { validateSceneImage } from "../src/lib/scene-validation.js";
 import { normalizeDraftFields } from "../src/lib/queue.js";
+import { composeProductVideo, getVideoRenderStatus } from "../src/video-compose.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
 const SERVER_INFO = { name: "buzsu-social-publisher", version: "1.0.0" };
@@ -272,6 +273,46 @@ const TOOLS = [
       },
       required: ["enabled"]
     }
+  },
+  {
+    name: "compose_product_video",
+    description: "2-10 ürün görselinden ÜCRETSİZ (paid API kullanmadan), FFmpeg ile 9:16 1080x1920 Reels/Shorts videosu üretir — her ürün ~1.5-2sn gösterilir, hafif zoom/pan (Ken Burns) ve geçiş efekti uygulanır, ürün adı alt kısımda güvenli alanda gösterilir, sabit bir Buzsu kapanış sahnesiyle biter. Render işi (birkaç dakika sürebilir) GitHub Actions'ın ücretsiz kuyruğunda arka planda çalışır — bu tool işi başlatıp hemen bir jobId döner, sonucu get_video_render_status ile sorgulayın. Tamamlandığında dönen videoUrl, create_draft(format:'Reel') içinde videoUrl olarak veya bir Carousel'in mediaItems'ında doğrudan kullanılabilir.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        mediaItems: {
+          type: "array",
+          description: "2-10 öğe. Her öğe herkese açık bir HTTPS görsel URL'i (PNG/JPEG/WebP) ve isteğe bağlı bir ürün adı içerir.",
+          items: {
+            type: "object",
+            properties: {
+              imageUrl: { type: "string", description: "Herkese açık HTTPS görsel URL'i." },
+              title: { type: "string", description: "İsteğe bağlı — videoda alt kısımda gösterilecek ürün adı (en fazla 60 karakter)." }
+            },
+            required: ["imageUrl"]
+          }
+        },
+        durationPerImageSeconds: { type: "number", description: "Her ürünün ekranda kalma süresi, saniye (varsayılan 1.8, aralık 1.0-3.0)." },
+        transition: { type: "string", enum: ["fade", "wipe"], description: "Ürünler arası geçiş efekti (varsayılan 'fade')." },
+        transitionDurationSeconds: { type: "number", description: "Geçiş efektinin süresi, saniye (varsayılan 0.4, aralık 0.2-1.0; durationPerImageSeconds'tan küçük olmalı)." },
+        closingTitle: { type: "string", description: "İsteğe bağlı — kapanış sahnesindeki ana metni değiştirir (varsayılan: 'Buzsu – İhtiyacınıza uygun su çözümünü keşfedin')." },
+        closingSubtitle: { type: "string", description: "İsteğe bağlı — kapanış sahnesindeki alt metni değiştirir (varsayılan: 'buzsu.com.tr')." },
+        musicUrl: { type: "string", description: "İsteğe bağlı — herkese açık HTTPS royalty-free müzik URL'i (MP3/MP4/WAV/OGG). Video süresine göre otomatik döngüye alınır ve kırpılır." },
+        musicVolume: { type: "number", description: "musicUrl verilirse müzik ses seviyesi, 0-1 aralığında (varsayılan 0.5)." }
+      },
+      required: ["mediaItems"]
+    }
+  },
+  {
+    name: "get_video_render_status",
+    description: "compose_product_video ile başlatılmış bir render işinin durumunu sorgular. status 'queued'/'rendering' ise birkaç dakika sonra tekrar deneyin; 'completed' ise videoUrl, durationSeconds, width, height, fileSizeBytes döner; 'failed' ise error alanında sebep bulunur.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        jobId: { type: "string", description: "compose_product_video yanıtındaki jobId." }
+      },
+      required: ["jobId"]
+    }
   }
 ];
 
@@ -524,6 +565,15 @@ export async function callTool(name, args) {
         videoUrl = blob.url;
       }
       return JSON.stringify({ ok: true, status: "COMPLETED", videoUrl }, null, 2);
+    }
+    case "compose_product_video": {
+      const result = await composeProductVideo(args);
+      return JSON.stringify(result, null, 2);
+    }
+    case "get_video_render_status": {
+      if (!String(args.jobId || "").trim()) throw new Error("jobId gerekli.");
+      const status = await getVideoRenderStatus(args.jobId);
+      return JSON.stringify(status, null, 2);
     }
     case "get_autopilot_status": {
       const enabled = await getAutopilotEnabled();
