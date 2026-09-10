@@ -88,3 +88,92 @@ export async function composeBrandedPost(scenePngBuffer, { title } = {}) {
     .png()
     .toBuffer();
 }
+
+// --- compose_product_video (MCP aracı) için 9:16 video kare/kapanış üretimi ---
+// composeBrandedPost'un (1024x1024 kare gönderi) video kardeşi: aynı
+// wrapTitle/boldFont ölçüm mantığını paylaşır, yalnızca canvas boyutu
+// (1080x1920) ve bant konumu farklıdır. compose_product_video her ürün
+// görselini FFmpeg'e vermeden ÖNCE burada markalar — böylece FFmpeg'in işi
+// yalnızca hareket/geçiş/encode olur, metin/font render'ı FFmpeg'in
+// (kırılgan) drawtext filtresine değil, burada zaten test edilmiş
+// sharp+opentype koduna kalır.
+const VIDEO_WIDTH = 1080;
+const VIDEO_HEIGHT = 1920;
+const VIDEO_BAR_HEIGHT = 170;
+// Instagram Reels / YouTube Shorts oynatıcısı alt ~200-250px'i kendi
+// arayüzüyle (altyazı, beğen/paylaş ikonları) kaplıyor — ürün adı bandı bu
+// bölgenin üzerinde, "güvenli alanda" kalsın diye bu payı bırakıyoruz.
+const VIDEO_SAFE_BOTTOM_MARGIN = 230;
+
+function videoTitlePaths(title, barTop) {
+  let size = 52;
+  let lines = wrapTitle(title, size, VIDEO_WIDTH - 140, 1);
+  if (boldFont.getAdvanceWidth(lines[0], size) > VIDEO_WIDTH - 140) {
+    size = 40;
+    lines = wrapTitle(title, size, VIDEO_WIDTH - 140, 2);
+  }
+  const lineHeight = size * 1.15;
+  const startY = barTop + (lines.length === 1 ? 80 : 68);
+  const centeredPath = (text, y) => {
+    const width = boldFont.getAdvanceWidth(text, size);
+    const x = (VIDEO_WIDTH - width) / 2;
+    return `<path d="${boldFont.getPath(text, x, y, size).toPathData(2)}" fill="#ffffff"/>`;
+  };
+  return lines.map((line, i) => centeredPath(line, startY + i * lineHeight)).join("");
+}
+
+function videoTitleBarSvg(title, barTop) {
+  return Buffer.from(`<svg width="${VIDEO_WIDTH}" height="${VIDEO_HEIGHT}" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="vbar" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#04102b" stop-opacity="0"/>
+        <stop offset="0.4" stop-color="#04102b" stop-opacity="0.88"/>
+        <stop offset="1" stop-color="#04102b" stop-opacity="0.94"/>
+      </linearGradient>
+    </defs>
+    <rect x="0" y="${barTop}" width="${VIDEO_WIDTH}" height="${VIDEO_BAR_HEIGHT}" fill="url(#vbar)"/>
+    ${videoTitlePaths(escapeXml(title), barTop)}
+  </svg>`);
+}
+
+// Ürün fotoğrafını 9:16'ya (cover ile) kırpar; title verilirse alt güvenli
+// alana markalı bir ürün adı bandı bindirir, verilmezse çıplak kareyi döner.
+export async function composeVideoFrame(imageBuffer, { title } = {}) {
+  const base = sharp(imageBuffer).resize(VIDEO_WIDTH, VIDEO_HEIGHT, { fit: "cover" });
+  if (!title) return base.png().toBuffer();
+  const barTop = VIDEO_HEIGHT - VIDEO_SAFE_BOTTOM_MARGIN - VIDEO_BAR_HEIGHT;
+  return base.composite([{ input: videoTitleBarSvg(title, barTop) }]).png().toBuffer();
+}
+
+// compose_product_video'nun sabit kapanış sahnesi: düz marka arka planı +
+// ortalı başlık/alt başlık + Buzsu logosu. Hiçbir ürün fotoğrafı içermez.
+export async function composeClosingScene({ title = "Buzsu – İhtiyacınıza uygun su çözümünü keşfedin", subtitle = "buzsu.com.tr" } = {}) {
+  const logoTargetWidth = 220;
+  const logoMeta = await sharp(LOGO_PATH).metadata();
+  const logoHeight = Math.round((logoMeta.height / logoMeta.width) * logoTargetWidth);
+  const logoBuffer = await sharp(LOGO_PATH).resize(logoTargetWidth, logoHeight).toBuffer();
+  const logoLeft = Math.round((VIDEO_WIDTH - logoTargetWidth) / 2);
+  const logoTop = Math.round(VIDEO_HEIGHT * 0.36);
+
+  const titleSize = 46;
+  const escapedTitle = escapeXml(title);
+  const titleLines = wrapTitle(escapedTitle, titleSize, VIDEO_WIDTH - 140, 3);
+  const titleLineHeight = titleSize * 1.25;
+  const titleStartY = logoTop + logoHeight + 90;
+  const subtitleSize = 34;
+  const subtitleY = titleStartY + titleLines.length * titleLineHeight + 30;
+
+  const centeredPath = (text, y, size) => {
+    const width = boldFont.getAdvanceWidth(text, size);
+    const x = (VIDEO_WIDTH - width) / 2;
+    return `<path d="${boldFont.getPath(text, x, y, size).toPathData(2)}" fill="#ffffff"/>`;
+  };
+
+  const svg = Buffer.from(`<svg width="${VIDEO_WIDTH}" height="${VIDEO_HEIGHT}" xmlns="http://www.w3.org/2000/svg">
+    <rect width="${VIDEO_WIDTH}" height="${VIDEO_HEIGHT}" fill="#04102b"/>
+    ${titleLines.map((line, i) => centeredPath(line, titleStartY + i * titleLineHeight, titleSize)).join("")}
+    ${centeredPath(escapeXml(subtitle), subtitleY, subtitleSize)}
+  </svg>`);
+
+  return sharp(svg).composite([{ input: logoBuffer, top: logoTop, left: logoLeft }]).png().toBuffer();
+}

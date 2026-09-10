@@ -1,0 +1,46 @@
+name: FFmpeg Render Smoke Test
+
+# compose_product_video'nun render mantığını (src/lib/ffmpeg-command.js +
+# src/post-branding.js) GERÇEK bir ffmpeg ile, hiçbir secret/token
+# gerektirmeden test eder — Vercel Blob'a yükleme veya GitHub API çağrısı
+# YAPMAZ (bkz. scripts/smoke-test-render.mjs). Depo içindeki küçük fixture
+# görselleriyle (test/fixtures/video/) 9:16 bir video üretip ffprobe +
+# piksel analiziyle doğrular; çıktı bir artifact olarak yüklenir.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffmpeg-smoke-test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    # zoompan filtresi (Ken Burns) 1080x1920 çıktıda beklenenden yavaş
+    # olabiliyor — birkaç dakikalık render + kurulum için pay bırakılıyor.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Render + verify smoke test video
+        run: node scripts/smoke-test-render.mjs
+      - name: Upload smoke test output (MP4 + kareler + rapor)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-smoke-test-output
+          path: local-output/smoke-test/
+          retention-days: 14
+          if-no-files-found: warn
