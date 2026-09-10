@@ -141,7 +141,7 @@ export function buildTwoPassFfmpegArgs({
 
     const args = ["-y", "-i", prevMergePath, "-i", clipRenders[i].outputPath];
     if (isLast && hasMusic) {
-      args.push("-stream_loop", "-1", "-i", musicPath);
+      args.push("-stream_loop", "-1", "-t", String(totalDurationSeconds + 1), "-i", musicPath);
       const fadeOutStart = Math.max(0, totalDurationSeconds - 1);
       const fadeOutDuration = Math.min(1, totalDurationSeconds);
       filterParts.push(
@@ -166,9 +166,6 @@ export function buildTwoPassFfmpegArgs({
       args.push("-c:a", "aac", "-b:a", "128k");
     } else {
       args.push("-an");
-    }
-    if (isLast) {
-      args.push("-shortest");
     }
     args.push(mergeOutputPath);
 
@@ -225,9 +222,6 @@ export function buildFfmpegArgs({
     );
   }
   const hasMusic = Boolean(musicPath);
-  if (hasMusic) {
-    args.push("-stream_loop", "-1", "-i", musicPath);
-  }
 
   const filterParts = [];
   const exactDurations = [];
@@ -258,6 +252,10 @@ export function buildFfmpegArgs({
   const totalDurationSeconds = cumulativeDuration - (clips.length - 1) * transitionDurationSeconds;
 
   if (hasMusic) {
+    args.push("-stream_loop", "-1", "-t", String(totalDurationSeconds + 1), "-i", musicPath);
+  }
+
+  if (hasMusic) {
     const musicIndex = clips.length;
     const fadeOutStart = Math.max(0, totalDurationSeconds - 1);
     const fadeOutDuration = Math.min(1, totalDurationSeconds);
@@ -286,7 +284,6 @@ export function buildFfmpegArgs({
   } else {
     args.push("-an");
   }
-  args.push("-shortest");
   args.push(outputPath);
 
   return { args, totalDurationSeconds };
