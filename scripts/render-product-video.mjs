@@ -97,13 +97,7 @@ async function run() {
 
   await writeVideoJobStatus(jobId, { status: "rendering", payload: job.payload }, { allowOverwrite: true });
 
-  // GitHub Actions runner'larında os.tmpdir() (/tmp) ile RUNNER_TEMP FARKLI
-  // bölümler olabilir — /tmp gerçek disk alanına göre çok daha kısıtlı
-  // kalabiliyor. Gerçek render'larda ("No space left on device", ffmpeg
-  // encode ortasında) gözlemlendi: /tmp'e yazmak yerine GitHub Actions'ın
-  // asıl büyük geçici disk alanını gösteren RUNNER_TEMP kullanılıyor (yalnızca
-  // gerçek bir runner'da tanımlı; lokal/diğer ortamlarda os.tmpdir()'e düşer).
-  const workDir = await fs.mkdtemp(path.join(process.env.RUNNER_TEMP || os.tmpdir(), "buzsu-video-"));
+  const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "buzsu-video-"));
   try {
     // src/video-compose.js yalnızca URL'lerin söz dizimini (yalnızca HTTPS)
     // doğrular; gerçek SSRF/DNS koruması ve indirme burada,
