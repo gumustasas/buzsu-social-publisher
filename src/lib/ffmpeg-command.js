@@ -52,6 +52,129 @@ function zoompanFilter(inputLabel, outputLabel, durationSeconds, fps, width, hei
   };
 }
 
+// İki aşamalı render: her klibi AYRI render et (1 zoompan = düşük bellek),
+// sonra önceden kodlanmış klipleri xfade ile birleştir. Tek bir devasa
+// filter_complex'te 11 paralel zoompan çalıştırmak GitHub Actions runner'ın
+// ~7.8G RAM'ini taşırıyor (ENOSPC olarak raporlanan bir bellek hatası).
+export function buildTwoPassFfmpegArgs({
+  frames,
+  closingFrame,
+  durationPerImageSeconds,
+  closingDurationSeconds = 2.5,
+  transition = "fade",
+  transitionDurationSeconds = 0.4,
+  musicPath,
+  musicVolume = 0.5,
+  width = 1080,
+  height = 1920,
+  fps = 30,
+  clipDir,
+  outputPath
+}) {
+  if (!Array.isArray(frames) || frames.length < 1) {
+    throw new Error("frames en az bir öğe içermelidir.");
+  }
+  if (!closingFrame || !closingFrame.path) {
+    throw new Error("closingFrame gereklidir.");
+  }
+  if (!outputPath) {
+    throw new Error("outputPath gereklidir.");
+  }
+  if (!clipDir) {
+    throw new Error("clipDir gereklidir.");
+  }
+  if (!durationPerImageSeconds || durationPerImageSeconds <= 0) {
+    throw new Error("durationPerImageSeconds pozitif olmalıdır.");
+  }
+
+  const transitionName = TRANSITION_MAP[transition] || TRANSITION_MAP.fade;
+  const clips = [
+    ...frames.map((frame) => ({ path: frame.path, requestedDuration: durationPerImageSeconds })),
+    { path: closingFrame.path, requestedDuration: closingDurationSeconds }
+  ];
+
+  const clipRenders = clips.map((clip, index) => {
+    const { filter, exactDurationSeconds } = zoompanFilter(
+      "0:v", "vout",
+      clip.requestedDuration, fps, width, height
+    );
+    const clipOutputPath = `${clipDir}/clip-${index}.mp4`;
+    const args = [
+      "-y",
+      "-loop", "1",
+      "-framerate", String(INPUT_LOOP_FRAMERATE),
+      "-t", String(clip.requestedDuration),
+      "-i", clip.path,
+      "-filter_complex", filter,
+      "-map", "[vout]",
+      "-c:v", "libx264",
+      "-pix_fmt", "yuv420p",
+      "-r", String(fps),
+      "-crf", "18",
+      "-preset", "veryfast",
+      "-an",
+      clipOutputPath
+    ];
+    return { args, outputPath: clipOutputPath, exactDurationSeconds };
+  });
+
+  const concatArgs = ["-y"];
+  for (const render of clipRenders) {
+    concatArgs.push("-i", render.outputPath);
+  }
+  const hasMusic = Boolean(musicPath);
+  if (hasMusic) {
+    concatArgs.push("-stream_loop", "-1", "-i", musicPath);
+  }
+
+  const filterParts = [];
+  let prevLabel = "0:v";
+  let cumulativeDuration = clipRenders[0].exactDurationSeconds;
+
+  for (let i = 1; i < clipRenders.length; i++) {
+    const outLabel = i === clipRenders.length - 1 ? "vout" : `vx${i}`;
+    const offset = cumulativeDuration - i * transitionDurationSeconds;
+    filterParts.push(
+      `[${prevLabel}][${i}:v]xfade=transition=${transitionName}:duration=${transitionDurationSeconds}:offset=${offset.toFixed(3)}[${outLabel}]`
+    );
+    cumulativeDuration += clipRenders[i].exactDurationSeconds;
+    prevLabel = outLabel;
+  }
+  const totalDurationSeconds = cumulativeDuration - (clipRenders.length - 1) * transitionDurationSeconds;
+
+  if (hasMusic) {
+    const musicIndex = clipRenders.length;
+    const fadeOutStart = Math.max(0, totalDurationSeconds - 1);
+    const fadeOutDuration = Math.min(1, totalDurationSeconds);
+    filterParts.push(
+      `[${musicIndex}:a]volume=${musicVolume},afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOutDuration.toFixed(3)}[aout]`
+    );
+  }
+
+  concatArgs.push("-filter_complex", filterParts.join(";"));
+  concatArgs.push("-map", "[vout]");
+  if (hasMusic) {
+    concatArgs.push("-map", "[aout]");
+  }
+  concatArgs.push(
+    "-c:v", "libx264",
+    "-pix_fmt", "yuv420p",
+    "-r", String(fps),
+    "-crf", "21",
+    "-preset", "veryfast",
+    "-movflags", "+faststart"
+  );
+  if (hasMusic) {
+    concatArgs.push("-c:a", "aac", "-b:a", "128k");
+  } else {
+    concatArgs.push("-an");
+  }
+  concatArgs.push("-shortest");
+  concatArgs.push(outputPath);
+
+  return { clipRenders, concatArgs, totalDurationSeconds };
+}
+
 export function buildFfmpegArgs({
   frames,
   closingFrame,

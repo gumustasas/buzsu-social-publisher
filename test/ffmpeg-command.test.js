@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildFfmpegArgs } from "../src/lib/ffmpeg-command.js";
+import { buildFfmpegArgs, buildTwoPassFfmpegArgs } from "../src/lib/ffmpeg-command.js";
 
 test("buildFfmpegArgs computes correct chained xfade offsets and total duration for 3 images + closing", () => {
   const { args, totalDurationSeconds } = buildFfmpegArgs({
@@ -166,4 +166,81 @@ test("buildFfmpegArgs scales total duration correctly for the maximum of 10 prod
   });
   // total = (1.5*10 + 2.5) - 10*0.4 = 17.5 - 4.0 = 13.5
   assert.equal(totalDurationSeconds, 13.5);
+});
+
+// === buildTwoPassFfmpegArgs ===
+
+test("buildTwoPassFfmpegArgs returns one clip render per frame+closing, each with a single zoompan filter", () => {
+  const { clipRenders, concatArgs, totalDurationSeconds } = buildTwoPassFfmpegArgs({
+    frames: [{ path: "f1.png" }, { path: "f2.png" }, { path: "f3.png" }],
+    closingFrame: { path: "closing.png" },
+    durationPerImageSeconds: 1.5,
+    closingDurationSeconds: 2.5,
+    transitionDurationSeconds: 0.4,
+    clipDir: "/tmp/clips",
+    outputPath: "out.mp4"
+  });
+  assert.equal(clipRenders.length, 4);
+  for (const clip of clipRenders) {
+    const fc = clip.args[clip.args.indexOf("-filter_complex") + 1];
+    assert.equal((fc.match(/zoompan=/g) || []).length, 1);
+  }
+  assert.equal(totalDurationSeconds, 5.8);
+  const concatFc = concatArgs[concatArgs.indexOf("-filter_complex") + 1];
+  assert.ok(!concatFc.includes("zoompan"));
+  assert.match(concatFc, /xfade/);
+  assert.match(concatFc, /\[vout\]$/);
+});
+
+test("buildTwoPassFfmpegArgs concat pass has correct xfade offsets matching the single-pass version", () => {
+  const { concatArgs, totalDurationSeconds } = buildTwoPassFfmpegArgs({
+    frames: [{ path: "f1.png" }, { path: "f2.png" }, { path: "f3.png" }],
+    closingFrame: { path: "closing.png" },
+    durationPerImageSeconds: 1.5,
+    closingDurationSeconds: 2.5,
+    transitionDurationSeconds: 0.4,
+    clipDir: "/tmp/clips",
+    outputPath: "out.mp4"
+  });
+  const filterComplex = concatArgs[concatArgs.indexOf("-filter_complex") + 1];
+  assert.match(filterComplex, /offset=1\.100/);
+  assert.match(filterComplex, /offset=2\.200/);
+  assert.match(filterComplex, /offset=3\.300/);
+  assert.equal(totalDurationSeconds, 5.8);
+});
+
+test("buildTwoPassFfmpegArgs handles music in concat pass", () => {
+  const { concatArgs } = buildTwoPassFfmpegArgs({
+    frames: [{ path: "f1.png" }],
+    closingFrame: { path: "closing.png" },
+    durationPerImageSeconds: 1.5,
+    musicPath: "music.mp3",
+    musicVolume: 0.3,
+    clipDir: "/tmp/clips",
+    outputPath: "out.mp4"
+  });
+  assert.ok(concatArgs.includes("music.mp3"));
+  assert.ok(concatArgs.includes("-stream_loop"));
+  const filterComplex = concatArgs[concatArgs.indexOf("-filter_complex") + 1];
+  assert.match(filterComplex, /volume=0\.3/);
+  assert.match(filterComplex, /afade=t=out/);
+  assert.match(filterComplex, /\[aout\]$/);
+  assert.ok(concatArgs.includes("-c:a"));
+  assert.ok(concatArgs.includes("aac"));
+});
+
+test("buildTwoPassFfmpegArgs clip renders use CRF 18 (intermediate quality) while concat uses CRF 21", () => {
+  const { clipRenders, concatArgs } = buildTwoPassFfmpegArgs({
+    frames: [{ path: "f1.png" }],
+    closingFrame: { path: "closing.png" },
+    durationPerImageSeconds: 1.5,
+    clipDir: "/tmp/clips",
+    outputPath: "out.mp4"
+  });
+  for (const clip of clipRenders) {
+    const crfIdx = clip.args.indexOf("-crf");
+    assert.equal(clip.args[crfIdx + 1], "18");
+  }
+  const concatCrfIdx = concatArgs.indexOf("-crf");
+  assert.equal(concatArgs[concatCrfIdx + 1], "21");
 });
