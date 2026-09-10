@@ -74,3 +74,10 @@ jobs:
           BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
           REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
         run: node scripts/render-product-video.mjs
+      # GEÇİCİ TEŞHİS (yukarıdaki adımla eşleşir): render başarısız da olsa
+      # (if: always()) render SONRASI disk durumunu yakalar — başlangıçtaki
+      # ölçümle karşılaştırıp "disk zaten mi doluydu, yoksa bizim iş mi
+      # doldurdu" sorusunu kesin olarak cevaplamak için.
+      - name: Disk durumu (render sonrası, teşhis)
+        if: always()
+        run: df -h
