@@ -37,10 +37,33 @@ function redactUrlForLog(rawUrl) {
   }
 }
 
+// run() bu değişkeni payload'u başarıyla okuduğu anda doldurur. markFailed
+// bunu koruyarak yazar — aksi halde bir hata sonrası "failed" durumu
+// payload'un ÜSTÜNE yazılıp işi yok ederdi: aynı jobId ile workflow'u
+// yeniden tetiklemek (ör. GitHub Actions "Re-run failed jobs") bir sonraki
+// denemede "payload bulunamadı" hatasıyla anında düşerdi — render gerçekte
+// hiç çalışmamış olsa bile.
+let currentPayload;
+
 async function markFailed(error) {
   console.error(error);
+  if (!currentPayload) {
+    // run()'ın İLK readVideoJobStatus çağrısı (payload henüz hiç okunmamışken)
+    // geçici bir sebeple (Blob list/fetch/JSON hatası) başarısız olmuş olabilir
+    // — "failed" yazmadan önce kaydı bir kez daha okumayı deniyoruz, aksi
+    // halde bu ilk-okuma hatası da payload'u yok ederdi (tam olarak bu
+    // düzeltmenin önlemeye çalıştığı veri kaybı senaryosu).
+    try {
+      const existing = await readVideoJobStatus(jobId);
+      if (existing?.payload) currentPayload = existing.payload;
+    } catch { /* kurtarılamadı — aşağıda payload'sız yazılacak */ }
+  }
   try {
-    await writeVideoJobStatus(jobId, { status: "failed", error: error?.message || String(error) }, { allowOverwrite: true });
+    await writeVideoJobStatus(jobId, {
+      status: "failed",
+      error: error?.message || String(error),
+      ...(currentPayload ? { payload: currentPayload } : {})
+    }, { allowOverwrite: true });
   } catch (writeError) {
     console.error("Durum 'failed' olarak yazılamadı:", writeError);
   }
@@ -69,6 +92,7 @@ async function run() {
   if (!job || !job.payload) {
     throw new Error(`video-jobs/${jobId}.json içinde bir payload bulunamadı.`);
   }
+  currentPayload = job.payload;
   const { mediaItems, durationPerImageSeconds, transition, transitionDurationSeconds, closing, musicUrl, musicVolume, upscaleImages } = job.payload;
 
   await writeVideoJobStatus(jobId, { status: "rendering", payload: job.payload }, { allowOverwrite: true });
