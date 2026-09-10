@@ -72,3 +72,9 @@ jobs:
           BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
           REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
         run: node scripts/render-product-video.mjs
+      # Cleanup adımının gerçekten yeterli alan açtığını render sonrasında da
+      # doğrulamak için — render başarısız olsa bile (if: always()) diskin
+      # ne durumda kaldığını gösterir.
+      - name: Disk durumu (render sonrası)
+        if: always()
+        run: df -h /
