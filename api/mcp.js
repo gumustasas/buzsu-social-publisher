@@ -276,7 +276,7 @@ const TOOLS = [
   },
   {
     name: "compose_product_video",
-    description: "2-10 ürün görselinden ÜCRETSİZ (paid API kullanmadan), FFmpeg ile 9:16 1080x1920 Reels/Shorts videosu üretir — her ürün ~1.5-2sn gösterilir, hafif zoom/pan (Ken Burns) ve geçiş efekti uygulanır, ürün adı alt kısımda güvenli alanda gösterilir, sabit bir Buzsu kapanış sahnesiyle biter. Render işi (birkaç dakika sürebilir) GitHub Actions'ın ücretsiz kuyruğunda arka planda çalışır — bu tool işi başlatıp hemen bir jobId döner, sonucu get_video_render_status ile sorgulayın. Tamamlandığında dönen videoUrl, create_draft(format:'Reel') içinde videoUrl olarak veya bir Carousel'in mediaItems'ında doğrudan kullanılabilir.",
+    description: "2-10 ürün görselinden ÜCRETSİZ (paid API kullanmadan), FFmpeg ile 9:16 1080x1920 Reels/Shorts videosu üretir — her ürün ~1.5-2sn gösterilir, hafif zoom/pan (Ken Burns) ve geçiş efekti uygulanır, ürün adı alt kısımda güvenli alanda gösterilir, sabit bir Buzsu kapanış sahnesiyle biter. Render işi (birkaç dakika sürebilir) GitHub Actions'ın ücretsiz kuyruğunda arka planda çalışır — bu tool işi başlatıp hemen bir jobId döner, sonucu get_video_render_status ile sorgulayın. Tamamlandığında dönen videoUrl, create_draft(format:'Reel') içinde videoUrl olarak veya bir Carousel'in mediaItems'ında doğrudan kullanılabilir. Kaynak görsel düşük çözünürlüklü (ör. site thumbnail'ı) olduğunda opsiyonel upscaleImages:true ile her görsel Ken Burns animasyonundan ÖNCE Replicate/Real-ESRGAN ile AI büyütülür — bu adım GERÇEK PARA HARCAR, confirmed:true olmadan çalışmaz.",
     inputSchema: {
       type: "object",
       properties: {
@@ -298,7 +298,9 @@ const TOOLS = [
         closingTitle: { type: "string", description: "İsteğe bağlı — kapanış sahnesindeki ana metni değiştirir (varsayılan: 'Buzsu – İhtiyacınıza uygun su çözümünü keşfedin')." },
         closingSubtitle: { type: "string", description: "İsteğe bağlı — kapanış sahnesindeki alt metni değiştirir (varsayılan: 'buzsu.com.tr')." },
         musicUrl: { type: "string", description: "İsteğe bağlı — herkese açık HTTPS royalty-free müzik URL'i (MP3/MP4/WAV/OGG). Video süresine göre otomatik döngüye alınır ve kırpılır." },
-        musicVolume: { type: "number", description: "musicUrl verilirse müzik ses seviyesi, 0-1 aralığında (varsayılan 0.5)." }
+        musicVolume: { type: "number", description: "musicUrl verilirse müzik ses seviyesi, 0-1 aralığında (varsayılan 0.5)." },
+        upscaleImages: { type: "boolean", description: "İsteğe bağlı, varsayılan false. true olursa her ürün görseli render'dan önce Replicate/Real-ESRGAN ile AI büyütülür (düşük çözünürlüklü kaynaklarda netliği belirgin şekilde artırır). GERÇEK PARA HARCAR — confirmed:true olmadan çalışmaz." },
+        confirmed: { type: "boolean", description: "yalnızca upscaleImages:true iken gereklidir — true olmadan gerçek Replicate API çağrısı/harcaması yapılmaz." }
       },
       required: ["mediaItems"]
     }

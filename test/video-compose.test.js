@@ -20,6 +20,12 @@ test("validateComposeInput accepts 2-10 mediaItems and applies defaults", () => 
   assert.equal(result.transition, "fade");
   assert.equal(result.transitionDurationSeconds, 0.4);
   assert.equal(result.musicUrl, undefined);
+  assert.equal(result.upscaleImages, false, "upscaleImages must default to false — a paid step must never trigger silently");
+});
+
+test("validateComposeInput passes through upscaleImages:true", () => {
+  const result = validateComposeInput({ mediaItems: [VALID_ITEM(1), VALID_ITEM(2)], upscaleImages: true });
+  assert.equal(result.upscaleImages, true);
 });
 
 test("validateComposeInput rejects a non-HTTPS imageUrl", () => {
@@ -136,6 +142,34 @@ test("composeProductVideo throws and marks the job failed when the GitHub API re
     );
     assert.equal(putCalls[1].body.status, "failed");
     assert.match(putCalls[1].body.error, /Not Found|404/);
+  } finally {
+    delete process.env.GITHUB_DISPATCH_TOKEN;
+  }
+});
+
+test("composeProductVideo throws before dispatching/writing any job when upscaleImages:true is sent without confirmed:true", async () => {
+  const putCalls = [];
+  const putImpl = async (path, body, options) => { putCalls.push({ path, body: JSON.parse(body), options }); return { url: "https://blob.example.com/x" }; };
+  const fetchImpl = async () => { throw new Error("dispatchRenderWorkflow must not be called"); };
+  await assert.rejects(
+    () => composeProductVideo({ mediaItems: [VALID_ITEM(1), VALID_ITEM(2)], upscaleImages: true }, { putImpl, fetchImpl, randomUUIDImpl: () => "job-999" }),
+    /confirmed:true/
+  );
+  assert.equal(putCalls.length, 0, "no job record should be written when the paid opt-in is rejected");
+});
+
+test("composeProductVideo proceeds when upscaleImages:true is paired with confirmed:true", async () => {
+  const putCalls = [];
+  const putImpl = async (path, body, options) => { putCalls.push({ path, body: JSON.parse(body), options }); return { url: "https://blob.example.com/x" }; };
+  const fetchImpl = async () => ({ status: 204 });
+  process.env.GITHUB_DISPATCH_TOKEN = "test-token";
+  try {
+    const result = await composeProductVideo(
+      { mediaItems: [VALID_ITEM(1), VALID_ITEM(2)], upscaleImages: true, confirmed: true },
+      { putImpl, fetchImpl, randomUUIDImpl: () => "job-999" }
+    );
+    assert.equal(result.ok, true);
+    assert.equal(putCalls[0].body.payload.upscaleImages, true);
   } finally {
     delete process.env.GITHUB_DISPATCH_TOKEN;
   }

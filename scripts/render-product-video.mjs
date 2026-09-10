@@ -9,6 +9,7 @@ import { readVideoJobStatus, writeVideoJobStatus } from "../src/lib/video-jobs.j
 import { fetchPublicImage, fetchPublicAudio } from "../src/lib/upload-media.js";
 import { composeVideoFrame, composeClosingScene } from "../src/post-branding.js";
 import { buildFfmpegArgs } from "../src/lib/ffmpeg-command.js";
+import { upscaleImage } from "../src/lib/image-upscale.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -68,7 +69,7 @@ async function run() {
   if (!job || !job.payload) {
     throw new Error(`video-jobs/${jobId}.json içinde bir payload bulunamadı.`);
   }
-  const { mediaItems, durationPerImageSeconds, transition, transitionDurationSeconds, closing, musicUrl, musicVolume } = job.payload;
+  const { mediaItems, durationPerImageSeconds, transition, transitionDurationSeconds, closing, musicUrl, musicVolume, upscaleImages } = job.payload;
 
   await writeVideoJobStatus(jobId, { status: "rendering", payload: job.payload }, { allowOverwrite: true });
 
@@ -82,7 +83,13 @@ async function run() {
     for (let i = 0; i < mediaItems.length; i++) {
       const item = mediaItems[i];
       console.log(`[${i + 1}/${mediaItems.length}] indiriliyor: ${redactUrlForLog(item.imageUrl)}`);
-      const { buffer } = await fetchPublicImage(item.imageUrl);
+      const { buffer: rawBuffer, mimeType } = await fetchPublicImage(item.imageUrl);
+      let buffer = rawBuffer;
+      if (upscaleImages) {
+        console.log(`[${i + 1}/${mediaItems.length}] AI ile büyütülüyor (Replicate/Real-ESRGAN)...`);
+        const upscaledUrl = await upscaleImage(rawBuffer, mimeType);
+        ({ buffer } = await fetchPublicImage(upscaledUrl));
+      }
       const framePng = await composeVideoFrame(buffer, { title: item.title || "" });
       const framePath = path.join(workDir, `frame-${i}.png`);
       await fs.writeFile(framePath, framePng);

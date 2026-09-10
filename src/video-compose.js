@@ -98,6 +98,12 @@ export function validateComposeInput(args = {}) {
     throw new Error("musicVolume 0-1 aralığında olmalıdır.");
   }
 
+  // GERÇEK PARA HARCAR (Replicate/Real-ESRGAN) — varsayılan false, yalnızca
+  // çağıran taraf (bkz. api/mcp.js) confirmed:true ile birlikte açıkça
+  // isterse true olur. REPLICATE_API_TOKEN secret'ının varlığı TEK BAŞINA bu
+  // adımı asla tetiklemez.
+  const upscaleImages = args.upscaleImages === true;
+
   return {
     mediaItems,
     durationPerImageSeconds,
@@ -105,7 +111,8 @@ export function validateComposeInput(args = {}) {
     transitionDurationSeconds,
     closing,
     musicUrl,
-    musicVolume: musicUrl ? musicVolume : undefined
+    musicVolume: musicUrl ? musicVolume : undefined,
+    upscaleImages
   };
 }
 
@@ -142,6 +149,9 @@ export async function composeProductVideo(args, {
   randomUUIDImpl = crypto.randomUUID
 } = {}) {
   const payload = validateComposeInput(args);
+  if (payload.upscaleImages && args.confirmed !== true) {
+    throw new Error("upscaleImages:true gerçek Replicate API kredisi harcar. Onaylamak için confirmed:true gönderin.");
+  }
   const jobId = randomUUIDImpl();
 
   await writeVideoJobStatus(jobId, { status: "queued", payload }, { putImpl });
