@@ -5,3 +5,7 @@ npm-debug.log*
 
 .vercel
 .env*
+
+# scripts/smoke-test-render.mjs çıktısı (gerçek render + ffprobe raporu) —
+# CI'da GitHub Actions artifact olarak yüklenir, depoya commit edilmez.
+local-output/

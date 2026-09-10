@@ -51,8 +51,35 @@ test("buildFfmpegArgs produces exactly one zoompan filter per clip (frames + clo
   const filterComplex = args[args.indexOf("-filter_complex") + 1];
   const zoompanMatches = filterComplex.match(/zoompan=/g);
   assert.equal(zoompanMatches.length, 3);
-  assert.match(filterComplex, /d=60:s=1080x1920:fps=30/); // 2s * 30fps
-  assert.match(filterComplex, /d=75:s=1080x1920:fps=30/); // 2.5s * 30fps
+  // zoompan performans nedeniyle yarı çözünürlükte (540x960) çalışır, sonucu
+  // ayrı bir scale filtresi 1080x1920'ye büyütür (bkz. ffmpeg-command.js'teki
+  // ZOOMPAN_INTERNAL_SCALE_DIVISOR açıklaması).
+  assert.match(filterComplex, /d=60:s=540x960:fps=30/); // 2s * 30fps
+  assert.match(filterComplex, /d=75:s=540x960:fps=30/); // 2.5s * 30fps
+  const scaleMatches = filterComplex.match(/scale=1080:1920/g);
+  assert.equal(scaleMatches.length, 3);
+});
+
+// zoompan'ın "d" parametresi çıkış kare sayısını KENDİSİ sınırlamaz — gerçek
+// bir ffmpeg ile doğrulandı (bkz. PR açıklaması): tek gerçek giriş karesi
+// beslendiğinde zoompan bu kareyi "fps" hızında SÜRESİZ üretmeye devam eder,
+// render hiçbir zaman bitmez. Her klibin kendi "d" kare sayısında sert olarak
+// kesilmesi (trim=end_frame + setpts) bu yüzden zorunlu — bu test o kesmenin
+// her klip için doğru kare sayısıyla üretildiğini doğrular.
+test("buildFfmpegArgs hard-trims each zoompan clip to its exact frame count (zoompan's 'd' alone does not stop output)", () => {
+  const { args } = buildFfmpegArgs({
+    frames: [{ path: "f1.png" }, { path: "f2.png" }],
+    closingFrame: { path: "closing.png" },
+    durationPerImageSeconds: 2,
+    closingDurationSeconds: 2.5,
+    fps: 30,
+    outputPath: "out.mp4"
+  });
+  const filterComplex = args[args.indexOf("-filter_complex") + 1];
+  const trimMatches = filterComplex.match(/trim=end_frame=(\d+),setpts=PTS-STARTPTS/g);
+  assert.equal(trimMatches.length, 3);
+  assert.match(filterComplex, /trim=end_frame=60,setpts=PTS-STARTPTS/); // 2s * 30fps
+  assert.match(filterComplex, /trim=end_frame=75,setpts=PTS-STARTPTS/); // 2.5s * 30fps
 });
 
 test("buildFfmpegArgs uses the wipe transition name when transition:'wipe' is requested", () => {

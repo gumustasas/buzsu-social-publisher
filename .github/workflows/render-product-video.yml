@@ -16,12 +16,34 @@ on:
         required: true
         type: string
 
+# En düşük yetki: bu iş depoya hiçbir şey yazmaz, yalnızca checkout yapıp
+# ffmpeg çalıştırır ve secrets.BLOB_READ_WRITE_TOKEN ile Vercel Blob'a
+# (GitHub dışı bir servise) yükler — varsayılan (genelde daha geniş olan)
+# GITHUB_TOKEN izinlerine hiç ihtiyaç yok.
+permissions:
+  contents: read
+
+# Aynı jobId için art arda/yanlışlıkla tekrar tetiklenen bir dispatch,
+# önceki render'ı boşuna sürdürmesin diye iptal edilir — farklı jobId'ler
+# birbirini ETKİLEMEZ, paralel çalışmaya devam eder.
+concurrency:
+  group: render-product-video-${{ inputs.jobId }}
+  cancel-in-progress: true
+
 jobs:
   render:
     runs-on: ubuntu-latest
-    # Ken Burns/xfade filtre grafiği + libx264 kodlama birkaç dakika sürebilir;
-    # takılı kalan bir işi süresiz beklemek yerine erken sonlandırıyoruz.
-    timeout-minutes: 15
+    # workflow_dispatch API'sini GitHub UI/API üzerinden manuel tetikleyen biri
+    # farklı bir dal/tag seçebilir — src/video-compose.js'in kendi dispatch
+    # çağrısı her zaman VIDEO_RENDER_REF'i (varsayılan "main") gönderse de, bu
+    # ekstra bir savunma katmanı: iş yalnızca main referansıyla tetiklenmişse
+    # ilerler.
+    if: github.ref == 'refs/heads/main'
+    # Gerçek ffmpeg render'ının kendisi hızlı (bkz. scripts/smoke-test-render.mjs
+    # ölçümü — 3 görsel + kapanış ~5-10sn), ancak 10 görsel + müzik indirme +
+    # apt-get/npm kurulumu birlikte birkaç dakikaya çıkabilir; takılı kalan bir
+    # işi süresiz beklemek yerine erken sonlandırıyoruz.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

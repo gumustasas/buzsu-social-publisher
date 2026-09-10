@@ -24,6 +24,18 @@ if (!jobId) {
   process.exit(1);
 }
 
+// Ürün/müzik URL'leri imzalı (signed) olabilir — query string'de kısa ömürlü
+// ama yine de hassas bir erişim token'ı taşıyabilir. Loglarda yalnızca
+// origin+path görünür, query/hash asla yazılmaz.
+function redactUrlForLog(rawUrl) {
+  try {
+    const url = new URL(String(rawUrl));
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return "[geçersiz URL]";
+  }
+}
+
 async function markFailed(error) {
   console.error(error);
   try {
@@ -69,7 +81,7 @@ async function run() {
     const frames = [];
     for (let i = 0; i < mediaItems.length; i++) {
       const item = mediaItems[i];
-      console.log(`[${i + 1}/${mediaItems.length}] indiriliyor: ${item.imageUrl}`);
+      console.log(`[${i + 1}/${mediaItems.length}] indiriliyor: ${redactUrlForLog(item.imageUrl)}`);
       const { buffer } = await fetchPublicImage(item.imageUrl);
       const framePng = await composeVideoFrame(buffer, { title: item.title || "" });
       const framePath = path.join(workDir, `frame-${i}.png`);
@@ -84,7 +96,7 @@ async function run() {
 
     let musicPath;
     if (musicUrl) {
-      console.log(`Müzik indiriliyor: ${musicUrl}`);
+      console.log(`Müzik indiriliyor: ${redactUrlForLog(musicUrl)}`);
       const { buffer } = await fetchPublicAudio(musicUrl);
       musicPath = path.join(workDir, "music.mp3");
       await fs.writeFile(musicPath, buffer);

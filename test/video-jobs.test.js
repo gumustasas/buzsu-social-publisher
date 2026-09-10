@@ -56,3 +56,75 @@ test("readVideoJobStatus throws a clear error when the matched blob itself canno
   const fetchImpl = async () => ({ ok: false, status: 404 });
   await assert.rejects(() => readVideoJobStatus("job-err", { listImpl, fetchImpl }), /okunamadı/);
 });
+
+// Gerçek Vercel Blob'un davranışını (addRandomSuffix:false -> sabit yol,
+// allowOverwrite:false iken aynı yola ikinci bir yazım reddedilir,
+// allowOverwrite:true iken içerik olduğu gibi değiştirilir) taklit eden bir
+// bellek-içi sahte store ile queued -> rendering -> completed geçişinin
+// GERÇEKTEN aynı kayda yazıp okunduğunu (yeni bir kayıt/çakışan URL
+// oluşturmadığını) doğrular — bu, gerçek BLOB_READ_WRITE_TOKEN olmadan da
+// worker'ın durum-güncelleme sözleşmesini test eder.
+function createFakeBlobStore() {
+  const store = new Map();
+  const putImpl = async (path, body, options) => {
+    if (store.has(path) && options.allowOverwrite !== true) {
+      throw new Error(`Bu yolda zaten bir blob var ve allowOverwrite:true verilmedi: ${path}`);
+    }
+    store.set(path, body);
+    return { url: `https://blob.example.com/${path}`, pathname: path };
+  };
+  const listImpl = async ({ prefix }) => ({
+    blobs: store.has(prefix) ? [{ pathname: prefix, url: `https://blob.example.com/${prefix}` }] : []
+  });
+  const fetchImpl = async (url) => {
+    const path = url.replace("https://blob.example.com/", "");
+    return { ok: store.has(path), status: store.has(path) ? 200 : 404, json: async () => JSON.parse(store.get(path)) };
+  };
+  return { putImpl, listImpl, fetchImpl, store };
+}
+
+test("queued -> rendering -> completed transitions overwrite the SAME blob record end-to-end (no duplicate/stray record)", async () => {
+  const { putImpl, listImpl, fetchImpl } = createFakeBlobStore();
+  const jobId = "job-lifecycle";
+
+  await writeVideoJobStatus(jobId, { status: "queued", payload: { mediaItems: [] } }, { putImpl });
+  let current = await readVideoJobStatus(jobId, { listImpl, fetchImpl });
+  assert.equal(current.status, "queued");
+
+  // Gerçek Blob'da allowOverwrite:false iken aynı yola ikinci bir yazım
+  // reddedilir — worker bunu bilerek yalnızca ilk "queued" yazımında
+  // allowOverwrite'ı varsayılan (false) bırakır, sonraki tüm durum
+  // güncellemelerinde açıkça true gönderir (bkz. render-product-video.mjs).
+  await assert.rejects(
+    () => writeVideoJobStatus(jobId, { status: "rendering" }, { putImpl }),
+    /allowOverwrite/
+  );
+
+  await writeVideoJobStatus(jobId, { status: "rendering", payload: { mediaItems: [] } }, { allowOverwrite: true, putImpl });
+  current = await readVideoJobStatus(jobId, { listImpl, fetchImpl });
+  assert.equal(current.status, "rendering");
+
+  await writeVideoJobStatus(jobId, { status: "completed", videoUrl: "https://blob.example.com/product-videos/job-lifecycle.mp4", durationSeconds: 5.8, width: 1080, height: 1920, fileSizeBytes: 123456 }, { allowOverwrite: true, putImpl });
+  current = await readVideoJobStatus(jobId, { listImpl, fetchImpl });
+  assert.equal(current.status, "completed");
+  assert.equal(current.videoUrl, "https://blob.example.com/product-videos/job-lifecycle.mp4");
+  // Yalnızca TEK bir kayıt bulunmalı (video-jobs/<jobId>.json sabit yolu) —
+  // "unknown"/eski bir "queued" ile birlikte iki ayrı kayıt oluşmamalı.
+  const { blobs } = await listImpl({ prefix: `video-jobs/${jobId}.json` });
+  assert.equal(blobs.length, 1);
+});
+
+test("a worker failure at any stage can still mark the job 'failed' by overwriting whatever state it was in (queued or rendering)", async () => {
+  const { putImpl, listImpl, fetchImpl } = createFakeBlobStore();
+  const jobId = "job-fails-midway";
+
+  await writeVideoJobStatus(jobId, { status: "queued", payload: { mediaItems: [] } }, { putImpl });
+  await writeVideoJobStatus(jobId, { status: "rendering", payload: { mediaItems: [] } }, { allowOverwrite: true, putImpl });
+  // ffmpeg/indirme/Blob-yükleme aşamalarından biri patlarsa worker'ın
+  // markFailed() yardımcı fonksiyonu bunu yapar (bkz. render-product-video.mjs).
+  await writeVideoJobStatus(jobId, { status: "failed", error: "ffmpeg exited with code 1" }, { allowOverwrite: true, putImpl });
+
+  const current = await readVideoJobStatus(jobId, { listImpl, fetchImpl });
+  assert.equal(current.status, "failed");
+  assert.equal(current.error, "ffmpeg exited with code 1");
+});
