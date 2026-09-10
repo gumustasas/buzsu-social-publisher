@@ -37,10 +37,22 @@ function redactUrlForLog(rawUrl) {
   }
 }
 
+// run() bu değişkeni payload'u başarıyla okuduğu anda doldurur. markFailed
+// bunu koruyarak yazar — aksi halde bir hata sonrası "failed" durumu
+// payload'un ÜSTÜNE yazılıp işi yok ederdi: aynı jobId ile workflow'u
+// yeniden tetiklemek (ör. GitHub Actions "Re-run failed jobs") bir sonraki
+// denemede "payload bulunamadı" hatasıyla anında düşerdi — render gerçekte
+// hiç çalışmamış olsa bile.
+let currentPayload;
+
 async function markFailed(error) {
   console.error(error);
   try {
-    await writeVideoJobStatus(jobId, { status: "failed", error: error?.message || String(error) }, { allowOverwrite: true });
+    await writeVideoJobStatus(jobId, {
+      status: "failed",
+      error: error?.message || String(error),
+      ...(currentPayload ? { payload: currentPayload } : {})
+    }, { allowOverwrite: true });
   } catch (writeError) {
     console.error("Durum 'failed' olarak yazılamadı:", writeError);
   }
@@ -69,6 +81,7 @@ async function run() {
   if (!job || !job.payload) {
     throw new Error(`video-jobs/${jobId}.json içinde bir payload bulunamadı.`);
   }
+  currentPayload = job.payload;
   const { mediaItems, durationPerImageSeconds, transition, transitionDurationSeconds, closing, musicUrl, musicVolume, upscaleImages } = job.payload;
 
   await writeVideoJobStatus(jobId, { status: "rendering", payload: job.payload }, { allowOverwrite: true });
