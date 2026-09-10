@@ -57,4 +57,5 @@ jobs:
         env:
           JOB_ID: ${{ inputs.jobId }}
           BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+          REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
         run: node scripts/render-product-video.mjs

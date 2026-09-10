@@ -349,6 +349,21 @@ yazabilmesi için AYRICA bu depoda `BLOB_READ_WRITE_TOKEN` adında bir **GitHub
 Actions repository secret** tanımlayın (Vercel'deki değerle aynı). Detaylar
 için `.env.example`'a bakın.
 
+**Opsiyonel, ÜCRETLİ görsel büyütme (`upscaleImages`)**: kaynak ürün
+fotoğrafı düşük çözünürlüklü (ör. site thumbnail'ı) olduğunda, `contain`-fit
+büyütmesi kaçınılmaz bir yumuşama getirir — ücretsiz `sharpen` filtresi
+yalnızca kenar kontrastını artırır, kayıp detayı geri getirmez. `mediaItems`'a
+`upscaleImages: true` ve `confirmed: true` eklenirse, her görsel Ken Burns
+animasyonundan ÖNCE **Replicate/Real-ESRGAN** ile AI büyütülür
+(`src/lib/image-upscale.js`). Bu adım **gerçek para harcar**;
+`confirmed:true` olmadan hiçbir Replicate API çağrısı yapılmaz ve
+`REPLICATE_API_TOKEN`'ın varlığı tek başına bu adımı tetiklemez — yalnızca
+açıkça `upscaleImages:true` istendiğinde çalışır. Kurulum:
+[replicate.com/account/api-tokens](https://replicate.com/account/api-tokens)
+adresinden bir token alıp bu depoda `REPLICATE_API_TOKEN` adında bir
+**GitHub Actions repository secret** olarak ekleyin (detaylar için
+`.env.example`'a bakın).
+
 Güvenlik: her `imageUrl`/`musicUrl` yalnızca HTTPS söz dizimi olarak
 doğrulanır; gerçek indirme (ve dolayısıyla SSRF/DNS koruması, `src/lib/
 upload-media.js`'deki `assertPublicHttpsUrl`) render worker'ında, görsel/müzik
