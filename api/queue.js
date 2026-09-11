@@ -49,6 +49,7 @@ function publicRecord(record) {
   const { mediaItems, warning: mediaItemsWarning } = parseMediaItemsSafe(fields["Media Items"]);
   return {
     id: record.id,
+    createdTime: record.createdTime || null,
     title: fields["Başlık"] || "Başlıksız içerik",
     status: effectiveStatus,
     format: fields["Yayın Biçimi"] || "Gönderi",
