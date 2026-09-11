@@ -1,6 +1,6 @@
 import { baseProductTitle } from "./lib/product-title.js";
 
-const blockedClaims = [/en iyi/gi, /kesinlikle sağlıklı/gi, /hastalığı/gi, /tedavi/gi, /garanti eder/gi];
+const blockedClaims = [/hastalığı/gi, /tedavi/gi];
 
 // Ürünün gerçek Airtable "Hashtagler" alanına erişimimiz olmadığı (listProducts
 // bu alanı döndürmüyor) her jenerik/otomatik taslak yolunda kullanılan tek
