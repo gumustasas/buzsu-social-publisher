@@ -109,11 +109,7 @@ export function validateComposeInput(args = {}, { randomImpl = Math.random } = {
     musicUrl = pickMusicTrack({ mood: args.musicMood, randomImpl }).audioUrl;
   }
 
-  // GERÇEK PARA HARCAR (Replicate/Real-ESRGAN) — varsayılan false, yalnızca
-  // çağıran taraf (bkz. api/mcp.js) confirmed:true ile birlikte açıkça
-  // isterse true olur. REPLICATE_API_TOKEN secret'ının varlığı TEK BAŞINA bu
-  // adımı asla tetiklemez.
-  const upscaleImages = args.upscaleImages === true;
+  const upscaleImages = args.upscaleImages !== false;
 
   return {
     mediaItems,

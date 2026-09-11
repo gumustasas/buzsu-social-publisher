@@ -301,8 +301,8 @@ const TOOLS = [
         musicUrl: { type: "string", description: "İsteğe bağlı — herkese açık HTTPS royalty-free müzik URL'i (MP3/MP4/WAV/OGG). Video süresine göre otomatik döngüye alınır ve kırpılır. Verilmezse ücretsiz havuzdan otomatik bir parça seçilir (bkz. musicMood)." },
         musicMood: { type: "string", enum: MUSIC_CATEGORIES, description: `İsteğe bağlı — musicUrl verilmediğinde otomatik seçilecek müziğin tarzı (${MUSIC_CATEGORIES.join(", ")}). Verilmezse rastgele bir tarzdan seçilir. musicUrl verilirse yok sayılır.` },
         musicVolume: { type: "number", description: "Müzik ses seviyesi, 0-1 aralığında (varsayılan 0.5) — hem musicUrl hem otomatik seçilen müzik için geçerli." },
-        upscaleImages: { type: "boolean", description: "İsteğe bağlı, varsayılan false. true olursa her ürün görseli render'dan önce Replicate/Real-ESRGAN ile AI büyütülür (düşük çözünürlüklü kaynaklarda netliği belirgin şekilde artırır). GERÇEK PARA HARCAR — confirmed:true olmadan çalışmaz." },
-        confirmed: { type: "boolean", description: "yalnızca upscaleImages:true iken gereklidir — true olmadan gerçek Replicate API çağrısı/harcaması yapılmaz." }
+        upscaleImages: { type: "boolean", description: "İsteğe bağlı, varsayılan true. Her ürün görseli render'dan önce Replicate/Real-ESRGAN ile AI büyütülür (düşük çözünürlüklü kaynaklarda netliği belirgin şekilde artırır). Kapatmak için false gönderin. GERÇEK PARA HARCAR — confirmed:true olmadan çalışmaz." },
+        confirmed: { type: "boolean", description: "Upscale varsayılan olarak açık olduğundan her video oluşturmada gereklidir (upscaleImages:false gönderilmedikçe). true olmadan gerçek Replicate API çağrısı/harcaması yapılmaz." }
       },
       required: ["mediaItems"]
     }

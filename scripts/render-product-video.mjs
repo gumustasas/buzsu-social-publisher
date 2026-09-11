@@ -4,12 +4,15 @@ import { promisify } from "node:util";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import sharp from "sharp";
 import { put } from "@vercel/blob";
 import { readVideoJobStatus, writeVideoJobStatus } from "../src/lib/video-jobs.js";
 import { fetchPublicImage, fetchPublicAudio } from "../src/lib/upload-media.js";
 import { composeVideoFrame, composeClosingScene } from "../src/post-branding.js";
 import { buildFfmpegArgs } from "../src/lib/ffmpeg-command.js";
 import { upscaleImage } from "../src/lib/image-upscale.js";
+
+const UPSCALE_MIN_DIMENSION_THRESHOLD = 1080;
 
 const execFileAsync = promisify(execFile);
 
@@ -110,9 +113,15 @@ async function run() {
       const { buffer: rawBuffer, mimeType } = await fetchPublicImage(item.imageUrl);
       let buffer = rawBuffer;
       if (upscaleImages) {
-        console.log(`[${i + 1}/${mediaItems.length}] AI ile büyütülüyor (Replicate/Real-ESRGAN)...`);
-        const upscaledUrl = await upscaleImage(rawBuffer, mimeType);
-        ({ buffer } = await fetchPublicImage(upscaledUrl));
+        const meta = await sharp(rawBuffer).metadata();
+        const minSide = Math.min(meta.width || 0, meta.height || 0);
+        if (minSide < UPSCALE_MIN_DIMENSION_THRESHOLD) {
+          console.log(`[${i + 1}/${mediaItems.length}] AI ile büyütülüyor (${meta.width}x${meta.height} < ${UPSCALE_MIN_DIMENSION_THRESHOLD}px eşiği)...`);
+          const upscaledUrl = await upscaleImage(rawBuffer, mimeType);
+          ({ buffer } = await fetchPublicImage(upscaledUrl));
+        } else {
+          console.log(`[${i + 1}/${mediaItems.length}] zaten yeterli çözünürlük (${meta.width}x${meta.height}), upscale atlanıyor.`);
+        }
       }
       const framePng = await composeVideoFrame(buffer, { title: item.title || "" });
       const framePath = path.join(workDir, `frame-${i}.png`);
