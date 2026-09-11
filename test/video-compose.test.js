@@ -22,7 +22,7 @@ test("validateComposeInput accepts 2-10 mediaItems and applies defaults", () => 
   assert.equal(result.transitionDurationSeconds, 0.4);
   assert.match(result.musicUrl, /^https:\/\/assets\.mixkit\.co\/music\//, "no musicUrl given -> a free track must be auto-picked, never silence");
   assert.equal(result.musicVolume, 0.5);
-  assert.equal(result.upscaleImages, false, "upscaleImages must default to false — a paid step must never trigger silently");
+  assert.equal(result.upscaleImages, true, "upscaleImages defaults to true — confirmed:true guard prevents unintended spend");
 });
 
 test("validateComposeInput auto-picks a free track deterministically via randomImpl when musicUrl is omitted", () => {
@@ -47,9 +47,9 @@ test("validateComposeInput uses the explicit musicUrl instead of auto-picking wh
   assert.equal(result.musicUrl, "https://example.com/song.mp3");
 });
 
-test("validateComposeInput passes through upscaleImages:true", () => {
-  const result = validateComposeInput({ mediaItems: [VALID_ITEM(1), VALID_ITEM(2)], upscaleImages: true });
-  assert.equal(result.upscaleImages, true);
+test("validateComposeInput allows opting out with upscaleImages:false", () => {
+  const result = validateComposeInput({ mediaItems: [VALID_ITEM(1), VALID_ITEM(2)], upscaleImages: false });
+  assert.equal(result.upscaleImages, false);
 });
 
 test("validateComposeInput rejects a non-HTTPS imageUrl", () => {
@@ -123,7 +123,7 @@ test("composeProductVideo writes a queued job status, dispatches the workflow wi
   process.env.GITHUB_DISPATCH_TOKEN = "test-token";
   try {
     const result = await composeProductVideo(
-      { mediaItems: [VALID_ITEM(1), VALID_ITEM(2)] },
+      { mediaItems: [VALID_ITEM(1), VALID_ITEM(2)], upscaleImages: false },
       { putImpl, fetchImpl, randomUUIDImpl: () => "job-123" }
     );
     assert.equal(result.ok, true);
@@ -145,7 +145,7 @@ test("composeProductVideo throws and marks the job failed when GITHUB_DISPATCH_T
   const putImpl = async (path, body, options) => { putCalls.push({ path, body: JSON.parse(body), options }); return { url: "https://blob.example.com/x" }; };
   delete process.env.GITHUB_DISPATCH_TOKEN;
   await assert.rejects(
-    () => composeProductVideo({ mediaItems: [VALID_ITEM(1), VALID_ITEM(2)] }, { putImpl, randomUUIDImpl: () => "job-456" }),
+    () => composeProductVideo({ mediaItems: [VALID_ITEM(1), VALID_ITEM(2)], upscaleImages: false }, { putImpl, randomUUIDImpl: () => "job-456" }),
     /GITHUB_DISPATCH_TOKEN/
   );
   assert.equal(putCalls.length, 2);
@@ -161,7 +161,7 @@ test("composeProductVideo throws and marks the job failed when the GitHub API re
   process.env.GITHUB_DISPATCH_TOKEN = "test-token";
   try {
     await assert.rejects(
-      () => composeProductVideo({ mediaItems: [VALID_ITEM(1), VALID_ITEM(2)] }, { putImpl, fetchImpl, randomUUIDImpl: () => "job-789" }),
+      () => composeProductVideo({ mediaItems: [VALID_ITEM(1), VALID_ITEM(2)], upscaleImages: false }, { putImpl, fetchImpl, randomUUIDImpl: () => "job-789" }),
       /workflow_dispatch başarısız/
     );
     assert.equal(putCalls[1].body.status, "failed");
