@@ -19,7 +19,12 @@ export function summarizeRecords(records, now = new Date()) {
     if (fields["Instagram Yayın ID"]) summary.instagramPublished += 1;
     if (fields["Facebook Yayın ID"]) summary.facebookPublished += 1;
     if (status === "Hata") summary.failed += 1;
-    if (Number(fields["Deneme Sayısı"] || 0) > 1) summary.retrying += 1;
+    // Yalnızca hâlâ aktif akışta olan (Onaylandı/Yayınlanıyor) ve önceden en
+    // az bir kez denenmiş kayıtlar "tekrar deniyor" sayılır. Durum filtresi
+    // olmadan (önceki hâl) bu sayaç hem "Hata" kayıtlarını failed'e ek olarak
+    // ikinci kez sayıyor hem de artık başarıyla yayınlanmış (Paylaşıldı) veya
+    // hiç ilerlememiş eski kayıtları da "tekrar deniyor" gösteriyordu.
+    if ((status === "Onaylandı" || status === "Yayınlanıyor") && Number(fields["Deneme Sayısı"] || 0) > 1) summary.retrying += 1;
     const publishAt = fields["Yayın Zamanı"] ? new Date(fields["Yayın Zamanı"]) : null;
     if (publishAt && !Number.isNaN(publishAt.getTime())) {
       if (publishAt > now) summary.upcoming += 1;
