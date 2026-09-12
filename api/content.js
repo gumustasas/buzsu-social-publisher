@@ -13,7 +13,16 @@ function validDate(value) { return typeof value === "string" && !Number.isNaN(Da
 export default async function handler(request, response) {
   if (!authorized(request)) return response.status(401).json({ error: "Unauthorized" });
   try {
-    if (request.method === "GET") return response.status(200).json({ ok: true, products: await listProducts() });
+    if (request.method === "GET") {
+      // Cache-Control başlığı olmadan Vercel/tarayıcı bazen bu dinamik,
+      // kullanıcıya özel yanıtı 304 Not Modified'a düşürebiliyordu — panel
+      // kodu bunu (fetch'in res.ok'u 304'te false olduğu ve gövde boş
+      // geldiği için) bir hata olarak ele alıp ürün listesini hiç
+      // doldurmuyordu (arama kutusu bu yüzden "çalışmıyormuş" gibi
+      // görünüyordu).
+      response.setHeader("Cache-Control", "no-store");
+      return response.status(200).json({ ok: true, products: await listProducts() });
+    }
     if (request.method !== "POST") return response.status(405).json({ error: "Method not allowed" });
     const body = typeof request.body === "string" ? JSON.parse(request.body) : (request.body || {});
     const products = await listProducts();
