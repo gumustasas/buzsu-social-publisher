@@ -14,21 +14,22 @@ export default async function handler(request, response) {
   if (!authorized(request)) return response.status(401).json({ error: "Unauthorized" });
   try {
     if (request.method === "GET") {
-      // Cache-Control: no-store tek başına yetmedi — Vercel'in Node.js
-      // fonksiyon köprüsü, ayarladığımız Cache-Control'den BAĞIMSIZ olarak
-      // yanıt gövdesinden kendi ETag'ini üretip isteğin If-None-Match
-      // başlığıyla karşılaştırıyor ve eşleşirse 304 Not Modified'a
-      // düşürüyor (canlıda doğrulandı: bu fix'i taşıyan deploy'da bile
-      // /api/content hâlâ 304 dönüyordu). fetch'in res.ok'u 304'te false
-      // olduğu ve gövde boş geldiği için panel bunu hata sayıp ürün
-      // listesini hiç doldurmuyordu — arama kutusu bu yüzden
-      // "çalışmıyormuş" gibi görünüyordu. Bu koşullu-istek başlıklarını
-      // isteğin üzerinden silmek, o ETag karşılaştırmasının hiç
-      // tetiklenmemesini sağlıyor.
-      delete request.headers["if-none-match"];
-      delete request.headers["if-modified-since"];
+      // Cache-Control: no-store ve if-none-match/if-modified-since'i silmek
+      // de yetmedi — canlıda doğrulandı ki response.json()/send() Vercel'in
+      // Node.js köprüsünde otomatik zayıf bir ETag üretip isteği bununla
+      // karşılaştırıyor ve eşleşirse yanıtı 304'e düşürüyor; bu, .json()'ın
+      // kendi içinde olan bir davranış ve bizim üstteki Cache-Control'ümüzü
+      // veya request nesnesindeki başlık silmemizi hiç görmüyor (başka bir
+      // uçtaki .json() çağrısı üzerinde curl ile doğrulandı: hiç Cache-
+      // Control vermediğimiz bir yanıtta bile Vercel kendiliğinden
+      // "public, max-age=0, must-revalidate" + weak ETag ekliyordu). Çözüm:
+      // .json()/.send() hiç çağrılmıyor; ham response.end() ile yazılıyor,
+      // bu da o otomatik ETag/koşullu-istek mantığını tamamen atlıyor.
+      const payload = JSON.stringify({ ok: true, products: await listProducts() });
+      response.statusCode = 200;
+      response.setHeader("Content-Type", "application/json; charset=utf-8");
       response.setHeader("Cache-Control", "no-store");
-      return response.status(200).json({ ok: true, products: await listProducts() });
+      return response.end(payload);
     }
     if (request.method !== "POST") return response.status(405).json({ error: "Method not allowed" });
     const body = typeof request.body === "string" ? JSON.parse(request.body) : (request.body || {});
