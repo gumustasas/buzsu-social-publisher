@@ -5,6 +5,7 @@ import opentype from "opentype.js";
 const CANVAS_SIZE = 1024;
 const BAR_HEIGHT = 210;
 const LOGO_PATH = fileURLToPath(new URL("../assets/buzsu-logo.png", import.meta.url));
+const CLOSING_BACKGROUND_PATH = fileURLToPath(new URL("../assets/closing-background.jpg", import.meta.url));
 
 const boldFont = opentype.loadSync(
   fileURLToPath(new URL("../node_modules/dejavu-fonts-ttf/ttf/DejaVuSans-Bold.ttf", import.meta.url))
@@ -173,8 +174,17 @@ export async function composeVideoFrame(imageBuffer, { title } = {}) {
   return sharp(framed).composite([{ input: videoTitleBarSvg(title, barTop) }]).png().toBuffer();
 }
 
-// compose_product_video'nun sabit kapanış sahnesi: düz marka arka planı +
+// compose_product_video'nun sabit kapanış sahnesi: marka arka plan fotoğrafı +
 // ortalı başlık/alt başlık + Buzsu logosu. Hiçbir ürün fotoğrafı içermez.
+//
+// Logo (assets/buzsu-logo.png) açık zeminler için tasarlanmış koyu lacivert
+// tonlarda — önceki düz koyu lacivert (#04102b) arka plan üzerinde neredeyse
+// görünmez oluyordu (kullanıcı geri bildirimi + piksel analiziyle doğrulandı:
+// logonun büyük kısmı arka planla aynı renk aralığında). Bu yüzden arka plan
+// artık kullanıcının sağladığı açık/su temalı bir fotoğraf (closing-background.jpg)
+// — logonun kendi renk paletiyle tasarlandığı zemine uygun — ve başlık/alt
+// başlık metni de aynı sebeple koyu laciverte çevrildi (eskiden beyazdı,
+// artık açık zeminde okunmuyordu).
 export async function composeClosingScene({ title = "Buzsu – İhtiyacınıza uygun su çözümünü keşfedin", subtitle = "buzsu.com.tr" } = {}) {
   const logoTargetWidth = 220;
   const logoMeta = await sharp(LOGO_PATH).metadata();
@@ -191,17 +201,27 @@ export async function composeClosingScene({ title = "Buzsu – İhtiyacınıza u
   const subtitleSize = 34;
   const subtitleY = titleStartY + titleLines.length * titleLineHeight + 30;
 
+  const textColor = "#04102b";
   const centeredPath = (text, y, size) => {
     const width = boldFont.getAdvanceWidth(text, size);
     const x = (VIDEO_WIDTH - width) / 2;
-    return `<path d="${boldFont.getPath(text, x, y, size).toPathData(2)}" fill="#ffffff"/>`;
+    return `<path d="${boldFont.getPath(text, x, y, size).toPathData(2)}" fill="${textColor}"/>`;
   };
 
-  const svg = Buffer.from(`<svg width="${VIDEO_WIDTH}" height="${VIDEO_HEIGHT}" xmlns="http://www.w3.org/2000/svg">
-    <rect width="${VIDEO_WIDTH}" height="${VIDEO_HEIGHT}" fill="#04102b"/>
+  const textSvg = Buffer.from(`<svg width="${VIDEO_WIDTH}" height="${VIDEO_HEIGHT}" xmlns="http://www.w3.org/2000/svg">
     ${titleLines.map((line, i) => centeredPath(line, titleStartY + i * titleLineHeight, titleSize)).join("")}
     ${centeredPath(escapeXml(subtitle), subtitleY, subtitleSize)}
   </svg>`);
 
-  return sharp(svg).composite([{ input: logoBuffer, top: logoTop, left: logoLeft }]).png().toBuffer();
+  const background = await sharp(CLOSING_BACKGROUND_PATH)
+    .resize(VIDEO_WIDTH, VIDEO_HEIGHT, { fit: "cover" })
+    .toBuffer();
+
+  return sharp(background)
+    .composite([
+      { input: logoBuffer, top: logoTop, left: logoLeft },
+      { input: textSvg, top: 0, left: 0 }
+    ])
+    .png()
+    .toBuffer();
 }
