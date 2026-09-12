@@ -14,12 +14,19 @@ export default async function handler(request, response) {
   if (!authorized(request)) return response.status(401).json({ error: "Unauthorized" });
   try {
     if (request.method === "GET") {
-      // Cache-Control başlığı olmadan Vercel/tarayıcı bazen bu dinamik,
-      // kullanıcıya özel yanıtı 304 Not Modified'a düşürebiliyordu — panel
-      // kodu bunu (fetch'in res.ok'u 304'te false olduğu ve gövde boş
-      // geldiği için) bir hata olarak ele alıp ürün listesini hiç
-      // doldurmuyordu (arama kutusu bu yüzden "çalışmıyormuş" gibi
-      // görünüyordu).
+      // Cache-Control: no-store tek başına yetmedi — Vercel'in Node.js
+      // fonksiyon köprüsü, ayarladığımız Cache-Control'den BAĞIMSIZ olarak
+      // yanıt gövdesinden kendi ETag'ini üretip isteğin If-None-Match
+      // başlığıyla karşılaştırıyor ve eşleşirse 304 Not Modified'a
+      // düşürüyor (canlıda doğrulandı: bu fix'i taşıyan deploy'da bile
+      // /api/content hâlâ 304 dönüyordu). fetch'in res.ok'u 304'te false
+      // olduğu ve gövde boş geldiği için panel bunu hata sayıp ürün
+      // listesini hiç doldurmuyordu — arama kutusu bu yüzden
+      // "çalışmıyormuş" gibi görünüyordu. Bu koşullu-istek başlıklarını
+      // isteğin üzerinden silmek, o ETag karşılaştırmasının hiç
+      // tetiklenmemesini sağlıyor.
+      delete request.headers["if-none-match"];
+      delete request.headers["if-modified-since"];
       response.setHeader("Cache-Control", "no-store");
       return response.status(200).json({ ok: true, products: await listProducts() });
     }
