@@ -4,7 +4,7 @@ import opentype from "opentype.js";
 
 const MAX_BYTES = 15 * 1024 * 1024;
 const fontPath = fileURLToPath(new URL("../node_modules/dejavu-fonts-ttf/ttf/DejaVuSans.ttf", import.meta.url));
-const font = opentype.loadSync(fontPath);
+export const font = opentype.loadSync(fontPath);
 const boldFont = opentype.loadSync(fileURLToPath(new URL("../node_modules/dejavu-fonts-ttf/ttf/DejaVuSans-Bold.ttf", import.meta.url)));
 
 const CANVAS_WIDTH = 1080;
@@ -12,7 +12,7 @@ const CANVAS_HEIGHT = 1920;
 const CARD_X = 48;
 const CARD_WIDTH = 984;
 const TEXT_X = 92;
-const MAX_TEXT_WIDTH = 900;
+export const MAX_TEXT_WIDTH = 900;
 const TITLE_SIZE = 42;
 const TITLE_SIZE_SMALL = 32;
 const SUBTITLE_SIZE = 30;
@@ -36,8 +36,24 @@ function escapeXml(value) {
     .replaceAll("'", "&apos;");
 }
 
+// Bir satır maxWidth'i aşıyorsa (maxLines'a ulaşıldıktan sonra sığmayan
+// kelimeler o satıra eklenmeye devam ettiğinde olur) üç nokta ile keser —
+// gerçek ölçümle, karakter tahminiyle değil.
+function truncateToWidth(text, fontObj, size, maxWidth) {
+  if (fontObj.getAdvanceWidth(text, size) <= maxWidth) return text;
+  let truncated = text;
+  while (truncated.length > 1 && fontObj.getAdvanceWidth(`${truncated}…`, size) > maxWidth) {
+    truncated = truncated.slice(0, -1);
+  }
+  return `${truncated.trimEnd()}…`;
+}
+
 // src/post-branding.js'teki wrapTitle() ile aynı desen: karakter sayısı
 // tahmini değil, gerçek font ölçümüyle (fontObj.getAdvanceWidth) satır sarma.
+// maxLines'a ulaşıldıktan sonra sığmayan kelimeler son satıra eklenmeye
+// devam eder — bu yüzden her satır sonunda genişlik yeniden doğrulanıp
+// gerekirse kesiliyor (aksi halde taşma başlıkta 2. satıra kayardı, kartın
+// dışına taşmaya devam ederdi).
 export function wrapLines(text, fontObj, size, maxWidth, maxLines) {
   const words = String(text || "").trim().split(/\s+/).filter(Boolean);
   const lines = [""];
@@ -46,7 +62,7 @@ export function wrapLines(text, fontObj, size, maxWidth, maxLines) {
     if (fontObj.getAdvanceWidth(candidate, size) > maxWidth && lines.length < maxLines) lines.push(word);
     else lines[lines.length - 1] = candidate;
   }
-  return lines;
+  return lines.map((line) => truncateToWidth(line, fontObj, size, maxWidth));
 }
 
 // Kartın yüksekliğini ve konumunu, başlık/alt başlığın gerçekte kapladığı
@@ -55,11 +71,16 @@ export function wrapLines(text, fontObj, size, maxWidth, maxLines) {
 // satıra sığmazsa küçültülüp iki satıra sarılır.
 export function computeStoryLayout({ title, subtitle }) {
   let titleSize = TITLE_SIZE;
-  let titleLines = wrapLines(title, font, titleSize, MAX_TEXT_WIDTH, 1);
-  if (font.getAdvanceWidth(titleLines[0], titleSize) > MAX_TEXT_WIDTH) {
+  let maxTitleLines = 1;
+  // Küçültüp iki satıra sarma kararı, wrapLines'ın (artık kırpılmış) çıktısı
+  // yerine ham başlık metninin gerçek genişliğine bakarak veriliyor — aksi
+  // halde wrapLines'ın kendi taşma-kırpması bu denetimi hep "sığıyor"
+  // gösterirdi.
+  if (font.getAdvanceWidth(title, titleSize) > MAX_TEXT_WIDTH) {
     titleSize = TITLE_SIZE_SMALL;
-    titleLines = wrapLines(title, font, titleSize, MAX_TEXT_WIDTH, 2);
+    maxTitleLines = 2;
   }
+  let titleLines = wrapLines(title, font, titleSize, MAX_TEXT_WIDTH, maxTitleLines);
   const titleLineHeight = Math.round(titleSize * 1.15);
   const subtitleLines = wrapLines(subtitle, font, SUBTITLE_SIZE, MAX_TEXT_WIDTH, 3);
 

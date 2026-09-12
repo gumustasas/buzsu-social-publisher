@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { wrapLines, computeStoryLayout } from "../api/story-image.js";
+import { wrapLines, computeStoryLayout, font, MAX_TEXT_WIDTH } from "../api/story-image.js";
 
 const CANVAS_HEIGHT = 1920;
 const BOX_BOTTOM_MARGIN = 130;
@@ -10,6 +10,25 @@ test("wrapLines never exceeds maxLines even when the text is far too long to fit
   const font = { getAdvanceWidth: (text) => text.length * 20 };
   const lines = wrapLines("bir iki üç dört beş altı yedi sekiz dokuz on", font, 30, 100, 2);
   assert.equal(lines.length, 2);
+});
+
+test("wrapLines truncates the final line with an ellipsis instead of letting it overflow maxWidth once maxLines is reached", () => {
+  const font = { getAdvanceWidth: (text) => text.length * 20 };
+  const lines = wrapLines("bir iki üç dört beş altı yedi sekiz dokuz on", font, 30, 100, 2);
+  for (const line of lines) {
+    assert.ok(font.getAdvanceWidth(line, 30) <= 100, `satır maxWidth'i aşmamalı: "${line}"`);
+  }
+  assert.match(lines[1], /…$/);
+});
+
+test("computeStoryLayout never lets a title line's rendered width exceed the text column, even for a title far too long to fit in 2 lines", () => {
+  const layout = computeStoryLayout({
+    title: "Bu başlık gerçekten çok fazla kelimeden oluşuyor ve normal koşullarda iki satıra sığmayacak kadar uzun bir ürün adı taşıyor kesinlikle",
+    subtitle: "Kısa."
+  });
+  for (const line of layout.titleLines) {
+    assert.ok(font.getAdvanceWidth(line, layout.titleSize) <= MAX_TEXT_WIDTH, `başlık satırı taşmamalı: "${line}"`);
+  }
 });
 
 test("computeStoryLayout keeps the card's bottom edge fixed regardless of content length (only the top moves)", () => {
