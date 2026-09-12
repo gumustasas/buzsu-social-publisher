@@ -62,14 +62,14 @@ export async function listProducts() {
     const title = (url && catalogTitleByUrl.get(url)) || baseProductTitle(fields.Başlık) || "Başlıksız";
     const imageUrl = fields["Görsel URL"] || "";
     const caption = captionByUrl.get(url) || { instagramText: "", facebookText: "" };
-    return { id: record.id, title, url, imageUrl, imageUrls: imageUrl ? [imageUrl, ...findKnownProductPhotos(url).filter((item) => item !== imageUrl)] : findKnownProductPhotos(url), ...caption };
+    return { id: record.id, title, url, imageUrl, imageUrls: imageUrl ? [imageUrl, ...findKnownProductPhotos(url).filter((item) => item !== imageUrl)] : findKnownProductPhotos(url), fromAirtable: true, ...caption };
   }).filter((product) => {
     const key = product.url || product.id;
     if (!product.url || seen.has(key)) return false;
     seen.add(key);
     return true;
   });
-  const catalogProducts = catalog.map((item) => ({ id: catalogProductId(item.url), title: item.title, url: item.url, imageUrl: item.imageUrl || "", imageUrls: item.imageUrls || (item.imageUrl ? [item.imageUrl] : []), instagramText: "", facebookText: "" })).filter((product) => {
+  const catalogProducts = catalog.map((item) => ({ id: catalogProductId(item.url), title: item.title, url: item.url, imageUrl: item.imageUrl || "", imageUrls: item.imageUrls || (item.imageUrl ? [item.imageUrl] : []), fromAirtable: false, instagramText: "", facebookText: "" })).filter((product) => {
     if (seen.has(product.url)) return false;
     seen.add(product.url);
     return true;

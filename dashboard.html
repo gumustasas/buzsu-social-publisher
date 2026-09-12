@@ -205,10 +205,19 @@
       for(const p of list)(p.imageUrl?withImage:withoutImage).push(p);
       return [...withImage,...withoutImage];
     }
+    // Daha önce en az bir kez içerik oluşturulmuş (Airtable'da kaydı olan)
+    // ürünler ayrı bir grupta en üstte — 200+ ürünlük katalogda sık
+    // kullanılanları tekrar tekrar aramamak için. Her iki grup da kendi
+    // içinde görseli-olanlar-önce sırasını korur (bkz. sortProductsImageFirst).
     function productOptionsHtml(list,search){
       const term=(search||'').trim().toLocaleLowerCase('tr-TR');
       const filtered=term?list.filter(p=>p.title.toLocaleLowerCase('tr-TR').includes(term)):list;
-      return '<option value="">Ürün seçin</option>'+filtered.map(p=>`<option value="${esc(p.id)}">${esc(p.title)}${p.imageUrl?'':' (fotoğraf yok — elle girilecek)'}</option>`).join('');
+      const optionHtml=p=>`<option value="${esc(p.id)}">${esc(p.title)}${p.imageUrl?'':' (fotoğraf yok — elle girilecek)'}</option>`;
+      const used=filtered.filter(p=>p.fromAirtable);
+      const rest=filtered.filter(p=>!p.fromAirtable);
+      const usedGroup=used.length?`<optgroup label="Daha önce kullanılanlar">${used.map(optionHtml).join('')}</optgroup>`:'';
+      const restGroup=rest.length?`<optgroup label="Tüm ürünler">${rest.map(optionHtml).join('')}</optgroup>`:'';
+      return '<option value="">Ürün seçin</option>'+usedGroup+restGroup;
     }
     // Arama kutusuna yazarken dropdown'u yeniden oluşturur; önceki seçim hâlâ
     // filtreye uyuyorsa korunur, uymuyorsa (kullanıcı seçtikten sonra arama
