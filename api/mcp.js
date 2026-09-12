@@ -58,7 +58,12 @@ async function airtableGet() {
 // limitini aşacak kadar şişiriyordu. Burada kısa bir önizlemeye indiriyoruz.
 function truncatePreview(text, maxLength = 80) {
   const value = String(text || "");
-  return value.length > maxLength ? `${value.slice(0, maxLength).trimEnd()}…` : value;
+  // Üretilen metinler emoji içerebiliyor; string.slice UTF-16 kod birimine
+  // göre kestiği için bir emoji'nin surrogate pair'ini ortadan bölüp bozuk
+  // bir karakter üretebilir. Array.from kod noktasına (code point) göre
+  // yineliyor, bu yüzden kesim her zaman bir karakterin tam sınırında olur.
+  const chars = Array.from(value);
+  return chars.length > maxLength ? `${chars.slice(0, maxLength).join("").trimEnd()}…` : value;
 }
 
 async function resolveProduct(productId) {

@@ -131,6 +131,22 @@ test("list_queue truncates long instagramText/facebookText to a short preview in
   );
 });
 
+test("list_queue's truncation never splits an emoji's surrogate pair at the boundary (Codex review)", async () => {
+  // 💧 (U+1F4A7) UTF-16'da bir surrogate pair'tir (2 kod birimi). Bunu tam
+  // 80. kod noktası konumuna yerleştirip string.slice'ın (UTF-16 kod
+  // birimine göre kesen) emoji'yi ortadan bölüp bölmediğini doğruluyoruz.
+  const prefix = "a".repeat(79);
+  const text = `${prefix}💧 devamında daha da uzun bir metin geliyor ve seksen karakteri aşıyor.`;
+  await withAirtableListMock(
+    [{ id: "rec1", fields: { "Başlık": "Emoji sınırında kayıt", "Durum": "Taslak", "Instagram Metni": text, "Facebook Metni": text } }],
+    async () => {
+      const [record] = JSON.parse(await callTool("list_queue", {}));
+      assert.ok(record.instagramText.includes("💧"), "emoji bölünmemiş olarak önizlemede kalmalı");
+      assert.match(record.instagramText, /…$/);
+    }
+  );
+});
+
 test("list_queue leaves short instagramText/facebookText unchanged (no unnecessary truncation)", async () => {
   await withAirtableListMock(
     [{ id: "rec1", fields: { "Başlık": "Kısa metinli kayıt", "Durum": "Taslak", "Instagram Metni": "Kısa metin", "Facebook Metni": "Kısa metin" } }],
