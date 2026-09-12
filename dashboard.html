@@ -48,6 +48,7 @@
       </div>
       <div class="wizard-step">
         <div class="step-head"><span class="step-num">1</span><strong>Ürün seç</strong></div>
+        <input id="product-search" type="search" placeholder="Ürün ara..." style="width:100%;margin-bottom:8px">
         <div class="auth-grid"><select id="product-select"><option value="">Ürün seçin</option></select><input id="product-imageurl" class="hidden" placeholder="Ürünün DOĞRUDAN fotoğraf linki (ör. .../urun.jpg) — ürün sayfasının linki değil"></div>
         <div id="product-image-upload-row" class="hidden" style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="hint">veya</span><input id="product-image-file" type="file" accept="image/*"><button id="product-image-upload" class="secondary" type="button">Fotoğrafı yükle</button><span id="product-image-upload-message" class="hint"></span></div>
       </div>
@@ -108,6 +109,7 @@
     </section>
     <section class="panel" id="seo-content"><h2>SEO içerik üret (AI)</h2>
       <p class="hint">Google'da hem de ChatGPT/Gemini/Perplexity gibi AI cevap motorlarında (GEO) kolay anlaşılıp alıntılanacak, ne uzun ne kısa bir ürün yazısı üretir. Hiçbir şey kaydedilmez, kuyruğa eklenmez — üretir, sen kopyala-yapıştır ile LinkedIn, Medium, Reddit ve Facebook'ta paylaşırsın.</p>
+      <input id="seo-product-search" type="search" placeholder="Ürün ara..." style="width:100%;margin-bottom:8px">
       <div class="auth-grid"><select id="seo-product-select"><option value="">Ürün seçin</option></select><input id="seo-topic" placeholder="Konu (opsiyonel — boş bırakırsan üründen türetilir, örn. 'manyetik kireç önleyici nasıl çalışır')"></div>
       <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button id="seo-generate-text" type="button">SEO yazı üret</button><button id="seo-generate-image" type="button" class="secondary">İlgili görsel üret (AI)</button></div>
       <p id="seo-message" class="hint"></p>
@@ -193,7 +195,32 @@
     document.querySelectorAll('.view-switch button').forEach(button=>button.onclick=()=>{document.querySelectorAll('.view-switch button').forEach(b=>b.classList.toggle('active',b===button));const view=button.dataset.view;document.querySelector('#view-list').classList.toggle('hidden',view!=='list');document.querySelector('#view-kanban').classList.toggle('hidden',view!=='kanban');document.querySelector('#view-grid').classList.toggle('hidden',view!=='grid');});
     let products=[];
     function updateProductImageField(){const productId=document.querySelector('#product-select').value;const product=products.find(p=>p.id===productId);const field=document.querySelector('#product-imageurl');const uploadRow=document.querySelector('#product-image-upload-row');currentSceneImageUrl=null;currentSceneDescription=null;currentVideoUrl=null;currentManualImageUrl=null;resetVideoPromptSnapshot();document.querySelector('#product-image-file').value='';document.querySelector('#product-image-upload-message').textContent='';field.value='';if(product){field.classList.remove('hidden');uploadRow.classList.remove('hidden');field.placeholder=product.imageUrl?'Kayıtlı fotoğraf yerine kullanmak için farklı bir DOĞRUDAN fotoğraf linki girin (opsiyonel)':'Ürünün DOĞRUDAN fotoğraf linki (ör. .../urun.jpg) — ürün sayfasının linki değil';}else{field.classList.add('hidden');uploadRow.classList.add('hidden');}}
-    async function loadProducts(){const res=await api('/api/content');const data=await res.json();if(!res.ok)throw new Error(data.error||'Ürünler okunamadı');products=data.products;const options='<option value="">Ürün seçin</option>'+products.map(p=>`<option value="${esc(p.id)}">${esc(p.title)}${p.imageUrl?'':' (fotoğraf yok — elle girilecek)'}</option>`).join('');document.querySelector('#product-select').innerHTML=options;document.querySelector('#seo-product-select').innerHTML=options;updateProductImageField();}
+    // Görseli olan ürünler önce, görselsizler (elle görsel girilmesi gereken
+    // az sayıdaki ürün) listenin sonuna — 200+ ürünlük katalogda arama
+    // yaparken hazır/görselli ürünler önce çıksın diye. Göreceli sıra (ör.
+    // Airtable kayıtları önce, katalog ürünleri sonra) her iki grup içinde
+    // korunur (stabil bölme, yeniden sıralama yok).
+    function sortProductsImageFirst(list){
+      const withImage=[],withoutImage=[];
+      for(const p of list)(p.imageUrl?withImage:withoutImage).push(p);
+      return [...withImage,...withoutImage];
+    }
+    function productOptionsHtml(list,search){
+      const term=(search||'').trim().toLocaleLowerCase('tr-TR');
+      const filtered=term?list.filter(p=>p.title.toLocaleLowerCase('tr-TR').includes(term)):list;
+      return '<option value="">Ürün seçin</option>'+filtered.map(p=>`<option value="${esc(p.id)}">${esc(p.title)}${p.imageUrl?'':' (fotoğraf yok — elle girilecek)'}</option>`).join('');
+    }
+    // Arama kutusuna yazarken dropdown'u yeniden oluşturur; önceki seçim hâlâ
+    // filtreye uyuyorsa korunur, uymuyorsa (kullanıcı seçtikten sonra arama
+    // kutusuna farklı bir şey yazarsa) doğal olarak "Ürün seçin"e döner.
+    function renderProductSelect(selectEl,search){
+      const previous=selectEl.value;
+      selectEl.innerHTML=productOptionsHtml(products,search);
+      if([...selectEl.options].some(o=>o.value===previous))selectEl.value=previous;
+    }
+    async function loadProducts(){const res=await api('/api/content');const data=await res.json();if(!res.ok)throw new Error(data.error||'Ürünler okunamadı');products=sortProductsImageFirst(data.products);renderProductSelect(document.querySelector('#product-select'),document.querySelector('#product-search').value);renderProductSelect(document.querySelector('#seo-product-select'),document.querySelector('#seo-product-search').value);updateProductImageField();}
+    document.querySelector('#product-search').addEventListener('input',()=>{renderProductSelect(document.querySelector('#product-select'),document.querySelector('#product-search').value);updateProductImageField();});
+    document.querySelector('#seo-product-search').addEventListener('input',()=>renderProductSelect(document.querySelector('#seo-product-select'),document.querySelector('#seo-product-search').value));
     async function loadAiProviders(){const res=await api('/api/reels');const data=await res.json();if(!res.ok)throw new Error(data.error||'AI sağlayıcıları okunamadı');const select=document.querySelector('#reel-provider');select.innerHTML='<option value="">AI sağlayıcısı seçin</option>'+data.providers.map(p=>`<option value="${p}">${p==='fal'?'fal.ai (görselden video, hızlı/ucuz)':p==='veo'?'Google Veo 3.1 (sinematik video, Google kredisi)':p}</option>`).join('');if(!data.providers.length)document.querySelector('#reel-message').textContent='Henüz AI anahtarı eklenmedi. Vercel Production ortamına OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY veya FAL_KEY ekleyin.';}
     async function loadInsights(){try{const res=await api('/api/insights');const data=await res.json();if(!res.ok)return;const detail=document.querySelector('#weekly-engagement-detail'),card=document.querySelector('#weekly-engagement'),note=document.querySelector('#weekly-engagement-note'),daypart=document.querySelector('#best-daypart');if(!data.connected){if(detail)detail.textContent='Meta erişim anahtarı tanımlı değil.';if(daypart)daypart.textContent='Meta erişim anahtarı tanımlı değil.';return;}const w=data.weekly,total=w.likes+w.comments+w.shares;if(detail){detail.textContent=`${total} (Beğeni ${w.likes} · Yorum ${w.comments} · Paylaşım ${w.shares})`;detail.classList.remove('muted');}if(card)card.textContent=total;if(note){note.textContent=`${w.posts} gönderi, son 7 gün`;note.classList.remove('muted');}
       // Küçük örneklemde (az sayıda son 7 gün gönderisi) yanıltıcı olabileceğinden
