@@ -52,6 +52,20 @@ async function airtableGet() {
   return { records };
 }
 
+// list_queue bir genel-bakış/indeks aracıdır (tek kaydın tam metni için
+// get_draft var) — instagramText/facebookText'i tam haliyle taşımak
+// (özellikle çok kayıtlı kuyruklarda) yanıtı MCP istemcilerinin token
+// limitini aşacak kadar şişiriyordu. Burada kısa bir önizlemeye indiriyoruz.
+function truncatePreview(text, maxLength = 80) {
+  const value = String(text || "");
+  // Üretilen metinler emoji içerebiliyor; string.slice UTF-16 kod birimine
+  // göre kestiği için bir emoji'nin surrogate pair'ini ortadan bölüp bozuk
+  // bir karakter üretebilir. Array.from kod noktasına (code point) göre
+  // yineliyor, bu yüzden kesim her zaman bir karakterin tam sınırında olur.
+  const chars = Array.from(value);
+  return chars.length > maxLength ? `${chars.slice(0, maxLength).join("").trimEnd()}…` : value;
+}
+
 async function resolveProduct(productId) {
   if (isCatalogProductId(productId)) {
     const catalogProduct = await findCatalogProduct(productId);
@@ -79,7 +93,7 @@ const TOOLS = [
   },
   {
     name: "list_queue",
-    description: "Yayın kuyruğunu kapsam seçerek listeler. Varsayılan 'recent': aktif kayıtlar ve son 90 günde paylaşılmış kayıtlar. 'active' yalnızca yayınlanmamış aktif kayıtları, 'archive' paylaşılmış kayıtları, 'all' ise çöp kutusu dahil tüm kayıtları döner. Her kaydın id, title, status, format, platforms, publishAt, imageUrl, instagramText, facebookText ve yayın ID alanları bulunur.",
+    description: "Yayın kuyruğunu kapsam seçerek listeler. Varsayılan 'recent': aktif kayıtlar ve son 90 günde paylaşılmış kayıtlar. 'active' yalnızca yayınlanmamış aktif kayıtları, 'archive' paylaşılmış kayıtları, 'all' ise çöp kutusu dahil tüm kayıtları döner. Her kaydın id, title, status, format, platforms, publishAt, imageUrl, instagramText, facebookText ve yayın ID alanları bulunur — instagramText/facebookText burada kısa bir önizlemedir (ilk ~80 karakter), bir kaydın tam metnini görmek için get_draft(recordId) kullanın.",
     inputSchema: {
       type: "object",
       properties: {
@@ -363,7 +377,7 @@ export async function callTool(name, args) {
           id: record.id, title: fields["Başlık"] || "Başlıksız", status: fields.Durum || "Taslak",
           format: fields["Yayın Biçimi"] || "Gönderi", platforms: fields.Platform || [],
           publishAt: fields["Yayın Zamanı"] || null, imageUrl: fields["Görsel URL"] || "",
-          instagramText: fields["Instagram Metni"] || "", facebookText: fields["Facebook Metni"] || "",
+          instagramText: truncatePreview(fields["Instagram Metni"]), facebookText: truncatePreview(fields["Facebook Metni"]),
           instagramPostId: fields["Instagram Yayın ID"] || "", facebookPostId: fields["Facebook Yayın ID"] || "",
           xPostId: fields["X Yayın ID"] || "", youtubeVideoId: fields["YouTube Video ID"] || ""
         };

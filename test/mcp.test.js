@@ -102,6 +102,62 @@ test("get_draft surfaces the Airtable error when the record cannot be found", as
   }
 });
 
+// list_queue bir genel-bakış aracıdır (tam metin için get_draft var) —
+// instagramText/facebookText tam metniyle taşınırsa çok kayıtlı kuyruklarda
+// MCP istemcilerinin token limitini aşacak kadar şişiyordu (bkz. PR #35 ve
+// sonrasındaki bu düzeltme). Burada kısa bir önizlemeye indiriliyor.
+function withAirtableListMock(records, run) {
+  process.env.AIRTABLE_TOKEN = "test-token";
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, json: async () => ({ records }) });
+  return run().finally(() => {
+    global.fetch = originalFetch;
+    if (originalAirtableToken === undefined) delete process.env.AIRTABLE_TOKEN;
+    else process.env.AIRTABLE_TOKEN = originalAirtableToken;
+  });
+}
+
+test("list_queue truncates long instagramText/facebookText to a short preview instead of the full caption", async () => {
+  const longText = "Bu ürünle ilgili çok uzun bir Instagram gönderi metni burada yer alıyor ve seksen karakteri kesinlikle aşıyor, hatta bir hayli fazlasını içeriyor.";
+  await withAirtableListMock(
+    [{ id: "rec1", fields: { "Başlık": "Uzun metinli kayıt", "Durum": "Taslak", "Instagram Metni": longText, "Facebook Metni": longText } }],
+    async () => {
+      const [record] = JSON.parse(await callTool("list_queue", {}));
+      assert.ok(record.instagramText.length <= 81, "instagramText önizlemesi ~80 karakteri aşmamalı");
+      assert.ok(record.facebookText.length <= 81, "facebookText önizlemesi ~80 karakteri aşmamalı");
+      assert.match(record.instagramText, /…$/);
+      assert.notEqual(record.instagramText, longText);
+    }
+  );
+});
+
+test("list_queue's truncation never splits an emoji's surrogate pair at the boundary (Codex review)", async () => {
+  // 💧 (U+1F4A7) UTF-16'da bir surrogate pair'tir (2 kod birimi). Bunu tam
+  // 80. kod noktası konumuna yerleştirip string.slice'ın (UTF-16 kod
+  // birimine göre kesen) emoji'yi ortadan bölüp bölmediğini doğruluyoruz.
+  const prefix = "a".repeat(79);
+  const text = `${prefix}💧 devamında daha da uzun bir metin geliyor ve seksen karakteri aşıyor.`;
+  await withAirtableListMock(
+    [{ id: "rec1", fields: { "Başlık": "Emoji sınırında kayıt", "Durum": "Taslak", "Instagram Metni": text, "Facebook Metni": text } }],
+    async () => {
+      const [record] = JSON.parse(await callTool("list_queue", {}));
+      assert.ok(record.instagramText.includes("💧"), "emoji bölünmemiş olarak önizlemede kalmalı");
+      assert.match(record.instagramText, /…$/);
+    }
+  );
+});
+
+test("list_queue leaves short instagramText/facebookText unchanged (no unnecessary truncation)", async () => {
+  await withAirtableListMock(
+    [{ id: "rec1", fields: { "Başlık": "Kısa metinli kayıt", "Durum": "Taslak", "Instagram Metni": "Kısa metin", "Facebook Metni": "Kısa metin" } }],
+    async () => {
+      const [record] = JSON.parse(await callTool("list_queue", {}));
+      assert.equal(record.instagramText, "Kısa metin");
+      assert.equal(record.facebookText, "Kısa metin");
+    }
+  );
+});
+
 test("get_video_render_status requires jobId", async () => {
   await assert.rejects(() => callTool("get_video_render_status", {}), /jobId gerekli/);
 });
