@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appendEvent, buildLease, canProcess, clearLease, leaseIsStale, parseJsonNote, parseMediaItemsSafe, normalizeDraftFields } from "../src/lib/queue.js";
+import { appendEvent, buildLease, canProcess, clearLease, leaseIsStale, parseJsonNote, parseMediaItemsSafe, normalizeDraftFields, buildRecentQueueFilter } from "../src/lib/queue.js";
 
 test("queue state is stored without destroying the user note", () => {
   const note = buildLease({ Not: "Müşteri için hazırlandı" }, "rec123", 10);
@@ -120,4 +120,14 @@ test("normalizeDraftFields never throws on a corrupt/broken Media Items field �
   assert.deepEqual(normalized.mediaItems, []);
   assert.equal(normalized.mediaCount, 0);
   assert.match(normalized.mediaItemsWarning, /JSON dizisi değil/);
+});
+
+test("buildRecentQueueFilter keeps every non-published record and only recently-published archive records", () => {
+  const formula = buildRecentQueueFilter(90);
+  assert.equal(formula, "OR({Durum}!='Paylaşıldı',{Yayın Zamanı}=BLANK(),IS_AFTER({Yayın Zamanı},DATEADD(TODAY(),-90,'days')))");
+});
+
+test("buildRecentQueueFilter interpolates the requested day window", () => {
+  assert.match(buildRecentQueueFilter(30), /DATEADD\(TODAY\(\),-30,'days'\)/);
+  assert.match(buildRecentQueueFilter(365), /DATEADD\(TODAY\(\),-365,'days'\)/);
 });

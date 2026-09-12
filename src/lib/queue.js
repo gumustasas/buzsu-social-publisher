@@ -87,6 +87,20 @@ export function parseMediaItemsSafe(raw) {
   return { mediaItems, warning };
 }
 
+// api/queue.js'in varsayılan GET'i artık tüm geçmişi değil, bu formülü
+// Airtable'a filterByFormula olarak gönderiyor — Taslak/Onaylandı/Hata/
+// Durduruldu gibi hâlâ aktif olan HER kayıt (yaşı ne olursa olsun) ve
+// yalnızca son `days` gün içinde paylaşılmış arşiv kayıtları geliyor;
+// bunun dışındaki eski "Paylaşıldı" kayıtları Airtable tarafında filtrelenip
+// hiç çekilmiyor. Bu, panel büyüdükçe (aylar/yıllar boyunca biriken
+// paylaşım geçmişi) hem Airtable'dan çekilen veri miktarını hem panel
+// açılış süresini sabit tutar. Yayın zamanı boş olan bir "Paylaşıldı" kaydı
+// (normalde olmaması gereken bir durum) sessizce kaybolmasın diye BLANK()
+// kontrolüyle de her zaman dahil ediliyor.
+export function buildRecentQueueFilter(days) {
+  return `OR({Durum}!='Paylaşıldı',{Yayın Zamanı}=BLANK(),IS_AFTER({Yayın Zamanı},DATEADD(TODAY(),-${days},'days')))`;
+}
+
 // api/queue.js (panel) ve api/mcp.js (get_draft MCP aracı) aynı Airtable
 // kaydını iki farklı şekle çeviriyordu — bu, ikisinin de ihtiyaç duyduğu
 // çekirdek alanları (Carousel dahil) tek bir yerden üretir; her çağıran
