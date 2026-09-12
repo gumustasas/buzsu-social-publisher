@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { appendEvent, parseJsonNote, parseMediaItemsSafe } from "../src/lib/queue.js";
+import { appendEvent, parseJsonNote, parseMediaItemsSafe, buildRecentQueueFilter } from "../src/lib/queue.js";
 import { summarizeRecords } from "../src/lib/metrics.js";
 import { getSession } from "../src/auth.js";
 
@@ -24,11 +24,14 @@ async function airtable(path = "", options = {}) {
 // Airtable her sayfada en fazla 100 kayıt döner; kuyruk 100'ü geçtiğinde
 // tek sayfalık bir istek sessizce eksik/kesik veri döner. Tüm sayfaları
 // offset kürsörünü takip ederek birleştiriyoruz.
-async function airtableAll() {
+const RECENT_ARCHIVE_DAYS = 90;
+
+async function airtableAll(filterByFormula) {
   const records = [];
   let offset = "";
   do {
     const params = new URLSearchParams({ pageSize: "100" });
+    if (filterByFormula) params.set("filterByFormula", filterByFormula);
     if (offset) params.set("offset", offset);
     const data = await airtable(`?${params}`);
     records.push(...(data.records || []));
@@ -79,7 +82,7 @@ export default async function handler(request, response) {
   if (!authorized(request)) return response.status(401).json({ error: "Unauthorized" });
   try {
     if (request.method === "GET") {
-      const allRecords = await airtableAll();
+      const allRecords = await airtableAll(buildRecentQueueFilter(RECENT_ARCHIVE_DAYS));
       const records = allRecords.map(publicRecord).sort((a, b) => String(a.publishAt || "").localeCompare(String(b.publishAt || "")));
       return response.status(200).json({ ok: true, records, summary: summarizeRecords(allRecords) });
     }
