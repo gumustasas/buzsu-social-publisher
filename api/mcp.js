@@ -313,7 +313,7 @@ const TOOLS = [
             required: ["imageUrl"]
           }
         },
-        durationPerImageSeconds: { type: "number", description: "Her ürünün ekranda kalma süresi, saniye (varsayılan 1.8, aralık 1.0-3.0)." },
+        durationPerImageSeconds: { type: "number", description: "Her ürünün ekranda kalma süresi, saniye (varsayılan 2.0, aralık 1.0-3.0)." },
         transition: { type: "string", enum: ["fade", "wipe"], description: "Ürünler arası geçiş efekti (varsayılan 'fade')." },
         transitionDurationSeconds: { type: "number", description: "Geçiş efektinin süresi, saniye (varsayılan 0.4, aralık 0.2-1.0; durationPerImageSeconds'tan küçük olmalı)." },
         closingTitle: { type: "string", description: "İsteğe bağlı — kapanış sahnesindeki ana metni değiştirir (varsayılan: 'Buzsu – İhtiyacınıza uygun su çözümünü keşfedin')." },
