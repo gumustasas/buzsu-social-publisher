@@ -8,11 +8,14 @@ import { buildDraft } from "../src/content-worker.js";
 import { availableSceneProviders, generateSceneImage } from "../src/scene-image.js";
 import { composeBrandedPost } from "../src/post-branding.js";
 import { runPublisher } from "../src/publish-approved.js";
+import { MUSIC_CATEGORIES } from "../src/lib/music-catalog.js";
 import { submitVeoVideo, veoVideoStatus, downloadVeoVideo } from "../src/veo-video.js";
 import { getAutopilotEnabled, setAutopilotEnabled } from "../src/lib/settings.js";
 import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "../src/lib/config.js";
 import { fetchPublicImage, decodeImageBase64, imageExtensionFor, extractDriveFileId, normalizeDriveUrl, normalizeImageForMeta } from "../src/lib/upload-media.js";
 import { validateSceneImage } from "../src/lib/scene-validation.js";
+import { normalizeDraftFields } from "../src/lib/queue.js";
+import { composeProductVideo, getVideoRenderStatus } from "../src/video-compose.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
 const SERVER_INFO = { name: "buzsu-social-publisher", version: "1.0.0" };
@@ -144,19 +147,31 @@ const TOOLS = [
   },
   {
     name: "create_draft",
-    description: "Yeni bir taslak içerik oluşturup yayın kuyruğuna ekler. Oluşturulan taslak 'Taslak' durumundadır, onaylanması gerekir.",
+    description: "Yeni bir taslak içerik oluşturup yayın kuyruğuna ekler. Oluşturulan taslak 'Taslak' durumundadır, onaylanması gerekir. Carousel ve Reel AYRI gönderilerdir — aynı videoUrl'i hem bir Carousel taslağının mediaItems'ında hem ayrı bir Reel taslağında (tekrar upload etmeden) kullanmak için create_draft'ı iki kez, farklı format ile çağırın.",
     inputSchema: {
       type: "object",
       properties: {
         productId: { type: "string", description: "Ürün ID'si" },
-        format: { type: "string", enum: ["Gönderi", "Hikâye", "Reel"], description: "Yayın biçimi" },
-        platforms: { type: "array", items: { type: "string", enum: ["Instagram", "Facebook", "X", "YouTube"] }, description: "Hedef platformlar — X metni verilmezse Facebook metni 280 karaktere kısaltılıp kullanılır; YouTube yalnızca format 'Reel' iken (video gerektirir) çalışır." },
+        format: { type: "string", enum: ["Gönderi", "Hikâye", "Reel", "Carousel"], description: "Yayın biçimi. 'Carousel' seçilirse mediaItems ZORUNLU (imageUrl/videoUrl yok sayılır); diğer biçimler eskisi gibi imageUrl/videoUrl kullanır." },
+        platforms: { type: "array", items: { type: "string", enum: ["Instagram", "Facebook", "X", "YouTube"] }, description: "Hedef platformlar — X metni verilmezse Facebook metni 280 karaktere kısaltılıp kullanılır; YouTube yalnızca format 'Reel' iken (video gerektirir) çalışır. Carousel'de Facebook yalnızca mediaItems TAMAMEN görsellerden oluşuyorsa desteklenir — karma (görsel+video) bir Carousel'e Facebook eklenirse taslak oluşturulamaz (UNSUPPORTED_FACEBOOK_MEDIA_COMBINATION); bu durumda videoyu ayrı bir Reel taslağı olarak (aynı videoUrl ile) oluşturun." },
         publishAt: { type: "string", description: "Yayın zamanı (ISO 8601, örn. 2026-09-05T10:00:00Z)" },
         instagramText: { type: "string", description: "Instagram gönderi metni (isteğe bağlı — verilmezse otomatik üretilir)" },
         facebookText: { type: "string", description: "Facebook gönderi metni (isteğe bağlı)" },
         hashtags: { type: "string", description: "Hashtagler (isteğe bağlı, örn. #Buzsu #SuArıtma)" },
-        imageUrl: { type: "string", description: "İsteğe bağlı — verilirse ürünün kayıtlı ana görseli yerine SADECE bu taslak için bu HTTPS görsel URL'i kullanılır (ör. upload_media çıktısı). Ürünün Airtable'daki ana Görsel URL alanı değişmez." },
-        videoUrl: { type: "string", description: "format 'Reel' iken ZORUNLU — herkese açık HTTPS video URL'i (ör. generate_video_clip/get_video_clip_status çıktısındaki videoUrl). Reel'de bu verilmezse taslak oluşturulamaz; YouTube platformu da yalnızca bu alan doluyken çalışır." }
+        imageUrl: { type: "string", description: "İsteğe bağlı — verilirse ürünün kayıtlı ana görseli yerine SADECE bu taslak için bu HTTPS görsel URL'i kullanılır (ör. upload_media çıktısı). Ürünün Airtable'daki ana Görsel URL alanı değişmez. format 'Carousel' iken kullanılmaz (bkz. mediaItems)." },
+        videoUrl: { type: "string", description: "format 'Reel' iken ZORUNLU — herkese açık HTTPS video URL'i (ör. generate_video_clip/get_video_clip_status veya upload_media çıktısındaki URL). Reel'de bu verilmezse taslak oluşturulamaz; YouTube platformu da yalnızca bu alan doluyken çalışır. Aynı videoUrl, tekrar upload edilmeden, bir Carousel taslağının mediaItems'ında (type:'video') AYRICA kullanılabilir — ikisi ayrı gönderi/ayrı create_draft çağrısıdır." },
+        mediaItems: {
+          type: "array",
+          description: "YALNIZCA format 'Carousel' iken kullanılır ve zorunludur. En az 2, en fazla 10 öğe (Instagram sınırı). Her öğe zaten herkese açık bir HTTPS URL'e sahip olmalı (ör. upload_media veya generate_video_clip/get_video_clip_status çıktısı) — burada hiçbir upload yapılmaz. Facebook bu formatta yalnızca tüm öğeler 'image' ise desteklenir.",
+          items: {
+            type: "object",
+            properties: {
+              type: { type: "string", enum: ["image", "video"] },
+              url: { type: "string", description: "Herkese açık HTTPS medya URL'i" }
+            },
+            required: ["type", "url"]
+          }
+        }
       },
       required: ["productId", "format", "platforms", "publishAt"]
     }
@@ -176,6 +191,17 @@ const TOOLS = [
         confirmed: { type: "boolean", description: "true olmadan Blob'a yükleme veya Airtable güncellemesi yapılmaz — yalnızca doğrulama/preview sonucu döner" }
       },
       required: ["confirmed"]
+    }
+  },
+  {
+    name: "get_draft",
+    description: "Kuyruktaki mevcut bir kaydın (taslak, onaylı veya yayınlanmış) tam, normalize edilmiş verisini okur — salt-okunur, hiçbir şeyi değiştirmez. Carousel kayıtlarında mediaItems dizisini ve mediaCount'u da döner; Carousel olmayan kayıtlarda mediaItems boş bir dizidir. Bozuk/eski bir Media Items alanı bu aracı asla çökertmez — mediaItems boş döner ve mediaItemsWarning ile sebep belirtilir.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        recordId: { type: "string", description: "Airtable kayıt ID'si (rec...) — list_queue veya create_draft çıktısından alınır." }
+      },
+      required: ["recordId"]
     }
   },
   {
@@ -254,10 +280,53 @@ const TOOLS = [
       },
       required: ["enabled"]
     }
+  },
+  {
+    name: "compose_product_video",
+    description: "2-10 ürün görselinden ÜCRETSİZ (paid API kullanmadan), FFmpeg ile 9:16 1080x1920 Reels/Shorts videosu üretir — her ürün ~1.5-2sn gösterilir, hafif zoom/pan (Ken Burns) ve geçiş efekti uygulanır, ürün adı alt kısımda güvenli alanda gösterilir, sabit bir Buzsu kapanış sahnesiyle biter. Render işi (birkaç dakika sürebilir) GitHub Actions'ın ücretsiz kuyruğunda arka planda çalışır — bu tool işi başlatıp hemen bir jobId döner, sonucu get_video_render_status ile sorgulayın. Tamamlandığında dönen videoUrl, create_draft(format:'Reel') içinde videoUrl olarak veya bir Carousel'in mediaItems'ında doğrudan kullanılabilir. musicUrl VERİLMEZSE video sessiz çıkmaz — 30 parçalık ücretsiz, ticari kullanıma açık bir müzik havuzundan (Mixkit) otomatik bir arka plan müziği seçilir; musicMood ile hangi tarzdan seçileceği yönlendirilebilir. upscaleImages varsayılan olarak true'dur — düşük çözünürlüklü görseller (< 1080px) otomatik olarak Replicate/Real-ESRGAN ile AI büyütülür, zaten yüksek çözünürlüklü olanlar (>= 1080px) otomatik atlanır (kredi harcanmaz). Bu özellik GERÇEK PARA HARCAYABİLİR, confirmed:true olmadan çalışmaz. Upscale istemiyorsanız upscaleImages:false gönderin.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        mediaItems: {
+          type: "array",
+          description: "2-10 öğe. Her öğe herkese açık bir HTTPS görsel URL'i (PNG/JPEG/WebP) ve isteğe bağlı bir ürün adı içerir.",
+          items: {
+            type: "object",
+            properties: {
+              imageUrl: { type: "string", description: "Herkese açık HTTPS görsel URL'i." },
+              title: { type: "string", description: "İsteğe bağlı — videoda alt kısımda gösterilecek ürün adı (en fazla 60 karakter)." }
+            },
+            required: ["imageUrl"]
+          }
+        },
+        durationPerImageSeconds: { type: "number", description: "Her ürünün ekranda kalma süresi, saniye (varsayılan 1.8, aralık 1.0-3.0)." },
+        transition: { type: "string", enum: ["fade", "wipe"], description: "Ürünler arası geçiş efekti (varsayılan 'fade')." },
+        transitionDurationSeconds: { type: "number", description: "Geçiş efektinin süresi, saniye (varsayılan 0.4, aralık 0.2-1.0; durationPerImageSeconds'tan küçük olmalı)." },
+        closingTitle: { type: "string", description: "İsteğe bağlı — kapanış sahnesindeki ana metni değiştirir (varsayılan: 'Buzsu – İhtiyacınıza uygun su çözümünü keşfedin')." },
+        closingSubtitle: { type: "string", description: "İsteğe bağlı — kapanış sahnesindeki alt metni değiştirir (varsayılan: 'buzsu.com.tr')." },
+        musicUrl: { type: "string", description: "İsteğe bağlı — herkese açık HTTPS royalty-free müzik URL'i (MP3/MP4/WAV/OGG). Video süresine göre otomatik döngüye alınır ve kırpılır. Verilmezse ücretsiz havuzdan otomatik bir parça seçilir (bkz. musicMood)." },
+        musicMood: { type: "string", enum: MUSIC_CATEGORIES, description: `İsteğe bağlı — musicUrl verilmediğinde otomatik seçilecek müziğin tarzı (${MUSIC_CATEGORIES.join(", ")}). Verilmezse rastgele bir tarzdan seçilir. musicUrl verilirse yok sayılır.` },
+        musicVolume: { type: "number", description: "Müzik ses seviyesi, 0-1 aralığında (varsayılan 0.5) — hem musicUrl hem otomatik seçilen müzik için geçerli." },
+        upscaleImages: { type: "boolean", default: true, description: "Varsayılan true — her ürün görseli render'dan önce Replicate/Real-ESRGAN ile AI büyütülür (yalnızca düşük çözünürlüklü görseller büyütülür, >= 1080px olanlar otomatik atlanır). Kapatmak için false gönderin. confirmed:true olmadan çalışmaz." },
+        confirmed: { type: "boolean", default: false, description: "upscaleImages varsayılan true olduğundan her video oluşturmada confirmed:true GÖNDERİLMELİDİR (upscaleImages:false gönderilmedikçe). true olmadan iş başlamaz." }
+      },
+      required: ["mediaItems"]
+    }
+  },
+  {
+    name: "get_video_render_status",
+    description: "compose_product_video ile başlatılmış bir render işinin durumunu sorgular. status 'queued'/'rendering' ise birkaç dakika sonra tekrar deneyin; 'completed' ise videoUrl, durationSeconds, width, height, fileSizeBytes döner; 'failed' ise error alanında sebep bulunur.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        jobId: { type: "string", description: "compose_product_video yanıtındaki jobId." }
+      },
+      required: ["jobId"]
+    }
   }
 ];
 
-async function callTool(name, args) {
+export async function callTool(name, args) {
   switch (name) {
     case "list_products": {
       const products = await listProducts();
@@ -375,15 +444,25 @@ async function callTool(name, args) {
       const draftProduct = {
         ...product,
         ...(typeof args.imageUrl === "string" && args.imageUrl.trim() ? { imageUrl: args.imageUrl.trim() } : {}),
-        ...(typeof args.videoUrl === "string" && args.videoUrl.trim() ? { videoUrl: args.videoUrl.trim() } : {})
+        ...(typeof args.videoUrl === "string" && args.videoUrl.trim() ? { videoUrl: args.videoUrl.trim() } : {}),
+        ...(Array.isArray(args.mediaItems) ? { mediaItems: args.mediaItems } : {})
       };
       const aiCaption = args.instagramText || args.facebookText
         ? { instagramText: args.instagramText || args.facebookText, facebookText: args.facebookText || args.instagramText, hashtags: args.hashtags || "#Buzsu" }
         : null;
-      const draft = buildDraft(draftProduct, { format: args.format, platforms: args.platforms, variant: 0, publishAt: args.publishAt, captionOverride: aiCaption });
+      const draft = buildDraft(draftProduct, { format: args.format, platforms: args.platforms, variant: 0, publishAt: args.publishAt, captionOverride: aiCaption, allowCatalogCaption: true });
       if (!draft.valid) throw new Error(draft.warnings.join(" "));
       const record = await createDraftRecord({ product: draftProduct, draft, format: args.format, platforms: args.platforms, publishAt: args.publishAt, note: "MCP üzerinden oluşturuldu." });
       return JSON.stringify({ ok: true, id: record.id, status: "Taslak" }, null, 2);
+    }
+    case "get_draft": {
+      if (!String(args.recordId || "").trim()) throw new Error("recordId gerekli.");
+      const response = await fetch(`https://api.airtable.com/v0/${baseId}/${tableId}/${encodeURIComponent(args.recordId)}`, {
+        headers: { Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}` }
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error?.message || `Airtable HTTP ${response.status}`);
+      return JSON.stringify({ ok: true, id: data.id, ...normalizeDraftFields(data.fields || {}) }, null, 2);
     }
     case "upload_media": {
       const hasUrl = typeof args.imageUrl === "string" && args.imageUrl.trim().length > 0;
@@ -519,6 +598,15 @@ async function callTool(name, args) {
         videoUrl = blob.url;
       }
       return JSON.stringify({ ok: true, status: "COMPLETED", videoUrl }, null, 2);
+    }
+    case "compose_product_video": {
+      const result = await composeProductVideo(args);
+      return JSON.stringify(result, null, 2);
+    }
+    case "get_video_render_status": {
+      if (!String(args.jobId || "").trim()) throw new Error("jobId gerekli.");
+      const status = await getVideoRenderStatus(args.jobId);
+      return JSON.stringify(status, null, 2);
     }
     case "get_autopilot_status": {
       const enabled = await getAutopilotEnabled();

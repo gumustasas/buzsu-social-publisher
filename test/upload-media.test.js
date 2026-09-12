@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import { assertPublicHttpsUrl, fetchPublicImage, decodeImageBase64, imageExtensionFor, isPrivateIp, extractDriveFileId, normalizeDriveUrl, normalizeImageForMeta } from "../src/lib/upload-media.js";
+import { assertPublicHttpsUrl, fetchPublicImage, fetchPublicAudio, decodeImageBase64, imageExtensionFor, isPrivateIp, extractDriveFileId, normalizeDriveUrl, normalizeImageForMeta } from "../src/lib/upload-media.js";
 
 const TINY_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
@@ -276,6 +276,46 @@ test("fetchPublicImage does not mistake an HTML response (e.g. Google Drive's vi
     arrayBuffer: async () => new TextEncoder().encode("<html><body>Google Drive virüs taraması yapamadı</body></html>").buffer
   });
   await assert.rejects(() => fetchPublicImage("https://drive.google.com/uc?export=download&id=abc", { fetchImpl, lookup }), /Desteklenmeyen görsel tipi: text\/html/);
+});
+
+test("fetchPublicAudio downloads a valid MP3 and returns its buffer + mimeType", async () => {
+  const lookup = async () => [{ address: "93.184.216.34" }];
+  const bytes = Buffer.from([0x49, 0x44, 0x33, 0x03, 0x00, 0x00, 0x00, 0x00]);
+  const fetchImpl = async () => ({
+    ok: true, status: 200,
+    headers: { get: (name) => ({ "content-type": "audio/mpeg", "content-length": String(bytes.length) }[name] || null) },
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+  });
+  const { buffer, mimeType } = await fetchPublicAudio("https://example.com/music.mp3", { fetchImpl, lookup });
+  assert.equal(mimeType, "audio/mpeg");
+  assert.equal(buffer.length, bytes.length);
+});
+
+test("fetchPublicAudio rejects an unsupported content type (same SSRF/content-type gate as fetchPublicImage, different allowlist)", async () => {
+  const lookup = async () => [{ address: "93.184.216.34" }];
+  const fetchImpl = async () => ({ ok: true, status: 200, headers: { get: (name) => (name === "content-type" ? "image/png" : null) }, arrayBuffer: async () => new ArrayBuffer(4) });
+  await assert.rejects(() => fetchPublicAudio("https://example.com/not-music.png", { fetchImpl, lookup }), /Desteklenmeyen müzik tipi/);
+});
+
+test("fetchPublicAudio rejects a file larger than the byte limit", async () => {
+  const lookup = async () => [{ address: "93.184.216.34" }];
+  const fetchImpl = async () => ({
+    ok: true, status: 200,
+    headers: { get: (name) => ({ "content-type": "audio/mpeg", "content-length": String(30 * 1024 * 1024) }[name] || null) },
+    arrayBuffer: async () => new ArrayBuffer(0)
+  });
+  await assert.rejects(() => fetchPublicAudio("https://example.com/huge.mp3", { fetchImpl, lookup, maxBytes: 20 * 1024 * 1024 }), /çok büyük/);
+});
+
+test("fetchPublicAudio re-validates the SSRF check after following a redirect to a private host (same protection as fetchPublicImage)", async () => {
+  const lookup = async (hostname) => (hostname === "public.example.com" ? [{ address: "93.184.216.34" }] : [{ address: "10.0.0.1" }]);
+  const fetchImpl = async (url) => {
+    if (String(url).includes("public.example.com")) {
+      return { ok: false, status: 302, headers: { get: (name) => (name === "location" ? "https://internal.example.com/secret.mp3" : null) } };
+    }
+    throw new Error("bu URL'e gidilmemeliydi");
+  };
+  await assert.rejects(() => fetchPublicAudio("https://public.example.com/redirect", { fetchImpl, lookup }), /özel\/yerel/);
 });
 
 test("normalizeImageForMeta produces a file that is genuinely re-decodable with the expected pixel dimensions and the declared Content-Type — not just bytes that happen not to throw", async () => {

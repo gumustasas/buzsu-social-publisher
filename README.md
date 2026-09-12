@@ -292,6 +292,96 @@ yazması yapılır — yalnızca doğrulama sonucu döner. `productId` +
 `updateProductImage:true` verilmedikçe ürünün Airtable'daki ana `Görsel URL`
 alanı hiçbir zaman değişmez.
 
+## MCP: ürün görsellerinden ücretsiz Reels/Shorts videosu (compose_product_video)
+
+**`compose_product_video`**, 2-10 ürün görselinden, ücretli bir video API'si
+kullanmadan (yalnızca FFmpeg ile) 9:16 1080x1920 bir Reels/Shorts videosu
+üretir: her ürün ~1.5-2sn gösterilir, hafif zoom/pan (Ken Burns) ve geçiş
+efekti (fade/wipe) uygulanır, ürün adı alt kısımda güvenli alanda gösterilir,
+sabit bir Buzsu kapanış sahnesiyle biter, isteğe bağlı bir royalty-free müzik
+URL'i eklenebilir — `musicUrl` verilmezse video sessiz kalmaz: 30 parçalık
+ücretsiz, ticari kullanıma açık bir Mixkit havuzundan (`src/lib/music-catalog.js`
+— kurumsal_pozitif, modern_teknoloji, sakin_premium, enerjik_reklam, sinematik)
+otomatik bir parça seçilir; `musicMood` ile tarz yönlendirilebilir.
+
+Render işi birkaç dakika sürebileceğinden ve Vercel serverless fonksiyonlarının
+süre/bellek sınırları (Fluid Compute olmadan klasik Pro planında 15sn) bu iş
+için riskli olduğundan, gerçek FFmpeg render'ı **Vercel'de değil, GitHub
+Actions'ın ücretsiz `workflow_dispatch` kuyruğunda** çalışır
+(`.github/workflows/render-product-video.yml`, `scripts/render-product-video.mjs`).
+`compose_product_video` işi başlatıp hemen bir `jobId` döner; sonucu
+**`get_video_render_status`** ile sorgulayın (`status`: `queued` →
+`rendering` → `completed`/`failed`). `workflow_dispatch` API'si bir run ID
+vermediğinden, iş durumu GitHub yerine Vercel Blob'daki
+`video-jobs/<jobId>.json` dosyasından okunur (`src/lib/video-jobs.js`).
+
+```jsonc
+// 1) Render işini başlat
+compose_product_video({
+  mediaItems: [
+    { imageUrl: "https://.../urun1.jpg", title: "UltraMag Kireç Önleyici" },
+    { imageUrl: "https://.../urun2.jpg", title: "1 İnç Manyetik Model" },
+    { imageUrl: "https://.../urun3.jpg", title: "Apartman Tipi Model" }
+  ],
+  transition: "fade",
+  musicUrl: "https://.../royalty-free-muzik.mp3"
+})
+// -> { ok: true, jobId: "b3f1...", status: "queued", message: "..." }
+
+// 2) Birkaç dakika sonra durumu sorgula
+get_video_render_status({ jobId: "b3f1..." })
+// -> { ok: true, jobId: "b3f1...", status: "completed",
+//      videoUrl: "https://<blob>/product-videos/b3f1....mp4",
+//      durationSeconds: 8.4, width: 1080, height: 1920, fileSizeBytes: 4213000 }
+
+// 3) Dönen videoUrl doğrudan create_draft'a verilebilir
+create_draft({
+  productId: "rec6hFtypa3dY78ei",
+  format: "Reel",
+  platforms: ["Instagram", "Facebook", "YouTube"],
+  videoUrl: "https://<blob>/product-videos/b3f1....mp4",
+  publishAt: "2026-09-15T10:00:00Z",
+  instagramText: "Buzsu ürün ailesini keşfedin."
+})
+```
+
+Kurulum: GitHub'da bu depoda **"Actions: write"** izni olan bir personal
+access token oluşturup Vercel Production ortamına `GITHUB_DISPATCH_TOKEN`
+olarak ekleyin; render worker'ın (GitHub Actions runner'ı) Vercel Blob'a
+yazabilmesi için AYRICA bu depoda `BLOB_READ_WRITE_TOKEN` adında bir **GitHub
+Actions repository secret** tanımlayın (Vercel'deki değerle aynı). Detaylar
+için `.env.example`'a bakın.
+
+**Opsiyonel, ÜCRETLİ görsel büyütme (`upscaleImages`)**: kaynak ürün
+fotoğrafı düşük çözünürlüklü (ör. site thumbnail'ı) olduğunda, `contain`-fit
+büyütmesi kaçınılmaz bir yumuşama getirir — ücretsiz `sharpen` filtresi
+yalnızca kenar kontrastını artırır, kayıp detayı geri getirmez. `mediaItems`'a
+`upscaleImages: true` ve `confirmed: true` eklenirse, her görsel Ken Burns
+animasyonundan ÖNCE **Replicate/Real-ESRGAN** ile AI büyütülür
+(`src/lib/image-upscale.js`). Bu adım **gerçek para harcar**;
+`confirmed:true` olmadan hiçbir Replicate API çağrısı yapılmaz ve
+`REPLICATE_API_TOKEN`'ın varlığı tek başına bu adımı tetiklemez — yalnızca
+açıkça `upscaleImages:true` istendiğinde çalışır. Kurulum:
+[replicate.com/account/api-tokens](https://replicate.com/account/api-tokens)
+adresinden bir token alıp bu depoda `REPLICATE_API_TOKEN` adında bir
+**GitHub Actions repository secret** olarak ekleyin (detaylar için
+`.env.example`'a bakın).
+
+Güvenlik: her `imageUrl`/`musicUrl` yalnızca HTTPS söz dizimi olarak
+doğrulanır; gerçek indirme (ve dolayısıyla SSRF/DNS koruması, `src/lib/
+upload-media.js`'deki `assertPublicHttpsUrl`) render worker'ında, görsel/müzik
+fiilen indirilirken yapılır — Vercel bu URL'lere kendisi hiç istek atmaz.
+Görsellerde PNG/JPEG/WebP + 15MB, müzikte MP3/MP4/WAV/OGG + 20MB sınırı
+geçerlidir (aynı `fetchPublicImage`/`fetchPublicAudio` fonksiyonları
+`upload_media` ile paylaşılır).
+
+**Bilinen sınır**: bu depoyu geliştiren ortamda gerçek bir `ffmpeg` ikilisi
+bulunmuyor, bu yüzden filtre grafiği/offset matematiği (`src/lib/
+ffmpeg-command.js`) yalnızca saf argüman üretimi düzeyinde unit test
+edilebildi — gerçek görsel/zamanlama doğruluğu ancak GitHub Actions'ta
+çalışan gerçek bir render ile doğrulanabilir. İlk canlı denemede çıktı
+videoyu mutlaka izleyip kontrol edin.
+
 ## Sonraki adım
 
 Dry-run doğru çalıştıktan sonra Meta API için ayrı gönderim scripti eklenir. O aşamada da önce test modu, sonra tek kayıtla kontrollü canlı paylaşım yapılmalıdır.
