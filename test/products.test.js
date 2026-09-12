@@ -96,6 +96,24 @@ test("listProducts leaves instagramText/facebookText empty when every record for
   }
 });
 
+test("listProducts marks Airtable-sourced products as fromAirtable:true and catalog-only products as fromAirtable:false", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = mockFetch({
+    airtableRecords: [
+      { id: "rec1", fields: { "Başlık": "Code deneme", "Kaynak URL": "https://www.buzsu.com.tr/code-su-aritma-cihazi/" } }
+    ]
+  });
+  try {
+    const products = await listProducts();
+    const airtableProduct = products.find((p) => p.url === "https://www.buzsu.com.tr/code-su-aritma-cihazi/");
+    const catalogOnlyProduct = products.find((p) => p.url === "https://www.buzsu.com.tr/ultra-manyetik-kirec-onleyici/");
+    assert.equal(airtableProduct.fromAirtable, true);
+    assert.equal(catalogOnlyProduct.fromAirtable, false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("createDraftRecord writes an existing single-image draft exactly as before (no Media Items field, no behavior change)", async () => {
   const originalFetch = global.fetch;
   let capturedBody;
