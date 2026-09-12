@@ -63,6 +63,93 @@ test("generateScenePlan falls back to OPENAI_API_KEY when no separate OPENAI_IMA
   }
 });
 
+// usageContext verildiğinde: bağlam AI'nin kendi tahminine bırakılmaz,
+// zorunlu bağlam cümlesi + bağlama özgü yasaklı öğe listesi prompt'a
+// açıkça yazılır (bkz. src/lib/product-installation-context.js).
+test("generateScenePlan with usageContext injects the mandatory context label and forbidden-element list into the prompt", async () => {
+  const originalFetch = global.fetch;
+  let capturedInput = null;
+  global.fetch = async (url, options) => {
+    capturedInput = JSON.parse(options.body).input;
+    return { ok: true, json: async () => ({ output_text: "test sahne planı" }) };
+  };
+  try {
+    await generateScenePlan("openai", { title: "UltraMag Manyetik Kireç Önleyici" }, { OPENAI_API_KEY: "k" }, { usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION });
+    assert.match(capturedInput, /ZORUNLU KULLANIM BAĞLAMI/);
+    assert.match(capturedInput, /bina girişi|ana su hattı|teknik tesisat/i);
+    assert.match(capturedInput, /çamaşır odası/i, "yasaklı öğe listesi prompt'ta görünmeli");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// userNotes verildiğinde kullanıcının somut ayrıntıları ("çelişirse yok say"
+// gibi belirsiz bir çekince olmadan) doğrudan prompt'a aktarılır.
+test("generateScenePlan passes the user's scene notes through to the prompt without a silent-ignore hedge", async () => {
+  const originalFetch = global.fetch;
+  let capturedInput = null;
+  global.fetch = async (url, options) => {
+    capturedInput = JSON.parse(options.body).input;
+    return { ok: true, json: async () => ({ output_text: "test sahne planı" }) };
+  };
+  try {
+    await generateScenePlan("openai", { title: "Code Advantage" }, { OPENAI_API_KEY: "k" }, { userNotes: "3 filtre gövdesi solda, Ultramag sağda görünsün" });
+    assert.match(capturedInput, /3 filtre gövdesi solda, Ultramag sağda görünsün/);
+    assert.doesNotMatch(capturedInput, /YALNIZCA BİR SAHNE\/ATMOSFER TERCİHİ/i, "eski senaryo promptundaki 'çelişirse yok say' çekincesi burada tekrarlanmamalı");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateScenePlan rejects an AMBIGUOUS usageContext before making any network call", async () => {
+  await assert.rejects(
+    () => generateScenePlan("openai", { title: "Code Advantage" }, { OPENAI_API_KEY: "k" }, { usageContext: INSTALLATION_CONTEXTS.AMBIGUOUS }),
+    /belirsiz bağlam netleştirilmelidir/
+  );
+});
+
+test("generateScenePlan rejects an invalid usageContext value before making any network call", async () => {
+  await assert.rejects(
+    () => generateScenePlan("openai", { title: "Code Advantage" }, { OPENAI_API_KEY: "k" }, { usageContext: "not_a_real_context" }),
+    /Geçersiz kullanım bağlamı/
+  );
+});
+
+// Üretim SONRASI güvenlik ağı: AI, kullanıcının notunu (veya kendi
+// tahminini) zorunlu bağlamla çelişecek bir öğe ÜRETEREK uygularsa, bu
+// sessizce geçmez — validateScenarioAgainstContext'teki aynı prensip.
+test("generateScenePlan throws when the AI output contains a term forbidden for the given usageContext", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, json: async () => ({ output_text: "Cihaz, evin içindeki çamaşır odasında sıcak bir atmosferde gösteriliyor." }) });
+  try {
+    await assert.rejects(
+      () => generateScenePlan("openai", { title: "UltraMag Manyetik Kireç Önleyici" }, { OPENAI_API_KEY: "k" }, { usageContext: INSTALLATION_CONTEXTS.TECHNICAL_INSTALLATION }),
+      /yasaklı bir öğe içeriyor.*çamaşır odası/i
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// Geriye uyumluluk: usageContext/userNotes hiç verilmeden (eski 3 parametreli
+// çağrı biçimi) yapılan bir çağrı, eski serbest-tahmin sahne rehberliğini
+// aynen kullanmaya devam etmeli — yeni zorunlu bağlam bloğu eklenmemeli.
+test("generateScenePlan without usageContext keeps the original free-guess scene guidance (backward compatible)", async () => {
+  const originalFetch = global.fetch;
+  let capturedInput = null;
+  global.fetch = async (url, options) => {
+    capturedInput = JSON.parse(options.body).input;
+    return { ok: true, json: async () => ({ output_text: "test sahne planı" }) };
+  };
+  try {
+    await generateScenePlan("openai", { title: "Code Advantage" }, { OPENAI_API_KEY: "k" });
+    assert.doesNotMatch(capturedInput, /ZORUNLU KULLANIM BAĞLAMI/);
+    assert.match(capturedInput, /BU ŞABLONU ZORLAMA/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 // generateCaption/generateMotionPlan/generateReelPackage aynı desende
 // (kredili anahtar tercih edilir, kredisiz OPENAI_API_KEY'e düşülür) —
 // hepsinin gerçekten kredili anahtarı kullandığını doğrula.

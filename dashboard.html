@@ -69,6 +69,9 @@
         </div>
         <details class="optional-block"><summary>İsteğe bağlı: AI ile sahne görseli oluştur</summary>
           <div class="auth-grid"><label class="field-label">AI sağlayıcısı<select id="scene-provider"><option value="">AI sağlayıcısı seçin</option></select></label><label class="field-label">Hazır sahne<select id="scene-preset"><option value="modern bir mutfak tezgahı, sabah gün ışığı, ahşap dolaplar, bardağa su dolduran bir el">Mutfak</option><option value="mutfakta bir anne ve çocuğu bardağa su doldururken, sıcak aile atmosferi">Aile</option><option value="aydınlık bir ofis mutfağı, modern tezgah, bardağa su dolduran bir el">Ofis</option><option value="">Serbest metin (aşağıya yaz)</option></select></label><input id="scene-custom" placeholder="Serbest sahne açıklaması (opsiyonel)"><button id="scene-plan" class="secondary">Sahne planı üret (AI)</button><button id="generate-scene">Sahne üret</button></div>
+          <label class="field-label" style="margin-top:8px">Sahne notunuz (opsiyonel — adet, renk, yerleşim, bağlantı yönü vb.)<input id="scene-user-notes" placeholder="Örn: 3 filtre gövdesi solda, Ultramag sağda görünsün"></label>
+          <div id="scene-plan-context-select" class="hidden" style="margin-top:8px"><label class="field-label">Bu ürün nerede kullanılıyor?<select id="scene-plan-context-value"><option value="">Seçin</option></select></label><div class="actions"><button id="scene-plan-context-confirm" type="button" class="secondary">Devam et</button><button id="scene-plan-context-cancel" type="button" class="secondary">Vazgeç</button></div></div>
+          <div id="scene-plan-conflict" class="hidden" style="margin-top:8px"><p id="scene-plan-conflict-message" class="hint"></p><div class="actions"><button id="scene-plan-conflict-confirm" type="button" class="secondary">Yine de devam et</button><button id="scene-plan-conflict-cancel" type="button" class="secondary">Vazgeç</button></div></div>
           <div class="hint" style="margin-top:6px"><label><input id="scene-remove-faucet" type="checkbox"> Musluğu cihazın yanından kaldır — sahne planı tezgahta ayrı bir musluk tarif ediyorsa o musluk eklenir</label></div>
           <p id="scene-message" class="hint">Ürün maskelenerek korunur, yalnızca arka plan (ve işaretliyse musluk) AI ile üretilir. Deneme amaçlıdır; kalite kontrolü yapılmadan yayınlanmamalıdır.</p>
           <img id="scene-preview" class="hidden" style="max-width:420px;border:1px solid #dfe5e9;border-radius:10px;margin-top:10px" alt="AI ile üretilmiş sahne (deneme)">
@@ -334,7 +337,50 @@ document.querySelector('#product-imageurl').addEventListener('input',()=>{const 
     async function pollVeoVideo(){if(!currentVeoJob)return;const out=document.querySelector('#reel-message'),result=document.querySelector('#render-result');try{const res=await api('/api/veo-video',{method:'POST',body:JSON.stringify({job:currentVeoJob})});const data=await res.json();if(!res.ok)throw new Error(data.error||'Veo video durumu okunamadı');currentVeoJob=data.veo;result.innerHTML=esc(JSON.stringify(currentVeoJob,null,2));if(currentVeoJob.videoUrl)result.innerHTML+=`<br><a href="${esc(currentVeoJob.videoUrl)}" target="_blank" rel="noopener">Veo MP4'ü aç</a> · <a href="${esc(videoDownloadUrl(currentVeoJob.videoUrl))}">İndir</a> · <button class="secondary reel-use-video" type="button" data-url="${esc(currentVeoJob.videoUrl)}">Bu videoyu Reel olarak kullan</button>`;result.classList.remove('hidden');if(currentVeoJob.status==='COMPLETED'){out.textContent=currentVeoJob.videoUrl?'Veo MP4 hazır. "İndir" bağlantısına basarak telefonuna kaydedebilirsin.':(currentVeoJob.downloadNote||'Veo video hazır.');return;}out.textContent=`Veo durumu: ${currentVeoJob.status||'kontrol ediliyor'}...`;setTimeout(pollVeoVideo,5000);}catch(e){out.textContent=e.message;}}
     async function pollRender(){if(!currentRenderId)return;const out=document.querySelector('#reel-message'),result=document.querySelector('#render-result');try{const res=await api(`/api/reel-render?renderId=${encodeURIComponent(currentRenderId)}`);const data=await res.json();if(!res.ok)throw new Error(data.error||'Render durumu okunamadı');const render=data.render||{};result.innerHTML=esc(JSON.stringify(render,null,2));if(render.url)result.innerHTML+=`<br><a href="${esc(render.url)}" target="_blank" rel="noopener">MP4'ü aç / indir</a>`;result.classList.remove('hidden');if(render.status==='done'){out.textContent='MP4 hazır. Bağlantıyı açıp videoyu indirebilirsiniz.';return;}if(render.status==='failed'){out.textContent=`MP4 render başarısız: ${render.error||'Shotstack hata döndürdü.'}`;return;}out.textContent=`MP4 durumu: ${render.status||'kontrol ediliyor'}...`;setTimeout(pollRender,5000);}catch(e){out.textContent=e.message;}}
     document.querySelector('#render-reel').onclick=async()=>{const out=document.querySelector('#reel-message'),result=document.querySelector('#render-result');try{if(currentFalJob){await pollFalVideo();return;}if(currentVeoJob){await pollVeoVideo();return;}const productId=document.querySelector('#product-select').value;if(!currentReel||!productId)throw new Error('Önce Reels senaryosu oluşturun.');const useScene=document.querySelector('#reel-use-scene').checked;const sceneImageUrl=useScene?currentSceneImageUrl:undefined;const res=await api('/api/reel-render',{method:'POST',body:JSON.stringify({productId,reel:currentReel,sceneImageUrl})});const data=await res.json();if(!res.ok)throw new Error(data.error||'MP4 render başlatılamadı');currentRenderId=data.render.id;result.textContent=JSON.stringify(data.render,null,2);result.classList.remove('hidden');out.textContent=`MP4 render kuyruğa alındı. Render ID: ${currentRenderId}`;pollRender();}catch(e){out.textContent=e.message;}};
-    document.querySelector('#scene-plan').onclick=async()=>{const out=document.querySelector('#scene-message'),button=document.querySelector('#scene-plan');try{const productId=document.querySelector('#product-select').value;if(!productId)throw new Error('Ürün seçin.');const provider=document.querySelector('#scene-provider').value;button.disabled=true;out.textContent='Sahne planı yazılıyor...';const res=await api('/api/scene-plan',{method:'POST',body:JSON.stringify({productId,provider})});const data=await res.json();if(!res.ok)throw new Error(data.error||'Sahne planı üretilemedi');document.querySelector('#scene-custom').value=data.plan;document.querySelector('#scene-preset').value='';document.querySelector('#scene-remove-faucet').checked=true;out.textContent='Sahne planı hazır — "Sahne üret" ile görseli oluşturabilirsin.';}catch(e){out.textContent=e.message;}finally{button.disabled=false;}};
+    // Kullanıcının özgün sahne notunu (#scene-user-notes) AI'nin ürettiği
+    // plan metninden (#scene-custom) AYRI bir alanda tutuyoruz — plan
+    // üretilince #scene-custom üzerine yazılır ama not alanı ASLA ezilmez,
+    // kullanıcı ne istediğini her zaman görebilir ve düzenleyip tekrar
+    // deneyebilir.
+    let currentScenePlanUsageContext=null;
+    async function callScenePlanApi(extra){
+      const out=document.querySelector('#scene-message');
+      const productId=document.querySelector('#product-select').value;
+      if(!productId)throw new Error('Ürün seçin.');
+      const provider=document.querySelector('#scene-provider').value;
+      const userNotes=document.querySelector('#scene-user-notes').value.trim();
+      document.querySelector('#scene-plan-context-select').classList.add('hidden');
+      document.querySelector('#scene-plan-conflict').classList.add('hidden');
+      const body={productId,provider,userNotes,allowContextQuestion:true,...(currentScenePlanUsageContext?{usageContextOverride:currentScenePlanUsageContext}:{}),...extra};
+      const res=await api('/api/scene-plan',{method:'POST',body:JSON.stringify(body)});
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.error||'Sahne planı üretilemedi');
+      if(data.needsContextSelection){
+        const select=document.querySelector('#scene-plan-context-value');
+        select.innerHTML='<option value="">Seçin</option>'+data.options.map(o=>`<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+        document.querySelector('#scene-plan-context-select').classList.remove('hidden');
+        out.textContent=data.message;
+        return null;
+      }
+      if(data.needsContextConfirmation){
+        currentScenePlanUsageContext=data.usageContext;
+        document.querySelector('#scene-plan-conflict-message').textContent=data.message;
+        document.querySelector('#scene-plan-conflict').classList.remove('hidden');
+        out.textContent='Devam etmeden önce yukarıdaki uyarıyı onaylayın.';
+        return null;
+      }
+      document.querySelector('#scene-custom').value=data.plan;
+      document.querySelector('#scene-preset').value='';
+      document.querySelector('#scene-remove-faucet').checked=true;
+      currentScenePlanUsageContext=null;
+      out.textContent='Sahne planı hazır — "Sahne üret" ile görseli oluşturabilirsin.';
+      return data.plan;
+    }
+    document.querySelector('#scene-plan').onclick=async()=>{const button=document.querySelector('#scene-plan'),out=document.querySelector('#scene-message');try{button.disabled=true;out.textContent='Sahne planı yazılıyor...';await callScenePlanApi({});}catch(e){out.textContent=e.message;}finally{button.disabled=false;}};
+    document.querySelector('#scene-plan-context-confirm').onclick=async()=>{const button=document.querySelector('#scene-plan-context-confirm'),out=document.querySelector('#scene-message'),value=document.querySelector('#scene-plan-context-value').value;try{if(!value)throw new Error('Bir bağlam seçin.');button.disabled=true;out.textContent='Sahne planı yazılıyor...';currentScenePlanUsageContext=value;await callScenePlanApi({usageContextOverride:value});}catch(e){out.textContent=e.message;}finally{button.disabled=false;}};
+    document.querySelector('#scene-plan-context-cancel').onclick=()=>{document.querySelector('#scene-plan-context-select').classList.add('hidden');currentScenePlanUsageContext=null;document.querySelector('#scene-message').textContent='Sahne planı iptal edildi.';};
+    document.querySelector('#scene-plan-conflict-confirm').onclick=async()=>{const button=document.querySelector('#scene-plan-conflict-confirm'),out=document.querySelector('#scene-message');try{button.disabled=true;out.textContent='Sahne planı yazılıyor...';await callScenePlanApi({confirmContextOverride:true});}catch(e){out.textContent=e.message;}finally{button.disabled=false;}};
+    document.querySelector('#scene-plan-conflict-cancel').onclick=()=>{document.querySelector('#scene-plan-conflict').classList.add('hidden');currentScenePlanUsageContext=null;document.querySelector('#scene-message').textContent='Sahne planı iptal edildi.';};
     document.querySelector('#generate-scene').onclick=async()=>{const out=document.querySelector('#scene-message'),button=document.querySelector('#generate-scene');try{const productId=document.querySelector('#product-select').value;if(!productId)throw new Error('Ürün seçin.');const custom=document.querySelector('#scene-custom').value.trim();const preset=document.querySelector('#scene-preset').value;const sceneDescription=custom||preset;if(!sceneDescription)throw new Error('Sahne açıklaması seçin veya yazın.');const removeFaucet=document.querySelector('#scene-remove-faucet').checked;const provider=document.querySelector('#scene-provider').value;button.disabled=true;await runGenerateScene(productId,sceneDescription,removeFaucet,provider);}catch(e){out.textContent=e.message;}finally{button.disabled=false;}};
     document.querySelector('#scene-use').onclick=()=>{currentSceneImageUrl=document.querySelector('#scene-use').dataset.imageUrl||null;document.querySelector('#scene-message').textContent='Bu sahne "Yeni içerik oluştur" bölümünde kullanılacak — ürün, format ve zamanı seçip Önizlemeyi Oluştur\'a basın.';switchTab('composer');document.querySelector('#product-select').scrollIntoView({behavior:'smooth',block:'center'});};
     async function copyText(text){try{await navigator.clipboard.writeText(text);return true;}catch{return false;}}
