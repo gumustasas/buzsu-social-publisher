@@ -1,5 +1,5 @@
 import { fetchProductContext } from "./lib/product-context.js";
-import { INSTALLATION_CONTEXT_LABELS, FORBIDDEN_ELEMENTS_BY_CONTEXT } from "./lib/product-installation-context.js";
+import { INSTALLATION_CONTEXTS, INSTALLATION_CONTEXT_LABELS, FORBIDDEN_ELEMENTS_BY_CONTEXT, DEFAULT_ENVIRONMENT_BY_CONTEXT } from "./lib/product-installation-context.js";
 import { validateScenario, validateScenarioAgainstContext, sanitizeUserText } from "./lib/scenario-schema.js";
 
 const reelSchema = `{"hook":"kısa açılış","voiceover":"Türkçe seslendirme metni","scenes":[{"seconds":3,"visual":"görsel açıklaması","on_screen_text":"ekran yazısı"}],"caption":"Instagram açıklaması","hashtags":["#Buzsu"],"cta":"kısa çağrı","disclaimer":"gerekirse sınırlama"}`;
@@ -62,7 +62,21 @@ export function availableProviders(env = process.env) {
 // tarif etmiyor olabilir.
 const CATEGORY_LIKE_TITLE_PATTERN = /kategori|koleksiyon/i;
 
-function scenePlanPrompt(product, context) {
+// usageContext verildiğinde (bkz. api/scene-plan.js — çağıran taraf
+// classifyInstallationContext ile ÖNCEDEN belirlemiş olmalı) AI'nin kendi
+// yer tahmini tamamen devre dışı bırakılır: bağlam zorunlu hale gelir,
+// bağlama özgü yasaklı öğe listesi eklenir ve varsayılan/nötr sahne
+// (DEFAULT_ENVIRONMENT_BY_CONTEXT) taban olarak önerilir — bu, AI'nin kendi
+// başına "apartman girişi, yarı saydam..." gibi görsel üretim için zor,
+// aşırı özel bir kompozisyon icat etmesini caydırır. userNotes verildiğinde
+// (ürünün gerçek montaj mantığıyla çelişip çelişmediği ÇAĞIRAN TARAFTA,
+// bkz. detectsContextConflict, önceden kontrol edilip gerekirse kullanıcıdan
+// onay alınmış olmalı) burada "çelişebilir, yok say" gibi belirsiz bir
+// çekince EKLENMEZ — kullanıcının notu açıkça uygulanır; tek istisna, yine
+// aynı zorunlu yasaklı-öğe listesidir (fiziksel/montaj doğruluğu için asla
+// esnetilmeyen tek gerçek güvenlik ağı, bkz. generateScenePlan'daki
+// üretim-sonrası tarama).
+function scenePlanPrompt(product, context, { usageContext, userNotes } = {}) {
   // Başlık kategori/koleksiyon işareti taşıyorsa, buzsu.com.tr'de bu başlıkla
   // TAM eşleşen bir ürün sayfası bulunmuş olsa bile (örn. kategori listeleme
   // sayfasındaki zayıf/genel bir metin context'e sızabilir) bu, TEK bir
@@ -74,9 +88,16 @@ function scenePlanPrompt(product, context) {
     : isCategoryLike
       ? `Bu, TEK bir ürüne değil bir ürün KATEGORİSİNE veya genel bir konuya ait bir paylaşım gibi görünüyor ("${product.title}"); buzsu.com.tr'de bu başlıkla eşleşen belirli bir ürün sayfası bulunamadı.`
       : `Ürün hakkında ek bilgi bulunamadı; ürün adından mantıklı bir çıkarım yap.`;
-  const sceneGuidance = isCategoryLike
-    ? `Bu bir kategori/genel konu paylaşımı olduğu için (yukarıda bir bilgi bulunmuş olsa bile) TEK bir cihazın kurulum detaylarını (örn. "tezgah altı dolap", "ayrı 3 yollu musluk", belirli bir model) İDDİA ETME — hangi spesifik ürün/model olduğunu bilmiyorsun. Bunun yerine kategoriyi temsil eden GENEL bir yaşam/temiz su sahnesi tarif et (örn. berrak su dolu bardaklar, mutlu bir aile veya kişi, sıcak ev/mutfak atmosferi) — tek bir ürünün teknik kurulum iddiasında bulunmadan.`
-    : `Sahneyi ürünün gerçek kullanım ortamına göre kurgula. ÖRNEĞİN ürün mutfakta kullanılan, içme suyu veren bir cihazsa (mutfak altı/üstü su arıtma cihazı gibi) şu şablonu kullanabilirsin:
+  const sceneGuidance = usageContext
+    ? (() => {
+        const contextLabel = INSTALLATION_CONTEXT_LABELS[usageContext] || usageContext;
+        const forbidden = FORBIDDEN_ELEMENTS_BY_CONTEXT[usageContext] || [];
+        const defaultEnvironment = DEFAULT_ENVIRONMENT_BY_CONTEXT[usageContext] || "";
+        return `ZORUNLU KULLANIM BAĞLAMI: "${product.title}" ürünü şu bağlamda kullanılıyor: ${contextLabel}. Sahne MUTLAKA bu bağlamda olmalı, başka bir yer icat etme. Sahnede şu öğeler KESİNLİKLE OLMAMALI: ${forbidden.join(", ")}. Kullanıcı notu aksini istemedikçe (aşağıda varsa), aşırı özel/karmaşık bir mekân icat etmek yerine şu sade, üretilmesi kolay sahneyi taban al: ${defaultEnvironment}`;
+      })()
+    : isCategoryLike
+      ? `Bu bir kategori/genel konu paylaşımı olduğu için (yukarıda bir bilgi bulunmuş olsa bile) TEK bir cihazın kurulum detaylarını (örn. "tezgah altı dolap", "ayrı 3 yollu musluk", belirli bir model) İDDİA ETME — hangi spesifik ürün/model olduğunu bilmiyorsun. Bunun yerine kategoriyi temsil eden GENEL bir yaşam/temiz su sahnesi tarif et (örn. berrak su dolu bardaklar, mutlu bir aile veya kişi, sıcak ev/mutfak atmosferi) — tek bir ürünün teknik kurulum iddiasında bulunmadan.`
+      : `Sahneyi ürünün gerçek kullanım ortamına göre kurgula. ÖRNEĞİN ürün mutfakta kullanılan, içme suyu veren bir cihazsa (mutfak altı/üstü su arıtma cihazı gibi) şu şablonu kullanabilirsin:
 - Cihaz, mutfak tezgahı ALTINDAKİ dolabın içinde; dolap kapakları açık, cihaz görünüyor.
 - Cihazın kendi üzerinde veya hemen yanında HİÇBİR musluk yok; cihaza bağlı GÖRÜNÜR hortum, boru veya tesisat bağlantısı yok (gerçek kurulumlarda tüm bağlantılar dolabın içinde gizlidir).
 - Cihazın gövdesinden dışarı doğru su AKMIYOR — cihaz bir çeşme veya musluk DEĞİLDİR.
@@ -84,20 +105,38 @@ function scenePlanPrompt(product, context) {
 - Mutlu bir aile sahnesi: bir çocuk musluktan bardağa su dolduruyor, diğer çocuk suyunu içiyor, anne ve baba ellerinde berrak, duru su dolu bardaklarla gülümsüyor.
 
 Ama ürün bu değilse (örneğin bina/apartman su girişine veya boruya takılan bir kireç önleyici, bir sayaç, bir filtre kartuşu, dışarıda kullanılan bir ekipman vb.) BU ŞABLONU ZORLAMA — ürünün gerçekte kurulduğu/kullanıldığı yeri (teknik oda, bodrum, su sayacı yanı, boru hattı, bahçe vb.) gerçekçi şekilde tarif et; mutfak veya aile sahnesi sadece ürün gerçekten mutfakta/içme suyunda kullanılıyorsa uygun olur.`;
+  const sanitizedNotes = userNotes ? sanitizeUserText(userNotes, { maxLength: 300 }) : "";
+  const userNotesBlock = sanitizedNotes
+    ? `\n\nKullanıcının sahne notu (adet, renk, yerleşim, bağlantı yönü gibi somut ayrıntılar varsa bunları sahne açıklamasında AÇIKÇA ve DEĞİŞTİRMEDEN kullan, genelleştirme veya atlama — yukarıdaki zorunlu yasaklı öğe listesiyle doğrudan çelişen tekil bir kelime geçmedikçe bu notu aynen uygula):\n---KULLANICI NOTU---\n${sanitizedNotes}\n---`
+    : "";
   return `Buzsu için "${product.title}" ${isCategoryLike ? "konusunun" : "ürününün"} sosyal medya sahne görseli üretiminde kullanılacak bir sahne açıklaması yaz.
 
 ${grounding}
 
-${sceneGuidance}
+${sceneGuidance}${userNotesBlock}
 
 Her durumda: sıcak, doğal ışık; gerçekçi, reklam kalitesinde bir sahne olsun. Yalnızca sahnenin kendisini tarif eden, 2-4 cümlelik tek bir Türkçe paragraf yaz — talimat cümlesi ("şunu koru" gibi) veya ürün marka adı/teknik özellik ekleme, sadece ortamı ve (varsa) insanları tarif et. Başka açıklama, başlık veya tırnak işareti ekleme, yalnızca sahne metnini döndür.`;
 }
 
-export async function generateScenePlan(provider, product, env = process.env) {
+// usageContext verilip de yasaklı-öğe listesini ihlal eden bir metin
+// dönerse (AI, kullanıcı notunu ZORUNLU bağlamla çelişecek şekilde harfiyen
+// uygulamış olabilir) generateScenePlan bunu SESSİZCE geçirmez, hata
+// fırlatır — validateScenarioAgainstContext'teki (bkz. scenario-schema.js)
+// aynı prensip, burada şema gerektirmeyen düz metin için uyarlanmış hali.
+function findForbiddenTerm(text, usageContext) {
+  if (!usageContext) return null;
+  const forbidden = FORBIDDEN_ELEMENTS_BY_CONTEXT[usageContext] || [];
+  const haystack = String(text || "").toLocaleLowerCase("tr-TR");
+  return forbidden.find((term) => haystack.includes(term.toLocaleLowerCase("tr-TR"))) || null;
+}
+
+export async function generateScenePlan(provider, product, env = process.env, { usageContext, userNotes } = {}) {
   provider = normalizeTextProvider(provider);
   if (provider !== "openai" && provider !== "gemini") throw new Error("Desteklenmeyen AI sağlayıcısı.");
+  if (usageContext && !Object.values(INSTALLATION_CONTEXTS).includes(usageContext)) throw new Error("Geçersiz kullanım bağlamı.");
+  if (usageContext === INSTALLATION_CONTEXTS.AMBIGUOUS) throw new Error("Sahne planı üretmeden önce belirsiz bağlam netleştirilmelidir.");
   const context = await fetchProductContext(product);
-  const input = scenePlanPrompt(product, context);
+  const input = scenePlanPrompt(product, context, { usageContext, userNotes });
   let raw;
   if (provider === "openai") {
     // Kısa bir sahne açıklaması için gpt-5.6 gibi pahalı bir model gerekmez;
@@ -112,6 +151,8 @@ export async function generateScenePlan(provider, product, env = process.env) {
   }
   const plan = raw.trim();
   if (!plan) throw new Error("AI sahne planı boş döndü.");
+  const violation = findForbiddenTerm(plan, usageContext);
+  if (violation) throw new Error(`Üretilen sahne planı, ürünün gerçek kullanım bağlamı için yasaklı bir öğe içeriyor: "${violation}". Lütfen sahne notunu değiştirip tekrar deneyin.`);
   return plan;
 }
 
