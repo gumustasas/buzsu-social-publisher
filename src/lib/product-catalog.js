@@ -7,9 +7,10 @@
 // listesinden doldurulur — listede olmayanlar boş kalır ve panelde elle
 // girilmesi gerekir (bkz. dashboard.html).
 import { findKnownProductPhoto, findKnownProductPhotos } from "./product-photos.js";
+import { resolveProductUrl, slugFromUrl } from "./buzsu-url.js";
+import { listFeedProducts } from "./feed-catalog.js";
 
 const LLMS_FULL_URL = "https://www.buzsu.com.tr/llms-full.txt";
-const SITE_ORIGIN = "https://www.buzsu.com.tr";
 const CACHE_TTL_MS = 30 * 60 * 1000;
 const EXCLUDED_SLUGS = new Set(["", "iletisim", "hakkimizda", "blog", "sepet", "hesabim", "kategori"]);
 // llms-full.txt iki sabit kalıpla ürün listeler (canlı dosyadan doğrulandı):
@@ -29,26 +30,6 @@ function titleFromSlug(slug) {
     .split("-")
     .map((word) => (word.length ? word[0].toLocaleUpperCase("tr-TR") + word.slice(1) : word))
     .join(" ");
-}
-
-function slugFromUrl(url) {
-  try {
-    return new URL(url).pathname.replace(/\/+$/, "").split("/").filter(Boolean).pop() || "";
-  } catch {
-    return "";
-  }
-}
-
-function resolveProductUrl(rawUrl) {
-  const absolute = /^https?:\/\//i.test(rawUrl) ? rawUrl : `${SITE_ORIGIN}${rawUrl.startsWith("/") ? rawUrl : `/${rawUrl}`}`;
-  let parsed;
-  try {
-    parsed = new URL(absolute);
-  } catch {
-    return null;
-  }
-  if (parsed.hostname !== "www.buzsu.com.tr") return null;
-  return `${SITE_ORIGIN}${parsed.pathname.replace(/\/+$/, "")}/`;
 }
 
 export function extractCatalog(text) {
@@ -88,12 +69,30 @@ export function extractCatalog(text) {
   return catalog;
 }
 
-async function fetchCatalog() {
-  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) return cached.catalog;
+async function fetchLlmsCatalog() {
   const response = await fetch(LLMS_FULL_URL);
   if (!response.ok) throw new Error(`llms-full.txt alınamadı: HTTP ${response.status}`);
   const text = await response.text();
-  const catalog = extractCatalog(text);
+  return extractCatalog(text);
+}
+
+// İki kaynağı birleştirir: feed.xml (Google Merchant ürün feed'i, gerçek
+// görsel galerisi içerir — bkz. feed-catalog.js) ve llms-full.txt (görselsiz
+// ama feed'de olmayan kampanya/set sayfalarını da kapsar). Aynı URL her
+// ikisinde de varsa feed'deki kazanır (görseli daha zengin); feed'de hiç
+// olmayan URL'ler llms-full.txt'ten olduğu gibi geçer. Kaynaklardan biri
+// başarısız olursa (ağ hatası, format değişikliği) diğerini hiç etkilemez —
+// her ikisi de kendi içinde ayrı ayrı try/catch ile korunuyor.
+async function fetchCatalog() {
+  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) return cached.catalog;
+  const [llmsCatalog, feedCatalog] = await Promise.all([
+    fetchLlmsCatalog().catch(() => []),
+    listFeedProducts()
+  ]);
+  const byUrl = new Map();
+  for (const item of feedCatalog) byUrl.set(item.url, item);
+  for (const item of llmsCatalog) if (!byUrl.has(item.url)) byUrl.set(item.url, item);
+  const catalog = [...byUrl.values()];
   cached = { catalog, fetchedAt: Date.now() };
   return catalog;
 }
@@ -103,7 +102,11 @@ async function fetchCatalog() {
 export async function listCatalogProducts() {
   try {
     const catalog = await fetchCatalog();
-    return catalog.map((item) => ({ ...item, imageUrl: findKnownProductPhoto(item.url), imageUrls: findKnownProductPhotos(item.url) }));
+    // feed.xml'den gelen ürünlerde imageUrl zaten dolu (gerçek galeri) —
+    // bunlar olduğu gibi kullanılır. Yalnızca hiç görseli olmayanlar (feed'de
+    // yok, sadece llms-full.txt'te var) için eski elle doğrulanmış
+    // product-photos.js eşlemesine düşülür.
+    return catalog.map((item) => (item.imageUrl ? item : { ...item, imageUrl: findKnownProductPhoto(item.url), imageUrls: findKnownProductPhotos(item.url) }));
   } catch {
     return [];
   }
