@@ -17,6 +17,10 @@ const TITLE_SIZE = 42;
 const TITLE_SIZE_SMALL = 32;
 const SUBTITLE_SIZE = 30;
 const FOOTER_SIZE = 46;
+// Kartın büyüyebileceği üst sınır burada — alt metin ne kadar uzun olursa
+// olsun en fazla bu kadar satıra sarılır (sığmayan kısım "…" ile kesilir),
+// böylece kart fotoğrafın giderek daha büyük bir kısmını kaplamaz.
+const MAX_SUBTITLE_LINES = 2;
 // Kart her zaman kanvas altına sabit bir mesafede durur (BOX_BOTTOM_MARGIN);
 // yükseklik içerik satır sayısına göre değiştiğinde kart yalnızca yukarı
 // büyür/küçülür, alt kenarı hep aynı yerde kalır.
@@ -82,7 +86,7 @@ export function computeStoryLayout({ title, subtitle }) {
   }
   let titleLines = wrapLines(title, font, titleSize, MAX_TEXT_WIDTH, maxTitleLines);
   const titleLineHeight = Math.round(titleSize * 1.15);
-  const subtitleLines = wrapLines(subtitle, font, SUBTITLE_SIZE, MAX_TEXT_WIDTH, 3);
+  const subtitleLines = wrapLines(subtitle, font, SUBTITLE_SIZE, MAX_TEXT_WIDTH, MAX_SUBTITLE_LINES);
 
   const lastTitleOffset = FIRST_TITLE_BASELINE_OFFSET + (titleLines.length - 1) * titleLineHeight;
   const firstSubtitleOffset = lastTitleOffset + TITLE_TO_SUBTITLE_GAP;

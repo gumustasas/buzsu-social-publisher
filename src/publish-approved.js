@@ -68,7 +68,7 @@ export function parseMediaItems(raw) {
   return parsed;
 }
 
-function storyImageUrl(source, fields) {
+export function storyImageUrl(source, fields) {
   requireHttpsUrl(source, "Görsel URL");
   if (!storyImageBaseUrl) return source;
   const url = new URL(storyImageBaseUrl);
@@ -78,7 +78,12 @@ function storyImageUrl(source, fields) {
     .split("|")[0]
     .trim();
   url.searchParams.set("title", title);
-  url.searchParams.set("subtitle", (fields["Instagram Metni"] || "").split("\n")[0].slice(0, 90) || "Ürün bilgileri için inceleyin.");
+  // Sabit bir karakter sınırında kesmek yerine (bu, "…" eklemeden cümlenin
+  // ortasında kesilmesine yol açıyordu) ilk satırın tamamı api/story-image.js'e
+  // veriliyor — orası zaten gerçek ölçüme dayalı sarma/kesme yapıyor (bkz.
+  // computeStoryLayout/wrapLines), kartın büyümesi de sabit bir satır
+  // sayısıyla (2) sınırlı.
+  url.searchParams.set("subtitle", (fields["Instagram Metni"] || "").split("\n")[0].trim() || "Ürün bilgileri için inceleyin.");
   url.searchParams.set("footer", "www.buzsu.com.tr");
   return url.toString();
 }

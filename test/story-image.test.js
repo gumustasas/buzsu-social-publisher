@@ -66,22 +66,29 @@ test("computeStoryLayout keeps the default title size on a single line for short
   assert.equal(layout.titleLines.length, 1);
 });
 
-test("computeStoryLayout caps the subtitle at 3 lines", () => {
+// Alt metin artık en fazla 2 satıra sarılıyor (eskiden 3'tü) — kart, uzun
+// bir Instagram metninde bile fotoğrafın giderek daha büyük bir kısmını
+// kaplamasın diye bu tavan kasıtlı olarak düşürüldü (bkz. src/publish-approved.js
+// storyImageUrl: artık ilk satırı sabit bir karakterde kesmiyor, tamamını
+// buraya devrediyor — kartın büyümesini sınırlayan tek yer burası).
+test("computeStoryLayout caps the subtitle at 2 lines, ending with an ellipsis when the content needs more", () => {
   const layout = computeStoryLayout({
     title: "Kısa",
-    subtitle: "Bu alt başlık pek çok kelimeden oluşuyor ve normalde dört ya da beş satıra sarılması gerekecek kadar uzun bir metin içeriyor ama üç satırda durdurulmalı."
+    subtitle: "Bu alt başlık pek çok kelimeden oluşuyor ve normalde dört ya da beş satıra sarılması gerekecek kadar uzun bir metin içeriyor ama iki satırda durdurulmalı."
   });
-  assert.equal(layout.subtitleLines.length, 3);
+  assert.equal(layout.subtitleLines.length, 2);
+  assert.match(layout.subtitleLines[1], /…$/);
 });
 
-test("computeStoryLayout reproduces the original fixed layout's box size for its worst-case content (1-line title, 3-line subtitle)", () => {
+test("computeStoryLayout's worst-case content (1-line title, 2-line subtitle) keeps the card noticeably shorter than the old 3-line design", () => {
   const layout = computeStoryLayout({
     title: "Kısa Başlık",
-    subtitle: "Bu alt başlık pek çok kelimeden oluşuyor ve normalde dört ya da beş satıra sarılması gerekecek kadar uzun bir metin içeriyor ama üç satırda durdurulmalı."
+    subtitle: "Bu alt başlık pek çok kelimeden oluşuyor ve normalde dört ya da beş satıra sarılması gerekecek kadar uzun bir metin içeriyor ama iki satırda durdurulmalı."
   });
-  assert.equal(layout.subtitleLines.length, 3);
-  assert.equal(layout.boxHeight, 390);
-  assert.equal(layout.boxY, 1400);
+  assert.equal(layout.subtitleLines.length, 2);
+  // Eski (3 satırlı) tasarımın en kötü durumu boxHeight=390 üretiyordu; yeni
+  // 2 satırlık tavan bundan en az bir satır yüksekliği (~52px) kısa olmalı.
+  assert.ok(layout.boxHeight <= 390 - 40, `yeni tavan eskisinden belirgin şekilde kısa olmalı, boxHeight=${layout.boxHeight}`);
 });
 
 test("computeStoryLayout produces strictly increasing baselines with no overlap between title, subtitle and footer", () => {

@@ -2,6 +2,21 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { publishInstagram, publishFacebook, publishX, publishYouTube, parseMediaItems } from "../src/publish-approved.js";
 
+// storyImageUrl STORY_IMAGE_BASE_URL'i modül yüklenirken bir kez okuyor
+// (üst seviye const) — env değişkenini set edip modülü taze bir specifier'la
+// (cache-busting query) yeniden import ederek gerçek davranışını test ediyoruz.
+async function loadStoryImageUrlWithBaseUrl(baseUrl) {
+  const originalValue = process.env.STORY_IMAGE_BASE_URL;
+  process.env.STORY_IMAGE_BASE_URL = baseUrl;
+  try {
+    const mod = await import(`../src/publish-approved.js?t=${Date.now()}-${Math.random()}`);
+    return mod.storyImageUrl;
+  } finally {
+    if (originalValue === undefined) delete process.env.STORY_IMAGE_BASE_URL;
+    else process.env.STORY_IMAGE_BASE_URL = originalValue;
+  }
+}
+
 const originalEnv = {
   META_ACCESS_TOKEN: process.env.META_ACCESS_TOKEN,
   META_INSTAGRAM_ACCOUNT_ID: process.env.META_INSTAGRAM_ACCOUNT_ID,
@@ -378,6 +393,15 @@ test("publishYouTube converts Hashtagler into YouTube's snippet.tags array (# st
       global.fetch = originalFetch;
     }
   });
+});
+
+test("storyImageUrl passes the full first line of the caption as subtitle — no hard character cutoff (kullanıcı geri bildirimiyle kaldırıldı)", async () => {
+  const storyImageUrl = await loadStoryImageUrlWithBaseUrl("https://example.com/api/story-image");
+  const longFirstLine = "Bu cümle doksan karakterden kesinlikle daha uzun olacak şekilde bilerek yazılmış bir test metnidir ve devamı da var.";
+  const url = storyImageUrl("https://example.com/photo.jpg", { "Başlık": "Test Ürünü | Hikâye", "Instagram Metni": `${longFirstLine}\nİkinci satır burada.` });
+  const subtitle = new URL(url).searchParams.get("subtitle");
+  assert.equal(subtitle, longFirstLine);
+  assert.ok(subtitle.length > 90, "eski 90 karakterlik sabit kesme kaldırılmış olmalı");
 });
 
 test("publishYouTube passes an empty tags array when Hashtagler is missing/blank", async () => {
