@@ -189,12 +189,12 @@ export async function composeClosingScene({
   title = "Su arıtma sistemleri ürünlerinde en iyi fiyat garantisi",
   subtitle = "Daha fazlası için buzsu.com.tr'yi ziyaret edin"
 } = {}) {
-  const logoTargetWidth = 260;
+  const logoTargetWidth = 340;
   const logoMeta = await sharp(LOGO_PATH).metadata();
   const logoHeight = Math.round((logoMeta.height / logoMeta.width) * logoTargetWidth);
   const logoBuffer = await sharp(LOGO_PATH).resize(logoTargetWidth, logoHeight).toBuffer();
   const logoLeft = Math.round((VIDEO_WIDTH - logoTargetWidth) / 2);
-  const logoTop = Math.round(VIDEO_HEIGHT * 0.34);
+  const logoTop = Math.round(VIDEO_HEIGHT * 0.32);
 
   // NOT: title/subtitle burada gerçek bir SVG <text> düğümüne değil,
   // doğrudan opentype.js ile üretilen bir vektör <path>'e dönüşüyor — yani
