@@ -5,6 +5,7 @@ import opentype from "opentype.js";
 const CANVAS_SIZE = 1024;
 const BAR_HEIGHT = 210;
 const LOGO_PATH = fileURLToPath(new URL("../assets/buzsu-logo.png", import.meta.url));
+const CLOSING_BACKGROUND_PATH = fileURLToPath(new URL("../assets/closing-background.jpg", import.meta.url));
 
 const boldFont = opentype.loadSync(
   fileURLToPath(new URL("../node_modules/dejavu-fonts-ttf/ttf/DejaVuSans-Bold.ttf", import.meta.url))
@@ -173,35 +174,74 @@ export async function composeVideoFrame(imageBuffer, { title } = {}) {
   return sharp(framed).composite([{ input: videoTitleBarSvg(title, barTop) }]).png().toBuffer();
 }
 
-// compose_product_video'nun sabit kapanış sahnesi: düz marka arka planı +
+// compose_product_video'nun sabit kapanış sahnesi: marka arka plan fotoğrafı +
 // ortalı başlık/alt başlık + Buzsu logosu. Hiçbir ürün fotoğrafı içermez.
-export async function composeClosingScene({ title = "Buzsu – İhtiyacınıza uygun su çözümünü keşfedin", subtitle = "buzsu.com.tr" } = {}) {
-  const logoTargetWidth = 220;
+//
+// Logo (assets/buzsu-logo.png) açık zeminler için tasarlanmış koyu lacivert
+// tonlarda — önceki düz koyu lacivert (#04102b) arka plan üzerinde neredeyse
+// görünmez oluyordu (kullanıcı geri bildirimi + piksel analiziyle doğrulandı:
+// logonun büyük kısmı arka planla aynı renk aralığında). Bu yüzden arka plan
+// artık kullanıcının sağladığı açık/su temalı bir fotoğraf (closing-background.jpg)
+// — logonun kendi renk paletiyle tasarlandığı zemine uygun — ve başlık/alt
+// başlık metni de aynı sebeple koyu laciverte çevrildi (eskiden beyazdı,
+// artık açık zeminde okunmuyordu).
+export async function composeClosingScene({
+  title = "Su arıtma sistemleri ürünlerinde en iyi fiyat garantisi",
+  subtitle = "Daha fazlası için buzsu.com.tr'yi ziyaret edin"
+} = {}) {
+  const logoTargetWidth = 340;
   const logoMeta = await sharp(LOGO_PATH).metadata();
   const logoHeight = Math.round((logoMeta.height / logoMeta.width) * logoTargetWidth);
   const logoBuffer = await sharp(LOGO_PATH).resize(logoTargetWidth, logoHeight).toBuffer();
   const logoLeft = Math.round((VIDEO_WIDTH - logoTargetWidth) / 2);
-  const logoTop = Math.round(VIDEO_HEIGHT * 0.36);
+  const logoTop = Math.round(VIDEO_HEIGHT * 0.32);
 
+  // NOT: title/subtitle burada gerçek bir SVG <text> düğümüne değil,
+  // doğrudan opentype.js ile üretilen bir vektör <path>'e dönüşüyor — yani
+  // XML-escape (&, <, >, ', ") burada bir güvenlik/geçerlilik faydası
+  // sağlamaz, tam tersine kesme işareti gibi karakterleri "&apos;" gibi
+  // harf harf çizilen bozuk bir metne çevirir. Bu yüzden ham metin
+  // kullanılıyor (title'daki "buzsu.com.tr'yi" bu yüzden escapeXml'den
+  // GEÇİRİLMİYOR — geçirilirse kesme işareti yerine "&apos;" harfleri çizilir).
   const titleSize = 46;
-  const escapedTitle = escapeXml(title);
-  const titleLines = wrapTitle(escapedTitle, titleSize, VIDEO_WIDTH - 140, 3);
+  const titleLines = wrapTitle(title, titleSize, VIDEO_WIDTH - 140, 3);
   const titleLineHeight = titleSize * 1.25;
   const titleStartY = logoTop + logoHeight + 90;
-  const subtitleSize = 34;
-  const subtitleY = titleStartY + titleLines.length * titleLineHeight + 30;
+  const subtitleSize = 40;
+  const subtitleLines = wrapTitle(subtitle, subtitleSize, VIDEO_WIDTH - 140, 2);
+  const subtitleLineHeight = subtitleSize * 1.25;
+  const subtitleStartY = titleStartY + titleLines.length * titleLineHeight + 30;
 
+  // Alt başlık artık serbest bir CTA cümlesi olduğundan (bkz. subtitle),
+  // site adresi ayrıca, kendi başına büyük/kalın bir damga satırı olarak da
+  // tekrar ediliyor — CTA cümlesinin içine gömülü "buzsu.com.tr" kolayca
+  // atlanabilir, ayrı bir satır olarak daha görünür.
+  const urlLine = "WWW.BUZSU.COM.TR";
+  const urlSize = 44;
+  const urlY = subtitleStartY + subtitleLines.length * subtitleLineHeight + 50;
+
+  const textColor = "#04102b";
   const centeredPath = (text, y, size) => {
     const width = boldFont.getAdvanceWidth(text, size);
     const x = (VIDEO_WIDTH - width) / 2;
-    return `<path d="${boldFont.getPath(text, x, y, size).toPathData(2)}" fill="#ffffff"/>`;
+    return `<path d="${boldFont.getPath(text, x, y, size).toPathData(2)}" fill="${textColor}"/>`;
   };
 
-  const svg = Buffer.from(`<svg width="${VIDEO_WIDTH}" height="${VIDEO_HEIGHT}" xmlns="http://www.w3.org/2000/svg">
-    <rect width="${VIDEO_WIDTH}" height="${VIDEO_HEIGHT}" fill="#04102b"/>
+  const textSvg = Buffer.from(`<svg width="${VIDEO_WIDTH}" height="${VIDEO_HEIGHT}" xmlns="http://www.w3.org/2000/svg">
     ${titleLines.map((line, i) => centeredPath(line, titleStartY + i * titleLineHeight, titleSize)).join("")}
-    ${centeredPath(escapeXml(subtitle), subtitleY, subtitleSize)}
+    ${subtitleLines.map((line, i) => centeredPath(line, subtitleStartY + i * subtitleLineHeight, subtitleSize)).join("")}
+    ${centeredPath(urlLine, urlY, urlSize)}
   </svg>`);
 
-  return sharp(svg).composite([{ input: logoBuffer, top: logoTop, left: logoLeft }]).png().toBuffer();
+  const background = await sharp(CLOSING_BACKGROUND_PATH)
+    .resize(VIDEO_WIDTH, VIDEO_HEIGHT, { fit: "cover" })
+    .toBuffer();
+
+  return sharp(background)
+    .composite([
+      { input: logoBuffer, top: logoTop, left: logoLeft },
+      { input: textSvg, top: 0, left: 0 }
+    ])
+    .png()
+    .toBuffer();
 }

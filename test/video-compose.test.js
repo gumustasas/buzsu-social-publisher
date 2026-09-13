@@ -17,7 +17,7 @@ test("validateComposeInput rejects more than 10 mediaItems", () => {
 test("validateComposeInput accepts 2-10 mediaItems and applies defaults", () => {
   const result = validateComposeInput({ mediaItems: [VALID_ITEM(1), VALID_ITEM(2)] });
   assert.equal(result.mediaItems.length, 2);
-  assert.equal(result.durationPerImageSeconds, 1.8);
+  assert.equal(result.durationPerImageSeconds, 2.0);
   assert.equal(result.transition, "fade");
   assert.equal(result.transitionDurationSeconds, 0.4);
   assert.match(result.musicUrl, /^https:\/\/assets\.mixkit\.co\/music\//, "no musicUrl given -> a free track must be auto-picked, never silence");
