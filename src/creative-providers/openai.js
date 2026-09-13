@@ -1,4 +1,5 @@
 import { openaiTextApiKey } from "../ai-providers.js";
+import { parseReelScriptJson } from "./reel-script-prompt.js";
 
 // AI Reels V2 PR-B: Creative Provider abstraction — model DISCOVERY katmanı.
 // OpenAI'nin GET /v1/models uç noktası ÜCRETSİZDİR (envanter okuma,
@@ -52,4 +53,23 @@ export async function listOpenAiModels(env = process.env, { fetchImpl = fetch } 
     .map((item) => ({ provider: "openai", model: item.id, displayName: item.id, capabilities: ["text"], available: true }));
 
   return { provider: "openai", available: true, models };
+}
+
+// generate_reel_script'in OpenAI çağrısı — promptText, reel-script-prompt.js
+// tarafından üretilir (Google ile AYNI talimat). Ham JSON'u geri döner;
+// yapısal doğrulama (sahne zamanlaması/claims grounding/vb.) burada
+// YAPILMAZ — çağıran taraf (src/reel-script.js) validateReelScript'ten
+// geçirir. GERÇEK PARA HARCAR — confirmed kontrolü çağıran tarafta yapılır.
+export async function generateReelScriptOpenAi({ model, promptText }, env = process.env, { fetchImpl = fetch } = {}) {
+  const apiKey = openaiTextApiKey(env);
+  if (!apiKey) throw new Error("OPENAI_API_KEY/OPENAI_IMAGE_API_KEY tanımlı değil.");
+  const response = await fetchImpl("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model, input: promptText, store: false })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error?.message || data.error?.type || `OpenAI HTTP ${response.status}`);
+  const raw = data.output_text || (data.output || []).flatMap((item) => item.content || []).map((item) => item.text || "").join("");
+  return parseReelScriptJson(raw);
 }

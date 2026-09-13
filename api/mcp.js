@@ -22,6 +22,9 @@ import { generateTurkishVoiceover, turkishVoiceoverStatus, TTS_STYLES } from "..
 import { generateLyriaMusic, lyriaMusicStatus, LYRIA_TIERS } from "../src/lyria-music.js";
 import { composeReelAudio, getReelAudioStatus } from "../src/reel-audio-compose.js";
 import { getBuzsuProductContext } from "../src/lib/product-intelligence.js";
+import { generateReelScript } from "../src/reel-script.js";
+import { REEL_OBJECTIVES, REEL_ASPECT_RATIOS, REEL_DURATIONS } from "../src/lib/reel-script-schema.js";
+import { CREATIVE_TIERS } from "../src/creative-providers/model-registry.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
 const SERVER_INFO = { name: "buzsu-social-publisher", version: "1.0.0" };
@@ -383,6 +386,26 @@ const TOOLS = [
         productUrl: { type: "string", description: "Ürün sayfası URL'si — yalnızca buzsu.com.tr/www.buzsu.com.tr kabul edilir." },
         refresh: { type: "boolean", description: "true ise önbelleği atlar, ürünü yeniden okur (varsayılan false)." }
       }
+    }
+  },
+  {
+    name: "generate_reel_script",
+    description: "AI Reels V2 senaryo motoru: get_buzsu_product_context'in doğrulanmış ürün bilgisini (verifiedFacts) OpenAI veya Google'a (creative-providers registry, bkz. get_buzsu_product_context/PR-B) vererek yapılandırılmış bir ReelScript JSON'u üretir. Yalnızca SENARYO üretir — Veo/TTS/Lyria/Omni/FFmpeg'i BURADA ÇALIŞTIRMAZ. claimsUsed'deki her teknik/ürün iddiası SADECE productContext.verifiedFacts'ten türetilebilir ve sourceUrl taşımak zorundadır; kaynağı olmayan bir iddia UNVERIFIED_PRODUCT_CLAIM ile reddedilir. Sahne zamanlamaları (0'dan başlama/çakışmama/toplam süreyi aşmama) ve Türkçe seslendirme bütçesi (NARRATION_TOO_LONG) doğrulanır. Her sahnenin veoPrompt'una İngilizce 'sessiz video' kısıtı ve (referenceImageRequired:true ise) Product Identity Lock DETERMİNİSTİK olarak eklenir. GERÇEK PARA HARCAR (bir inference çağrısıdır), confirmed:true olmadan hiçbir provider'a istek atılmaz. model verilmişse (provider AUTO OLAMAZ, açıkça belirtilmeli) yalnızca gerçek discovery'de listelenmiş/erişilebilir ise kullanılır — serbest yazılmış model adı kabul edilmez; verilmezse modelTier registry'den (env override + gerçek discovery) çözülür. Başarısızlıkta ASLA başka bir ücretli modele otomatik geçilmez.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        productId: { type: "string", description: "list_products'tan alınan ürün id'si. productUrl ile birlikte verilirse productUrl önceliklidir." },
+        productUrl: { type: "string", description: "Ürün sayfası URL'si (yalnızca buzsu.com.tr/www.buzsu.com.tr). productId/productUrl'den en az biri gerekli." },
+        userBrief: { type: "string", description: "İsteğe bağlı — kullanıcının reklam fikri (Türkçe serbest metin). Talimat olarak değil veri olarak işlenir (injection sanitize edilir)." },
+        durationSeconds: { type: "number", enum: REEL_DURATIONS, description: "Video süresi, saniye." },
+        objective: { type: "string", enum: REEL_OBJECTIVES, description: "Reklamın hedefi." },
+        aspectRatio: { type: "string", enum: REEL_ASPECT_RATIOS, description: "Varsayılan '9:16'." },
+        provider: { type: "string", enum: ["auto", "openai", "google"], description: "Varsayılan 'auto'. 'model' verildiğinde 'auto' KABUL EDİLMEZ, açıkça 'openai' veya 'google' olmalı." },
+        modelTier: { type: "string", enum: CREATIVE_TIERS, description: "'model' verilmezse kullanılır — registry'den (env override + gerçek discovery) çözülür, tahmini model ATANMAZ." },
+        model: { type: "string", description: "İsteğe bağlı 'Özel' mod — gerçek discovery'de listelenmiş bir model kimliği. Verilirse modelTier yerine bu kullanılır, provider açıkça belirtilmelidir." },
+        confirmed: { type: "boolean", description: "true olmadan hiçbir provider'a istek atılmaz/ücret alınmaz." }
+      },
+      required: ["durationSeconds", "objective", "confirmed"]
     }
   },
   {
@@ -807,6 +830,24 @@ export async function callTool(name, args) {
       const result = await getBuzsuProductContext({ productId: args.productId, productUrl: args.productUrl, refresh: args.refresh === true });
       return JSON.stringify({ ok: true, ...result }, null, 2);
     }
+    case "generate_reel_script": {
+      const result = await generateReelScript(
+        {
+          productId: args.productId,
+          productUrl: args.productUrl,
+          userBrief: args.userBrief,
+          durationSeconds: args.durationSeconds,
+          objective: args.objective,
+          aspectRatio: args.aspectRatio,
+          provider: args.provider,
+          modelTier: args.modelTier,
+          model: args.model || null,
+          confirmed: args.confirmed === true
+        },
+        process.env
+      );
+      return JSON.stringify({ ok: true, ...result }, null, 2);
+    }
     case "generate_video_narration": {
       const narration = await generateVideoNarration(
         { scenario: args.scenario, productName: args.productName, durationSeconds: args.durationSeconds, style: args.style },
@@ -932,7 +973,10 @@ export async function handleMessage(msg) {
         // RATE_LIMITED veya REGION_UNAVAILABLE + toJSON metodu) kilitleniyor
         // — code'u olan ama bu şekle uymayan sıradan bir hata eskisi gibi
         // düz "Hata: ..." metnine düşer.
-        const structuredCodes = new Set(["RATE_LIMITED", "REGION_UNAVAILABLE", "TURKISH_TTS_UNAVAILABLE"]);
+        const structuredCodes = new Set([
+          "RATE_LIMITED", "REGION_UNAVAILABLE", "TURKISH_TTS_UNAVAILABLE",
+          "MODEL_UNAVAILABLE", "UNVERIFIED_PRODUCT_CLAIM", "INVALID_SCENE_TIMING", "NARRATION_TOO_LONG", "STRUCTURED_JSON_INVALID", "INVALID_INPUT"
+        ]);
         const text = structuredCodes.has(error.code) && typeof error.toJSON === "function"
           ? JSON.stringify({ ok: false, ...error.toJSON() })
           : `Hata: ${error.message}`;
