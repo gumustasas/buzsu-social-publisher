@@ -539,8 +539,8 @@ erişilebilir modeller normalize edilir.
 - API key yoksa (`OPENAI_API_KEY`/`OPENAI_IMAGE_API_KEY`, `GEMINI_API_KEY`)
   hiçbir fetch atılmadan `available:false, reason:"missing_api_key"` döner —
   hata fırlatılmaz, diğer sağlayıcıyı etkilemez.
-- Henüz `generate_reel_script`'e veya `api/mcp.js`'e bağlanmadı (PR-C/PR-D'de
-  kullanılacak) — bu PR yalnızca discovery+registry katmanıdır.
+- `generate_reel_script`'in (PR-C) provider/model seçimi bu registry
+  üzerinden yapılır — bkz. aşağıdaki bölüm.
 
 ## AI Reels V2 — Product Intelligence (get_buzsu_product_context)
 
@@ -575,6 +575,58 @@ ile AYNI Vercel Blob deseni (`product-context-cache/<url>.json`) kullanılır.
   tutulur; okuma bozuk/eksik JSON ise sessizce yok sayılıp yeniden üretilir,
   yazım başarısız olursa (ör. `BLOB_READ_WRITE_TOKEN` yok) tool FAIL OLMAZ —
   taze context döner, hata `warnings`'e eklenir.
+
+## AI Reels V2 — generate_reel_script (senaryo motoru)
+
+AI Reels V2'nin üçüncü aşaması (PR-C): Product Intelligence (PR-A) ile
+Creative Provider katmanını (PR-B) birleştirip yapılandırılmış bir
+**ReelScript** JSON'u üretir:
+
+```
+productId/productUrl → getBuzsuProductContext → verified product facts
+→ seçilen OpenAI/Google provider → structured ReelScript
+→ claims/sahne/narration doğrulaması → kullanıcıya sonuç
+```
+
+Bu araç **yalnızca senaryo üretir** — Veo, Türkçe TTS, Lyria, Omni veya
+FFmpeg'i bu adımda hiç çalıştırmaz. **GERÇEK PARA HARCAR** (bir inference
+çağrısıdır), `confirmed:true` olmadan hiçbir provider'a istek atılmaz.
+
+- **`src/lib/reel-script-schema.js`**: `validateReelScript()` — provider'dan
+  gelen ham JSON'un tek doğrulama katmanı:
+  - **Claims grounding**: `claimsUsed`'deki her kayıt (`{claim, sourceUrl}`)
+    `getBuzsuProductContext`'in `verifiedFacts`'inden GERÇEKTEN
+    doğrulanmalı (sourceUrl bilinen kaynaklardan biri olmalı VE claim metni
+    o kaynaktaki gerçek bir cümleyle örtüşmeli) — yoksa **`UNVERIFIED_PRODUCT_CLAIM`**
+    ile TÜM üretim reddedilir. Creative sloganlar/genel reklam dili
+    `claimsUsed`'e hiç girmez, kaynak gerektirmez.
+  - **Sahne zamanlaması**: 0'dan başlama, çakışmama, negatif olmama, toplam
+    süreyi aşmama — ihlalde **`INVALID_SCENE_TIMING`**.
+  - **Narration bütçesi**: `video-narration.js`'teki
+    `estimateNarrationDurationSeconds()` reuse edilir; tahmini süre
+    `durationSeconds * 1.15`'i (turkish-tts.js'teki VOICEOVER_TOO_LONG
+    toleransıyla AYNI) aşarsa **`NARRATION_TOO_LONG`** — otomatik kısaltma
+    YAPILMAZ.
+  - **Veo kısıtları**: her sahnenin `veoPrompt`'una İngilizce "NO spoken
+    dialogue. NO narration. NO background music. NO generated captions."
+    kısıtı DETERMİNİSTİK olarak eklenir (LLM'e güvenilmez — lyria-music.js'teki
+    "instrumental" ekleme deseniyle AYNI mantık); `referenceImageRequired:true`
+    olan sahnelere ayrıca Product Identity Lock metni eklenir.
+  - **Lyria brief**: `musicBrief.lyriaPrompt`'a "Instrumental only. No
+    vocals." zaten yoksa deterministik olarak eklenir.
+- **`src/creative-providers/reel-script-prompt.js`**: OpenAI ve Google'ın
+  **AYNI** talimatı alması için paylaşılan prompt inşası — buzsu.com.tr'den
+  gelen metin ve kullanıcının `userBrief`'i VERİ bloğu olarak çerçevelenir
+  (talimat olarak yorumlanmaz), `userBrief` `scenario-schema.js`'teki
+  `sanitizeUserText()` ile temizlenir.
+- **Provider/model seçimi**: PR-B'nin registry'sinden — `model` verilirse
+  `provider` "auto" OLAMAZ (açıkça `openai`/`google`) ve model gerçek
+  discovery'de listelenmiş olmalı ("Özel" mod, serbest yazım YOK);
+  verilmezse `modelTier` registry'den çözülür. Başarısızlıkta (yapılandırılmamış/
+  bulunamayan model/API key yok) **`MODEL_UNAVAILABLE`** — başka bir ücretli
+  modele ASLA otomatik geçilmez.
+- **`generate_reel_script` (MCP tool)**: `productId`/`productUrl`'den en az
+  biri yeterli (PR-A ile aynı kural); `confirmed:true` şart.
 
 ## Türkçe seslendirme + AI müzik (generate_video_narration / generate_turkish_voiceover / generate_lyria_music / compose_reel_audio)
 

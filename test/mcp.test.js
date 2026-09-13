@@ -346,6 +346,21 @@ test("get_buzsu_product_context: allowlist dışı bir productUrl hiçbir fetch 
   }
 });
 
+// AI Reels V2 PR-C: generate_reel_script — src/reel-script.js. Bu dosyada
+// GEMINI_API_KEY process-wide TANIMLI (yukarıda, dosyanın başında) — bu
+// yüzden generate_reel_script'in gerçek discovery/generation akışını
+// ağ mock'u OLMADAN çağırmak GERÇEK bir Google isteği atardı. Bu yüzden
+// burada SADECE confirmed:false yolu test edilir (hiçbir ağ çağrısı
+// atmadan en baştan reddeder) — geri kalan tüm akış (provider/tier
+// çözümleme, claims/sahne/narration doğrulaması, Veo/Lyria kısıtları)
+// test/reel-script.test.js'te tamamen DI ile (ağdan bağımsız) test edildi.
+test("generate_reel_script: confirmed:false ile hiçbir ağ isteği atmadan (productContext/discovery/generation) reddeder", async () => {
+  await assert.rejects(
+    () => callTool("generate_reel_script", { productUrl: "https://www.buzsu.com.tr/code-su-aritma-cihazi/", durationSeconds: 8, objective: "sales", provider: "auto", modelTier: "balanced", confirmed: false }),
+    /confirmed:true/
+  );
+});
+
 test("get_buzsu_product_context: gerçek uçtan uca akış — buzsu.com.tr/llms-full.txt'ten verifiedFacts + sourceUrl üretir, hiçbir AI/paid API'ye gitmez", async () => {
   const originalFetch = global.fetch;
   const LLMS_TEXT = `#### ⭐ Ana Ürün: Code Su Arıtma Cihazı

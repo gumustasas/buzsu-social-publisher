@@ -1,3 +1,5 @@
+import { parseReelScriptJson } from "./reel-script-prompt.js";
+
 // AI Reels V2 PR-B: Creative Provider abstraction — model DISCOVERY katmanı.
 // Google Gemini'nin GET /v1beta/models uç noktası ÜCRETSİZDİR (envanter
 // okuma) — bu modül SADECE bu uç noktayı çağırır, hiçbir generateContent
@@ -60,4 +62,22 @@ export async function listGoogleModels(env = process.env, { fetchImpl = fetch } 
     }));
 
   return { provider: "google", available: true, models };
+}
+
+// generate_reel_script'in Google çağrısı — promptText, reel-script-prompt.js
+// tarafından üretilir (OpenAI ile AYNI talimat). Ham JSON'u geri döner;
+// yapısal doğrulama çağıran tarafta (src/reel-script.js) yapılır. GERÇEK
+// PARA HARCAR — confirmed kontrolü çağıran tarafta yapılır.
+export async function generateReelScriptGoogle({ model, promptText }, env = process.env, { fetchImpl = fetch } = {}) {
+  const apiKey = env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY tanımlı değil.");
+  const response = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+    method: "POST",
+    headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
+    body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }], generationConfig: { responseMimeType: "application/json" } })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error?.message || `Gemini HTTP ${response.status}`);
+  const raw = (data.candidates || []).flatMap((candidate) => candidate.content?.parts || []).map((part) => part.text || "").join("");
+  return parseReelScriptJson(raw);
 }
