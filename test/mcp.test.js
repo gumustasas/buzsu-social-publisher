@@ -210,6 +210,54 @@ test("tools/call: generate_video_clip'in RATE_LIMITED hatası isError:true ile b
   }
 });
 
+test("generate_omni_video_edit confirmed:false ile hiçbir ağ isteği atmadan reddeder (Veo'daki confirmed kuralının Omni karşılığı)", async () => {
+  const originalFetch = global.fetch;
+  let calls = 0;
+  global.fetch = async () => { calls++; throw new Error("fetch should not be called without confirmed:true"); };
+  try {
+    await assert.rejects(
+      () => callTool("generate_omni_video_edit", { existingVideoUrl: "https://example.com/video.mp4", editPrompt: "fix", confirmed: false }),
+      /confirmed:true/
+    );
+    assert.equal(calls, 0);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// generate_omni_video_edit'in REGION_UNAVAILABLE hatası (bkz.
+// src/omni-video.js:OmniApiError, api/mcp.js tools/call catch bloğu),
+// RATE_LIMITED ile aynı yapılandırılmış-JSON muamelesini görüyor mu diye
+// doğrular — mcp.js'deki catch koşulu bu PR ile RATE_LIMITED'den
+// REGION_UNAVAILABLE'ı da kapsayacak şekilde genişletildi.
+test("tools/call: generate_omni_video_edit'in REGION_UNAVAILABLE hatası isError:true ile birlikte geçerli JSON içeren bir content.text döner", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (url, options) => {
+    const href = String(url);
+    if (!options && href.startsWith("https://example.com/video")) return { ok: true, headers: { get: () => "video/mp4" }, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer };
+    if (href.includes("/upload/v1beta/files") && options?.headers?.["X-Goog-Upload-Command"] === "start") return { ok: true, headers: { get: (name) => (name === "x-goog-upload-url" ? "https://example.com/upload-session" : null) } };
+    if (href === "https://example.com/upload-session") return { ok: true, json: async () => ({ file: { uri: "https://example.com/files/abc123", name: "files/abc123", mimeType: "video/mp4" } }) };
+    if (href.includes("/v1beta/files/abc123")) return { ok: true, json: async () => ({ name: "files/abc123", uri: "https://example.com/files/abc123", mimeType: "video/mp4", state: "ACTIVE" }) };
+    if (href.endsWith("/v1beta/interactions")) return { ok: false, status: 403, headers: { get: () => null }, json: async () => ({ error: { status: "PERMISSION_DENIED", message: "Video editing is not available in your region." } }) };
+    throw new Error(`Beklenmeyen fetch: ${href}`);
+  };
+  try {
+    const response = await handleMessage({
+      id: 1,
+      method: "tools/call",
+      params: { name: "generate_omni_video_edit", arguments: { existingVideoUrl: "https://example.com/video.mp4", editPrompt: "fix", confirmed: true } }
+    });
+    assert.equal(response.result.isError, true);
+    const parsed = JSON.parse(response.result.content[0].text);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.code, "REGION_UNAVAILABLE");
+    assert.equal(parsed.httpStatus, 403);
+    assert.equal(parsed.model, "gemini-omni-1.1-flash");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("tools/call: code'u olmayan (mevcut/genel) bir hata hâlâ düz \"Hata: ...\" metni döner (regresyon — davranış bozulmadı)", async () => {
   const response = await handleMessage({ id: 1, method: "tools/call", params: { name: "get_draft", arguments: {} } });
   assert.equal(response.result.isError, true);

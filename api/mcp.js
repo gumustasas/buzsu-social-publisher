@@ -10,6 +10,7 @@ import { composeBrandedPost } from "../src/post-branding.js";
 import { runPublisher } from "../src/publish-approved.js";
 import { MUSIC_CATEGORIES } from "../src/lib/music-catalog.js";
 import { submitVeoVideo, veoVideoStatus, downloadVeoVideo } from "../src/veo-video.js";
+import { submitOmniVideoEdit, omniInteractionStatus, downloadOmniVideo, OMNI_MODEL } from "../src/omni-video.js";
 import { getAutopilotEnabled, setAutopilotEnabled } from "../src/lib/settings.js";
 import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "../src/lib/config.js";
 import { fetchPublicImage, decodeImageBase64, imageExtensionFor, extractDriveFileId, normalizeDriveUrl, normalizeImageForMeta } from "../src/lib/upload-media.js";
@@ -337,6 +338,34 @@ const TOOLS = [
       },
       required: ["jobId"]
     }
+  },
+  {
+    name: "generate_omni_video_edit",
+    description: `Google Gemini Omni 1.1 Flash (${OMNI_MODEL}) ile ZATEN VAR OLAN bir videoyu düzenler — sıfırdan video üretmez. İyi çıkmış bir sahneyi (örn. aile sahnesi) koruyup yalnızca hatalı/istenmeyen bir bölümü (örn. ürün) düzeltmek için kullanılır. Google, yüklenen videoları düzenleme özelliğinin her bölgede/hesapta desteklenmediğini belirtiyor (EEA/İsviçre/UK ve bazı ABD eyaletleri dokümante edilmiş kısıtlar — Türkiye için garanti yok); desteklenmiyorsa REGION_UNAVAILABLE hatası döner, ASLA otomatik tekrar denenmez. GERÇEK PARA HARCAR (360p en ucuz seçenektir). Video işlenmesi zaman alabilir; hemen fileUri gelmezse durumu get_omni_video_status ile sorgulayın. confirmed:true verilmezse hiçbir API çağrısı/harcama yapılmaz. Model ${OMNI_MODEL} ile sabittir, başka bir model kabul edilmez.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        existingVideoUrl: { type: "string", description: "Düzenlenecek, zaten üretilmiş videonun herkese açık HTTPS URL'si." },
+        referenceImageUrl: { type: "string", description: "İsteğe bağlı — korunması istenen ürünün gerçek görselinin herkese açık HTTPS URL'si (düzenlemeye referans olarak eklenir)." },
+        editPrompt: { type: "string", description: "Videoda ne değişecek/düzeltilecek — doğal dilde talimat (örn. 'yalnızca masadaki ürünü bu referans görseldeki cihazla değiştir, aile ve arka planı olduğu gibi bırak')." },
+        aspectRatio: { type: "string", description: "En-boy oranı (varsayılan '9:16')." },
+        resolution: { type: "string", enum: ["360p", "720p", "1080p", "4k"], description: "Çıktı çözünürlüğü (varsayılan '360p' — en ucuz, taslak/deneme için önerilir)." },
+        confirmed: { type: "boolean", description: "true olmadan hiçbir API çağrısı yapılmaz/ücret alınmaz." }
+      },
+      required: ["existingVideoUrl", "editPrompt", "confirmed"]
+    }
+  },
+  {
+    name: "get_omni_video_status",
+    description: "generate_omni_video_edit ile başlatılmış bir Omni interaction'ın durumunu sorgular. Tamamlandıysa videoyu indirip Vercel Blob'a yükler ve herkese açık videoUrl döner; henüz bitmediyse IN_PROGRESS döner.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        interactionId: { type: "string", description: "generate_omni_video_edit yanıtındaki interactionId." },
+        model: { type: "string", description: "generate_omni_video_edit yanıtındaki model (isteğe bağlı, günlükleme amaçlı)." }
+      },
+      required: ["interactionId"]
+    }
   }
 ];
 
@@ -622,6 +651,31 @@ export async function callTool(name, args) {
       const status = await getVideoRenderStatus(args.jobId);
       return JSON.stringify(status, null, 2);
     }
+    case "generate_omni_video_edit": {
+      if (args.confirmed !== true) throw new Error("Bu işlem gerçek API kredisi harcar. Onaylamak için confirmed:true gönderin.");
+      if (!String(args.editPrompt || "").trim()) throw new Error("editPrompt boş olamaz.");
+      const job = await submitOmniVideoEdit(args.existingVideoUrl, process.env, {
+        referenceImageUrl: args.referenceImageUrl,
+        editPrompt: args.editPrompt,
+        aspectRatio: args.aspectRatio || "9:16",
+        resolution: args.resolution || "360p",
+        confirmed: true
+      });
+      return JSON.stringify({ ok: true, ...job }, null, 2);
+    }
+    case "get_omni_video_status": {
+      if (!String(args.interactionId || "").trim()) throw new Error("interactionId gerekli.");
+      const status = await omniInteractionStatus({ interactionId: args.interactionId, model: args.model || OMNI_MODEL }, process.env);
+      if (status.status !== "COMPLETED") return JSON.stringify({ ok: true, status: status.status }, null, 2);
+      const videoBuffer = await downloadOmniVideo(status.fileUri, process.env);
+      let videoUrl = null;
+      if (process.env.BLOB_READ_WRITE_TOKEN) {
+        const safeName = String(args.interactionId).replace(/[^a-zA-Z0-9_-]/g, "_").slice(-80);
+        const blob = await put(`ai-omni/${safeName}-${Date.now()}.mp4`, videoBuffer, { access: "public", contentType: "video/mp4" });
+        videoUrl = blob.url;
+      }
+      return JSON.stringify({ ok: true, status: "COMPLETED", videoUrl }, null, 2);
+    }
     case "get_autopilot_status": {
       const enabled = await getAutopilotEnabled();
       return JSON.stringify({ ok: true, enabled }, null, 2);
@@ -671,10 +725,12 @@ export async function handleMessage(msg) {
         // genişti — Node/ağ/Blob hataları da sıklıkla bir .code taşır (ör.
         // ENOTFOUND, ECONNRESET, Vercel Blob SDK hataları) ve bunlar
         // RATE_LIMITED/VeoApiError İLE HİÇ İLGİLİ DEĞİL. Koşul artık tam
-        // olarak VeoApiError'ın kendi şekline (code==="RATE_LIMITED" +
-        // toJSON metodu) kilitleniyor — code'u olan ama bu şekle uymayan
-        // sıradan bir hata eskisi gibi düz "Hata: ..." metnine düşer.
-        const text = error.code === "RATE_LIMITED" && typeof error.toJSON === "function"
+        // olarak VeoApiError/OmniApiError'ın kendi şekline (code'u
+        // RATE_LIMITED veya REGION_UNAVAILABLE + toJSON metodu) kilitleniyor
+        // — code'u olan ama bu şekle uymayan sıradan bir hata eskisi gibi
+        // düz "Hata: ..." metnine düşer.
+        const structuredCodes = new Set(["RATE_LIMITED", "REGION_UNAVAILABLE"]);
+        const text = structuredCodes.has(error.code) && typeof error.toJSON === "function"
           ? JSON.stringify({ ok: false, ...error.toJSON() })
           : `Hata: ${error.message}`;
         return jsonRpcResponse(id, { content: [{ type: "text", text }], isError: true });

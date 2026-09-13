@@ -435,6 +435,53 @@ geçilmez**; kullanıcı `alternatives` listesinden yeni bir model seçip
 (`content[].text`, `isError:true` korunarak) ve dashboard/HTTP
 uçlarında (gerçek `HTTP 429` + aynı alanlar) aynı şekilde taşınır.
 
+## Google Gemini Omni 1.1 Flash — mevcut video düzenleme (generate_omni_video_edit / dashboard Reels)
+
+Omni, Veo'dan **tamamen ayrı** bir sağlayıcıdır ve **sıfırdan video üretmez** —
+zaten üretilmiş/render edilmiş bir videoyu (örn. iyi çıkan bir aile sahnesi)
+alıp yalnızca belirtilen bölümü (örn. yanlış ürün) düzenler. Google Gemini
+Developer API'nin bir parçasıdır, aynı `GEMINI_API_KEY`'i kullanır — ayrı bir
+hesap/anahtar gerekmez.
+
+- **Model**: tek ve sabit — `gemini-omni-1.1-flash`. Başka bir model kabul
+  edilmez (Veo'daki tier seçimi kavramının burada karşılığı yoktur).
+- **Endpoint**: `POST https://generativelanguage.googleapis.com/v1beta/interactions`
+  (Google'ın "Interactions API"si). Mevcut video, önce Gemini **Files API**
+  ile yüklenir (`upload/v1beta/files`, resumable protokol) ve `ACTIVE` duruma
+  gelmesi beklenir; referans ürün görseli (isteğe bağlı) inline base64 olarak
+  eklenir.
+- **Çözünürlük**: `360p` (varsayılan, en ucuz — taslak/deneme için önerilir),
+  `720p`, `1080p`, `4k`.
+- **`confirmed:true` şart** — hem MCP aracında hem HTTP/dashboard katmanında;
+  verilmezse **hiçbir ağ isteği** atılmadan reddedilir.
+- **Bölgesel kısıt**: Google, yüklenen videoları düzenleme özelliğinin her
+  bölgede/hesapta desteklenmediğini belirtiyor (EEA/İsviçre/Birleşik Krallık
+  ve bazı ABD eyaletleri dokümante edilmiş kısıtlar — Türkiye için garanti
+  yoktur). Desteklenmiyorsa yanıt `RATE_LIMITED`'e benzer şekilde
+  yapılandırılmış bir hata döner:
+  ```jsonc
+  {
+    "ok": false,
+    "code": "REGION_UNAVAILABLE",
+    "httpStatus": 403,           // Google'ın döndüğü gerçek HTTP kodu
+    "model": "gemini-omni-1.1-flash",
+    "providerStatus": "PERMISSION_DENIED",
+    "details": { "message": "..." }
+  }
+  ```
+  **Hiçbir otomatik tekrar deneme yapılmaz** — bu, RATE_LIMITED (429) için de
+  aynı şekilde geçerlidir; ikisi de MCP yanıtında (`isError:true` korunarak,
+  `content[].text` geçerli JSON olarak) ve dashboard/HTTP uçlarında (gerçek
+  HTTP kodu + aynı alanlar) taşınır.
+- **Bilinen sınırlama**: Interactions API çok yeni bir yüzey olduğu için
+  (27 Ağustos 2026 itibarıyla genel kullanıma açıldı) tam istek/yanıt şeması
+  bu ortamda `ai.google.dev`'e doğrudan ağ erişimi olmadan yazıldı — alan
+  adları resmi dokümanın arama motoru üzerinden erişilen özetlerinden
+  derlendi. `src/omni-video.js:submitOmniVideoEdit` içindeki tek istek
+  gövdesi izole tutulmuştur; gerçek şema küçük bir farklılık gösterirse
+  düzeltme tek o fonksiyonda yapılır. **İlk gerçek (ücretli, 360p) deneme
+  öncesinde bu alan adlarının resmi dokümandan teyit edilmesi önerilir.**
+
 ## Sonraki adım
 
 Dry-run doğru çalıştıktan sonra Meta API için ayrı gönderim scripti eklenir. O aşamada da önce test modu, sonra tek kayıtla kontrollü canlı paylaşım yapılmalıdır.
