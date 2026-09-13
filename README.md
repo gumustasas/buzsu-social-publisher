@@ -641,6 +641,52 @@ FFmpeg'i bu adımda hiç çalıştırmaz. **GERÇEK PARA HARCAR** (bir inference
 - **`generate_reel_script` (MCP tool)**: `productId`/`productUrl`'den en az
   biri yeterli (PR-A ile aynı kural); `confirmed:true` şart.
 
+## AI Reels V2 — dashboard sihirbazı (PR-D: Ürün→Senaryo→Sahne Onayı, PR-E: Sahne Videosu)
+
+Dashboard'da (`dashboard-reels-v2.js` + `dashboard.html`, `data-tab="reels"`
+altındaki "AI Reels V2" paneli) 7 adımlı bir sihirbaz: 1. Ürün, 2. Kreatif
+Ayarlar, 3. AI Senaryo, 4. Sahne Onayı (PR-D — yukarıdaki
+`generate_reel_script`/`validateReelScript`'i kullanır), **5. Video Üretimi
+(PR-E)**, 6. Ses & Müzik, 7. Final Reel (6/7 hâlâ pasif, sonraki PR).
+
+**PR-E, YENİ bir Veo sistemi yazmaz** — PR-D'de zaten onaylanan
+`reelScript.scenes[i].veoPrompt`'u (deterministik "sessiz" + gerektiğinde
+Product Identity Lock kısıtları PR-D'de zaten eklenmiş) MEVCUT
+`submitVeoVideo`/`veoVideoStatus` (`src/veo-video.js`) altyapısına bağlar:
+
+- Her onaylı sahne (`approvedScenes[sceneId]===true`) AYRI AYRI, kendi Veo
+  işi olarak üretilir — Reel'in tamamı tek bir Veo çağrısında ASLA
+  birleştirilmez.
+- **`api/reel-scene-video.js`** (yeni, tek yeni endpoint): sahne başına
+  `submitVeoVideo`'yu çağırır. `confirmed:true` VE `approved:true` sunucu
+  tarafında ZORUNLUDUR (dashboard'un mevcut iki-adımlı "tekrar bas" onay
+  deseniyle aynı ruhta, ama `generate_video_clip` MCP tool'unun sunucu-taraflı
+  `confirmed:true` sözleşmesiyle AYNI sıkılıkta — `api/reels.js`'in daha
+  gevşek, yalnız client-side onay deseninin AKSİNE). `normalizeVeoPrompt()`
+  (artık `reel-script-schema.js`'ten export edilir) savunma amaçlı tekrar
+  uygulanır — idempotent olduğu için promptu bozmaz, yalnız kısıtların
+  client tarafında bir şekilde eksik kalmamasını garanti eder.
+- **Durum sorgulama için yeni bir endpoint EKLENMEDİ** — mevcut,
+  DEĞİŞTİRİLMEMİŞ `api/veo-video.js` (job/operationName tabanlı, tamamlanınca
+  Vercel Blob'a yükleyip herkese açık `videoUrl` üreten) olduğu gibi reuse
+  edilir. Polling ASLA yeni bir iş başlatmaz.
+- **Referans görsel**: her sahne için `productContext.productImageUrls`
+  içinden kullanıcı seçim yapar (`sceneReferenceImages[sceneId]`, minimal
+  thumbnail seçici) — hiçbir görsel otomatik/olası-yanlış seçilmez.
+- **Sahne durumu**: `generatedSceneVideos[sceneId] = {status, jobId, model,
+  provider, createdAt, videoUrl, error}`; UI durumu her zaman `idle |
+  awaiting_confirmation | generating | completed | failed` kümesine
+  normalize edilir.
+- **Yeniden üretim**: tek bir sahneyi hedefler, YENİ bir onay ister, eski
+  (varsa tamamlanmış) `videoUrl`'i yeni üretim BAŞARILI olana kadar bozmaz —
+  diğer sahnelerin sonuçları etkilenmez.
+- Veo hatasında (kota, HTTP hata) OTOMATİK başka bir provider/model'e ASLA
+  geçilmez, otomatik ikinci deneme YAPILMAZ — hata gösterilir, yeni deneme
+  yeni bir onay ister.
+- Product-claim bloklama (PR-D'de kaldırılan `UNVERIFIED_PRODUCT_CLAIM`
+  mekanizması) bu adımda da YOKTUR ve eklenmemiştir — Product Intelligence
+  hâlâ yalnız bağlam/context'tir.
+
 ## Türkçe seslendirme + AI müzik (generate_video_narration / generate_turkish_voiceover / generate_lyria_music / compose_reel_audio)
 
 Veo/fal/Omni'nin kendi ürettiği video sesini KULLANMAZ — bunun yerine bağımsız,

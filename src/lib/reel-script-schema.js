@@ -59,7 +59,7 @@ function ensureConstraint(text, marker, constraint) {
   return marker.test(value) ? value : `${value} ${constraint}`;
 }
 
-function normalizeVeoPrompt(rawPrompt, referenceImageRequired) {
+export function normalizeVeoPrompt(rawPrompt, referenceImageRequired) {
   let prompt = ensureConstraint(rawPrompt, /no spoken dialogue/i, VEO_SILENT_CONSTRAINT);
   if (referenceImageRequired) {
     prompt = ensureConstraint(prompt, /preserve the exact physical product/i, PRODUCT_IDENTITY_LOCK);
