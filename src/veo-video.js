@@ -79,7 +79,7 @@ export class VeoApiError extends Error {
 // gibi) bakılır. İkisi de yoksa null — "bilinmiyor" anlamına gelir,
 // asla tahmini bir değer uydurulmaz.
 function parseRetryAfter(response, data) {
-  const header = typeof response.headers?.get === "function" ? response.headers.get("retry-after") : null;
+  const header = response && typeof response.headers?.get === "function" ? response.headers.get("retry-after") : null;
   if (header) {
     const seconds = Number(header);
     if (Number.isFinite(seconds)) return seconds;
@@ -119,21 +119,36 @@ function redact(message) {
   return String(message || "").replace(/key=[^&\s"]+/gi, "key=[gizli]");
 }
 
+// HTTP-seviyesi 429 (readJson) VE operation gövdesine gömülü hata
+// (veoVideoStatus — Google bir long-running operation'ı HTTP 200 + "done:
+// true" ile ama gövde içinde bir google.rpc.Status hatasıyla da
+// sonlandırabiliyor) AYNI şekilde RATE_LIMITED'e normalize edilsin diye
+// tek bir yerden üretiliyor — iki ayrı hata yolu birbirinden bağımsız
+// sürüklenip birinin unutulmasını önler.
+function buildRateLimitedError({ model, providerStatus, message, retryAfter, quotaInfo }) {
+  const safeMessage = redact(message || "HTTP 429");
+  const fullMessage = `Veo modeli (${model}) için istek sınırına ulaşıldı (${providerStatus || "bilinmeyen durum"}). Bu dakikalık (RPM) veya günlük (RPD) bir kota olabilir — kesin tür Google'ın yanıtından anlaşılamadı. ${safeMessage}`;
+  return new VeoApiError(fullMessage, {
+    code: "RATE_LIMITED",
+    httpStatus: 429,
+    model,
+    providerStatus: providerStatus || null,
+    retryAfter,
+    alternatives: alternativesFor(model),
+    details: { ...quotaInfo, message: safeMessage }
+  });
+}
+
 async function readJson(response, { model } = {}) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 429) {
-      const providerStatus = data?.error?.status || null;
-      const safeMessage = redact(data?.error?.message || "Veo HTTP 429");
-      const message = `Veo modeli (${model}) için istek sınırına ulaşıldı (HTTP 429${providerStatus ? `, ${providerStatus}` : ""}). Bu dakikalık (RPM) veya günlük (RPD) bir kota olabilir — kesin tür Google'ın yanıtından anlaşılamadı. ${safeMessage}`;
-      throw new VeoApiError(message, {
-        code: "RATE_LIMITED",
-        httpStatus: 429,
+      throw buildRateLimitedError({
         model,
-        providerStatus,
+        providerStatus: data?.error?.status,
+        message: data?.error?.message,
         retryAfter: parseRetryAfter(response, data),
-        alternatives: alternativesFor(model),
-        details: { ...parseQuotaInfo(data), message: safeMessage }
+        quotaInfo: parseQuotaInfo(data)
       });
     }
     throw new Error(data.error?.message || `Veo HTTP ${response.status}`);
@@ -201,7 +216,24 @@ export async function veoVideoStatus(job, env = process.env) {
   const response = await fetch(`${API_BASE}/${job.operationName}`, { headers: { "x-goog-api-key": env.GEMINI_API_KEY } });
   const data = await readJson(response, { model: job.model });
   if (!data.done) return { ...job, status: "IN_PROGRESS" };
-  if (data.error) throw new Error(data.error.message || "Veo video üretimi başarısız.");
+  if (data.error) {
+    // Google, uzun süren bir işlemi HTTP 200 + "done:true" ile ama gövde
+    // İÇİNE GÖMÜLÜ bir google.rpc.Status hatasıyla da sonlandırabiliyor —
+    // bu, readJson'ın denetlediği HTTP-seviyesi 429'dan TAMAMEN AYRI bir
+    // yol (üretim ANINDA değil, işlem SÜRERKEN/pollanırken kota dolabilir).
+    // Aynı RATE_LIMITED sınıflandırması burada da uygulanmazsa dashboard/MCP
+    // bunu düz bir "başarısız" hatasından ayıramaz.
+    if (data.error.code === 429 || data.error.status === "RESOURCE_EXHAUSTED") {
+      throw buildRateLimitedError({
+        model: job.model,
+        providerStatus: data.error.status,
+        message: data.error.message,
+        retryAfter: parseRetryAfter(null, data),
+        quotaInfo: parseQuotaInfo(data)
+      });
+    }
+    throw new Error(data.error.message || "Veo video üretimi başarısız.");
+  }
   const sample = data.response?.generateVideoResponse?.generatedSamples?.[0];
   const fileUri = sample?.video?.uri || null;
   if (!fileUri) throw new Error("Veo yanıtında video bulunamadı.");

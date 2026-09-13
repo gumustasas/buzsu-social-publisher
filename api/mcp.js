@@ -667,13 +667,15 @@ export async function handleMessage(msg) {
         const text = await callTool(toolName, toolArgs);
         return jsonRpcResponse(id, { content: [{ type: "text", text }] });
       } catch (error) {
-        // Yapılandırılmış hatalar (şu an yalnızca VeoApiError/RATE_LIMITED,
-        // bkz. src/veo-video.js) code/model/alternatives gibi alanları
-        // kaybetmeden geçerli bir JSON metni olarak taşınıyor — isError:true
-        // yine de korunuyor. code'u olmayan (yani her zamanki) hatalar
-        // eskisi gibi düz "Hata: ..." metnine düşüyor, davranış değişmiyor.
-        const text = typeof error.code === "string"
-          ? JSON.stringify({ ok: false, ...(typeof error.toJSON === "function" ? error.toJSON() : { code: error.code, error: error.message }) })
+        // PR #74 inceleme bulgusu: `typeof error.code === "string"` çok
+        // genişti — Node/ağ/Blob hataları da sıklıkla bir .code taşır (ör.
+        // ENOTFOUND, ECONNRESET, Vercel Blob SDK hataları) ve bunlar
+        // RATE_LIMITED/VeoApiError İLE HİÇ İLGİLİ DEĞİL. Koşul artık tam
+        // olarak VeoApiError'ın kendi şekline (code==="RATE_LIMITED" +
+        // toJSON metodu) kilitleniyor — code'u olan ama bu şekle uymayan
+        // sıradan bir hata eskisi gibi düz "Hata: ..." metnine düşer.
+        const text = error.code === "RATE_LIMITED" && typeof error.toJSON === "function"
+          ? JSON.stringify({ ok: false, ...error.toJSON() })
           : `Hata: ${error.message}`;
         return jsonRpcResponse(id, { content: [{ type: "text", text }], isError: true });
       }

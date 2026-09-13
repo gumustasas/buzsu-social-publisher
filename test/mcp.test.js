@@ -216,3 +216,26 @@ test("tools/call: code'u olmayan (mevcut/genel) bir hata hâlâ düz \"Hata: ...
   assert.match(response.result.content[0].text, /^Hata: /);
   assert.throws(() => JSON.parse(response.result.content[0].text), "düz metin JSON olarak parse edilemez, bu beklenen davranış");
 });
+
+// PR #74 inceleme bulgusu: eski koşul (`typeof error.code === "string"`)
+// RATE_LIMITED/VeoApiError DIŞINDAKİ, ama yine de bir .code taşıyan Node/ağ
+// hatalarını (ör. ECONNRESET, ENOTFOUND, Blob SDK hataları) da yanlışlıkla
+// JSON'a çeviriyordu. Burada get_draft'ın kendi fetch çağrısı, .code
+// taşıyan ama RATE_LIMITED OLMAYAN sıradan bir hata fırlatıyor — sonuç hâlâ
+// düz "Hata: ..." metni olmalı.
+test("tools/call: RATE_LIMITED olmayan ama yine de .code taşıyan sıradan bir hata (ör. ECONNRESET) hâlâ düz \"Hata: ...\" metni döner (dar kapsam regresyonu)", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => {
+    const error = new Error("network is down");
+    error.code = "ECONNRESET";
+    throw error;
+  };
+  try {
+    const response = await handleMessage({ id: 1, method: "tools/call", params: { name: "get_draft", arguments: { recordId: "recX" } } });
+    assert.equal(response.result.isError, true);
+    assert.equal(response.result.content[0].text, "Hata: network is down");
+    assert.throws(() => JSON.parse(response.result.content[0].text));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

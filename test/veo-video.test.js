@@ -245,3 +245,73 @@ test("veoVideoStatus classifies a 429 the same way, using the model recorded on 
     global.fetch = originalFetch;
   }
 });
+
+// PR #74 inceleme bulgusu: Google, uzun süren bir Veo işlemini HTTP 200 +
+// "done:true" ile ama gövde İÇİNE GÖMÜLÜ bir hatayla da (google.rpc.Status)
+// sonlandırabiliyor — bu, readJson'ın denetlediği HTTP-seviyesi 429'dan
+// TAMAMEN AYRI bir yol (submit anında değil, POLLING sırasında oluşan bir
+// kota hatası). Bu daha önce sessizce düz bir Error'a düşüyordu.
+test("veoVideoStatus classifies an operation-body error (HTTP 200, done:true, error.code:429) as RATE_LIMITED too — not just a top-level HTTP 429", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    json: async () => ({
+      name: "operations/1",
+      done: true,
+      error: {
+        code: 429,
+        status: "RESOURCE_EXHAUSTED",
+        message: "Resource has been exhausted (e.g. check quota).",
+        details: [{ "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "18s" }]
+      }
+    })
+  });
+  try {
+    const error = await veoVideoStatus({ operationName: "operations/1", model: VEO_MODEL_TIERS.fast }, { GEMINI_API_KEY: "test" }).catch((e) => e);
+    assert.ok(error instanceof VeoApiError);
+    assert.equal(error.code, "RATE_LIMITED");
+    assert.equal(error.httpStatus, 429);
+    assert.equal(error.model, VEO_MODEL_TIERS.fast);
+    assert.equal(error.providerStatus, "RESOURCE_EXHAUSTED");
+    assert.equal(error.retryAfter, 18);
+    assert.deepEqual(error.alternatives.map((a) => a.tier), ["economy", "quality"]);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("veoVideoStatus also classifies an operation-body error by status RESOURCE_EXHAUSTED alone (no numeric code)", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    json: async () => ({ name: "operations/1", done: true, error: { status: "RESOURCE_EXHAUSTED", message: "quota" } })
+  });
+  try {
+    const error = await veoVideoStatus({ operationName: "operations/1", model: VEO_MODEL_TIERS.economy }, { GEMINI_API_KEY: "test" }).catch((e) => e);
+    assert.ok(error instanceof VeoApiError);
+    assert.equal(error.code, "RATE_LIMITED");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("veoVideoStatus: an operation-body error unrelated to quota (e.g. content policy) still throws a plain Error, not RATE_LIMITED (regression)", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    json: async () => ({ name: "operations/1", done: true, error: { code: 3, status: "INVALID_ARGUMENT", message: "prompt violates policy" } })
+  });
+  try {
+    const error = await veoVideoStatus({ operationName: "operations/1", model: VEO_MODEL_TIERS.economy }, { GEMINI_API_KEY: "test" }).catch((e) => e);
+    assert.equal(error.code, undefined);
+    assert.equal(error.message, "prompt violates policy");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
