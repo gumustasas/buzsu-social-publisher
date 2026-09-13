@@ -36,7 +36,7 @@ const REEL_SCRIPT_SCHEMA_HINT = `{
     "instruments": ["..."],
     "lyriaPrompt": "İngilizce, Lyria'ya doğrudan verilebilecek müzik promptu"
   },
-  "claimsUsed": [{ "claim": "kullanılan factual ürün iddiası", "provenance": "verified | user_provided", "sourceUrl": "yalnız verified ise ilgili verifiedFacts sourceUrl'ü" }],
+  "claimsUsed": [{ "claim": "kullanılan factual ürün iddiası", "sourceUrl": "varsa ilgili verifiedFacts sourceUrl'ü" }],
   "negativeConstraints": ["kaçınılması gereken öğe"],
   "warnings": []
 }`;
@@ -78,16 +78,15 @@ ${sanitizedBrief || "(kullanıcı özel bir fikir belirtmedi, ürünün doğrula
 HEDEF: ${objectiveLabel}.
 
 ÇOK ÖNEMLİ KURALLAR:
-1. Doğrulanabilir factual ürün iddiaları kaynaklı kalmalı; teknik özellik UYDURMA. Buna karşılık normal yaratıcı reklam dili serbesttir ve verifiedFacts cümlelerini birebir tekrar etmek zorunda değildir. Genel reklam sloganları/yaratıcı ifadeler claimsUsed'e GİRMEZ.
-2. claimsUsed içindeki Product Intelligence kaynağına dayanan factual claim için provenance "verified" ve gerçekten ilgili sourceUrl'ü yaz. Kullanıcının reklam fikrinde açıkça verdiği factual bilgi kullanılıyorsa provenance "user_provided" olarak koru ve sourceUrl uydurma. Bu beyan son otorite değildir; server claim'i ayrıca doğrular.
-3. userBrief yaratıcı yaklaşımı yönlendirebilir fakat sağlık, sertifika, garanti, mutlak/ölçülebilir performans ve ciddi teknik iddialar için güvenlik veya grounding bypass'ı değildir.
-4. Şu kategorilerde kaynağı olmayan hiçbir iddia UYDURMA (kaynakta yoksa senaryoda da geçmesin):
+1. Ürün hakkında konuşurken MÜMKÜN OLDUĞUNCA yukarıdaki "DOĞRULANMIŞ GERÇEK BİLGİ" bloğuna dayan; teknik özellikleri gereksiz yere kendin uydurma. Normal yaratıcı reklam dili serbesttir ve verifiedFacts cümlelerini birebir tekrar etmek zorunda değildir.
+2. claimsUsed'e senaryoda kullandığın factual ürün iddialarını yaz; doğrulanmış bilgiden geliyorsa ilgili sourceUrl'ü de ekle. Genel reklam sloganları/yaratıcı ifadeler claimsUsed'e GİRMEZ. Bu liste bilgilendirmedir: kaynak eşleşmesi server tarafında işaretlenir, senaryo bu yüzden reddedilmez.
+3. Şu kategorilerde mümkünse kaynaklı konuş, gereksiz iddia üretme:
 ${prohibitedBlock}
-5. fullNarrationText ve her sahnenin narrationText'i TÜRKÇE olmalı. Toplam metin, ${durationSeconds} saniyelik bir seslendirmeye SIĞACAK kadar kısa olmalı (~${Math.round(durationSeconds * 2.5)} kelimeyi aşmasın) — 8sn'lik bir videoya uzun bir paragraf yazma.
-6. Sahneler (scenes) 0. saniyeden başlamalı, birbiriyle ÇAKIŞMAMALI, toplam süre ${durationSeconds} saniyeyi AŞMAMALI.
-7. Her sahnenin veoPrompt'u İNGİLİZCE ve yalnızca GÖRSELİ tarif etsin (konuşma/müzik/altyazı isteme — bunlar ayrı adımlarda eklenecek, sen yalnızca görseli yaz).
-8. Ürün referans görseli gereken (referenceImageRequired:true) sahnelerde ürünün gerçek fiziksel görünümünü koruyacak şekilde yaz; ürünü yeniden tasarlama, parça/logo uydurma.
-9. musicBrief.lyriaPrompt İNGİLİZCE, sözsüz (instrumental) bir müzik promptu olsun.
+4. fullNarrationText ve her sahnenin narrationText'i TÜRKÇE olmalı. Toplam metin, ${durationSeconds} saniyelik bir seslendirmeye SIĞACAK kadar kısa olmalı (~${Math.round(durationSeconds * 2.5)} kelimeyi aşmasın) — 8sn'lik bir videoya uzun bir paragraf yazma.
+5. Sahneler (scenes) 0. saniyeden başlamalı, birbiriyle ÇAKIŞMAMALI, toplam süre ${durationSeconds} saniyeyi AŞMAMALI.
+6. Her sahnenin veoPrompt'u İNGİLİZCE ve yalnızca GÖRSELİ tarif etsin (konuşma/müzik/altyazı isteme — bunlar ayrı adımlarda eklenecek, sen yalnızca görseli yaz).
+7. Ürün referans görseli gereken (referenceImageRequired:true) sahnelerde ürünün gerçek fiziksel görünümünü koruyacak şekilde yaz; ürünü yeniden tasarlama, parça/logo uydurma.
+8. musicBrief.lyriaPrompt İNGİLİZCE, sözsüz (instrumental) bir müzik promptu olsun.
 
 Yanıtı YALNIZCA şu JSON şemasına göre ver, başka açıklama ekleme:
 ${REEL_SCRIPT_SCHEMA_HINT}`;

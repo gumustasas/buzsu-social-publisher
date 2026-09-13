@@ -36,13 +36,11 @@ test("buildReelScriptPrompt: durationSeconds/objective/aspectRatio prompt metnin
   assert.match(prompt, /1:1/);
 });
 
-test("buildReelScriptPrompt: creative dili serbest bırakır, factual grounding ve user_provided sınırını açıklar", () => {
+test("buildReelScriptPrompt: creative dili serbest bırakır ve modeli gerçek ürün bilgisine yönlendirir (bloklama iddiası içermez)", () => {
   const prompt = buildReelScriptPrompt({ productContext: PRODUCT_CONTEXT, userBrief: "Paslanmaz çelik gövde", durationSeconds: 8, objective: "sales", aspectRatio: "9:16" });
   assert.match(prompt, /normal yaratıcı reklam dili serbesttir/i);
-  assert.match(prompt, /teknik özellik UYDURMA/i);
-  assert.match(prompt, /provenance "user_provided"/i);
-  assert.match(prompt, /server claim'i ayrıca doğrular/i);
-  assert.match(prompt, /güvenlik veya grounding bypass'ı değildir/i);
+  assert.match(prompt, /teknik özellikleri gereksiz yere kendin uydurma/i);
+  assert.match(prompt, /senaryo bu yüzden reddedilmez/i);
 });
 
 test("parseReelScriptJson: ```json çevrelenmiş yanıtı temizleyip parse eder", () => {

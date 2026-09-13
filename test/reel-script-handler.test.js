@@ -124,15 +124,17 @@ test("validate: client productContext'ini yok sayar, context'i server'da yeniden
     validateReelScriptImpl: (value, options) => { validation = { value, options }; return normalized; }
   });
   const res = response();
-  await handler(request("POST", "validate", { productId: "rec1", userBrief: "Paslanmaz çelik gövde", productContext: { productName: "Forged" }, reelScript: candidate() }), res);
+  await handler(request("POST", "validate", { productId: "rec1", productContext: { productName: "Forged" }, reelScript: candidate() }), res);
   assert.equal(res.statusCode, 200);
   assert.deepEqual(productRef, { productId: "rec1", productUrl: undefined });
   assert.equal(validation.options.productContext.productName, "Code Advantage");
-  assert.equal(validation.options.userBrief, "Paslanmaz çelik gövde");
   assert.equal(res.payload.reelScript.product.name, "Code Advantage");
 });
 
-test("validate: client sahte productContext göndererek claim grounding'i bypass edemez", async () => {
+// Claim doğrulaması artık bloklamıyor; buna karşılık client'ın gönderdiği
+// productContext HÂLÂ yok sayılmalı — kaynak ataması yalnız server'ın
+// çözdüğü Product Intelligence verisinden yapılır (uydurma kaynak yankılanmaz).
+test("validate: client sahte productContext göndererek uydurma kaynak yazdıramaz", async () => {
   const forged = candidate();
   forged.hook = "300 GPD üretim kapasitesi";
   forged.claimsUsed = [{ claim: forged.hook, sourceUrl: "https://evil.example/fake" }];
@@ -143,8 +145,8 @@ test("validate: client sahte productContext göndererek claim grounding'i bypass
     productContext: { verifiedFacts: [{ fact: forged.hook, sourceUrl: "https://evil.example/fake" }], sourceUrls: ["https://evil.example/fake"] },
     reelScript: forged
   }), res);
-  assert.equal(res.statusCode, 400);
-  assert.equal(res.payload.code, "UNVERIFIED_PRODUCT_CLAIM");
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.payload.reelScript.claimsUsed, [{ claim: "300 GPD üretim kapasitesi", provenance: "unverified" }]);
 });
 
 test("validate: geçersiz süre inference veya product fetch başlatmadan reddedilir", async () => {

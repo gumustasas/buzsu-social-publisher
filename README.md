@@ -594,8 +594,25 @@ FFmpeg'i bu adımda hiç çalıştırmaz. **GERÇEK PARA HARCAR** (bir inference
 
 - **`src/lib/reel-script-schema.js`**: `validateReelScript()` — provider'dan
   gelen ham JSON'un tek doğrulama katmanı:
-  - **Claims grounding policy**: creative language is allowed by default; normal yaratıcı reklam dili grounding veya source URL gerektirmez. Yalnız deterministik olarak tespit edilen factual/high-risk ürün claim'leri doğrulanır. `claimsUsed` öğeleri `{claim, provenance, sourceUrl?}` biçiminde normalize edilebilir: Product Intelligence ile doğrulanan claim `provenance:"verified"` ve ilgili gerçek `sourceUrl` değerini korur; kullanıcının gerçek `userBrief` metniyle server tarafında desteklenen makul claim `provenance:"user_provided"` değerini korur ve source URL taşımak zorunda değildir. Modelin veya client'ın gönderdiği provenance değerine güvenilmez.
-  - **Fail-closed güvenlik**: sağlık/güvenlik, sertifika/onay, garanti, kapasite/debi, ölçülebilir performans, yüzde/oran, tasarruf ve bakım süresi gibi yüksek-risk kategorilerde korumalar devam eder. Bu iddialar güvenilir Product Intelligence bilgisiyle doğrulanamıyorsa **`UNVERIFIED_PRODUCT_CLAIM`** ile tüm üretim reddedilir; `user_provided` bir güvenlik bypass'ı değildir.
+  - **Claim policy (ÜRÜN KARARI — bilinçli olarak non-blocking)**: Product
+    Intelligence AI üretimini YÖNLENDİRİR, fakat product-claim grounding
+    ReelScript üretimini veya validasyonunu **BLOKLAMAZ**. Doğrulanamayan bir
+    ürün iddiası artık senaryoyu reddetmez; **`UNVERIFIED_PRODUCT_CLAIM`
+    hata sınıfı bu yoldan tamamen kaldırılmıştır**. Neden: fail-closed claim
+    filtresi pratikte meşru reklam dilini bloklayarak acceptance'ı durdurdu
+    (ör. "Yüksek Alman KRAFT membran teknolojisiyle saf su"). Bu karar
+    iddiaların otomatik olarak DOĞRU kabul edildiği anlamına gelmez —
+    doğruluk sorumluluğu, sahne onay ekranındaki insan incelemesine aittir.
+    Whitelist/denylist/regex claim filtresi veya LLM claim-classifier
+    eklenmemiştir ve eklenmemelidir.
+  - **claimsUsed = kaynak ataması (görünürlük)**: her öğe
+    `{claim, provenance, sourceUrl?}` biçiminde normalize edilir.
+    `verifiedFacts` ile eşleşen claim `provenance:"verified"` ve fact'in
+    GERÇEK `sourceUrl`'ü ile döner; eşleşmeyen claim `provenance:"unverified"`
+    olarak işaretlenir ve dashboard'da "kaynak eşleşmesi bulunamadı" uyarısıyla
+    gösterilir. Model veya client'ın gönderdiği `provenance`/`sourceUrl`
+    değerine GÜVENİLMEZ: kaynak yalnız server'ın çözdüğü Product Intelligence
+    verisinden atanır, uydurma URL geri yansıtılmaz.
   - **Sahne zamanlaması**: 0'dan başlama, çakışmama, negatif olmama, toplam
     süreyi aşmama — ihlalde **`INVALID_SCENE_TIMING`**.
   - **Narration bütçesi**: `video-narration.js`'teki

@@ -13,6 +13,8 @@ export const PRODUCT_VISIBILITY_VALUES = ["hero", "visible", "background", "none
 const MAX_SCENES = 12;
 const MAX_FIELD_LENGTH = 500;
 const MAX_NEGATIVE_CONSTRAINTS = 10;
+// claimsUsed yalnız bilgilendirici bir listedir (bloklamaz); sınırsız büyümesin.
+const MAX_CLAIMS_USED = 20;
 // turkish-tts.js'teki VOICEOVER_TOO_LONG ile AYNI tolerans (%15) — otomatik
 // kısaltma YAPILMAZ, sadece reddedilir (bkz. validateNarrationBudget).
 const NARRATION_TOLERANCE = 1.15;
@@ -161,13 +163,11 @@ function tokenOverlapRatio(a, b) {
   return common / aTokens.size;
 }
 
-// Bir claim'in GERÇEKTEN productContext.verifiedFacts'ten geldiğini
-// (AI tarafından uydurulmadığını) doğrular. Model bir sourceUrl verdiyse
-// bilinen kaynaklardan biri ve ilgili fact'in kaynağı olmalı; vermediyse
-// server eşleşen fact'in gerçek URL'sini bulur. Claim metni fact ile
-// örtüşmeli (birebir substring veya yeterli kelime örtüşmesi — tam
-// birebir eşleşme zorunlu tutulmadı, çünkü AI claim'i cümle içinde hafifçe
-// yeniden bağlayabilir; ama tamamen farklı bir iddia asla geçemez).
+// Bir claim'in productContext.verifiedFacts ile eşleşip eşleşmediğini bulur.
+// Bu bir KAPI değildir, yalnızca KAYNAK ATAMASI içindir: eşleşme varsa
+// claim'e fact'in gerçek sourceUrl'ü yazılır. Model bir sourceUrl verdiyse
+// yalnız o kaynağın fact'leri içinde aranır; vermediyse tüm verifiedFacts
+// taranır. Eşleşme bulunamaması bir hata DEĞİLDİR (bkz. validateClaimsUsed).
 function findGroundedFact(claim, productContext, sourceUrl = null) {
   if (sourceUrl && !(productContext.sourceUrls || []).includes(sourceUrl)) return null;
   const claimNorm = normalizeForMatch(claim);
@@ -180,132 +180,34 @@ function findGroundedFact(claim, productContext, sourceUrl = null) {
   }) || null;
 }
 
-// Yalnız açıkça factual/high-risk ürün iddiası olabilecek parçalar grounding
-// gerektirir. Bu bir "izin verilen reklam cümleleri" listesi değildir:
-// eşleşmeyen yaratıcı dil varsayılan olarak serbesttir ve claimsUsed'e girmez.
-const FACTUAL_CLAIM_PATTERNS = [
-  /(?:debi|kapasite|akış hızı|üretim hızı|yüksek üretim)/iu,
-  /(?:\d+|bir|iki|üç|dört|beş|altı|yedi|sekiz|dokuz|on)\s*(?:aşamalı|kademeli|filtreli)/iu,
-  /(?:\d+|bir|iki|üç|dört|beş|altı|yedi|sekiz|dokuz|on)\s*(?:adet\s*)?filtre/iu,
-  /filtre\s*(?:sayısı|adedi|aşaması|kademesi|erişimi|değişimi)/iu,
-  /(?:ters osmoz|reverse osmosis|membran|sediment|karbon filtre|ultraviyole|\buv\b|pompa|teknoloji)/iu,
-  /(?:alkali|alkalize|mineral|mineralli|mineralizasyon)/iu,
-  /(?:menşe|üretim yeri|made in|yerli üretim|ithal)/iu,
-  /(?:paslanmaz|çelik gövde|fiziksel ölçü|boyut|yükseklik|genişlik|derinlik|ağırlık)/iu,
-  /(?:sertifika|onaylı|belgeli|\btse\b|\bnsf\b|\bce\b|\biso\s*\d{3,5})/iu,
-  /garanti/iu,
-  /(?:performans|verim|tasarruf|dayanıklı|yüksek verim|mutlak performans)/iu,
-  /(?:%\s*\d|\byüzde\s+\d|\b\d+(?:[.,]\d+)?\s*(?:litre|lt|l\/saat|gpd|galon|watt|kw|bar|mikron|µm|nm|cm|mm|kg|gram|saat(?:te)?|gün(?:de|lük)?|ay(?:da|lık)?|yıl(?:da|lık)?))/iu,
-  /(?:sağlık|sağlıklı|güvenli|hijyenik|bakteri|virüs|hastalık|tedavi|%\s*100 temiz)/iu,
-  /\b(?:bakım|filtre değişim)\s*(?:süresi|aralığı|periyodu|\d+)\b/iu
-];
-
-// Bunlar userBrief'te yazılmış olsa dahi güvenlik/ölçülebilirlik nedeniyle
-// yalnız Product Intelligence doğrulamasıyla geçebilir.
-const VERIFIED_ONLY_PATTERNS = [
-  /(?:debi|kapasite|akış hızı|üretim hızı|yüksek üretim)/iu,
-  /(?:sertifika|onaylı|belgeli|\btse\b|\bnsf\b|\bce\b|\biso\s*\d{3,5})/iu,
-  /garanti/iu,
-  /(?:performans|verim|tasarruf|dayanıklı|sağlık|sağlıklı|güvenli|hijyenik|bakteri|virüs|hastalık|tedavi)/iu,
-  /(?:%\s*\d|\byüzde\s+\d|\b\d+(?:[.,]\d+)?\s*(?:litre|lt|l\/saat|gpd|galon|watt|kw|bar|mikron|µm|nm|cm|mm|kg|gram|saat(?:te)?|gün(?:de|lük)?|ay(?:da|lık)?|yıl(?:da|lık)?))/iu,
-  /\b(?:bakım|filtre değişim)\s*(?:süresi|aralığı|periyodu|\d+)\b/iu
-];
-
-function splitClaimFragments(text) {
-  return String(text || "")
-    .replace(VEO_SILENT_CONSTRAINT, "")
-    .replace(PRODUCT_IDENTITY_LOCK, "")
-    .split(/(?:[\n,;]|[.!?]+\s+|\s+\b(?:ve|ancak|fakat)\b\s+)/iu)
-    .map((part) => part.trim())
+// ÜRÜN KARARI: product-claim doğruluğu ReelScript üretiminin/validasyonunun
+// BLOCKING validator'ı DEĞİLDİR. Doğrulanamayan bir ürün iddiası artık
+// senaryoyu REDDETMEZ — UNVERIFIED_PRODUCT_CLAIM hata sınıfı bu yoldan
+// tamamen kaldırıldı. Product Intelligence korunur ve modeli gerçek ürün
+// bilgisine yönlendirmeye devam eder (bkz. creative-providers/reel-script-prompt.js),
+// fakat bu bir kapı değil bir YÖNLENDİRMEdir.
+//
+// Bu fonksiyon yalnız KAYNAK ATAMASI yapar: modelin bildirdiği her claim,
+// verifiedFacts ile eşleşiyorsa fact'in gerçek sourceUrl'ü ile "verified",
+// eşleşmiyorsa "unverified" olarak işaretlenir. Hiçbir claim atılmaz,
+// sansürlenmez veya reddedilmez; işaretleme yalnızca dashboard onay
+// ekranındaki insan incelemesine görünürlük sağlamak içindir.
+// Burada whitelist/denylist/regex claim filtresi veya claim-classifier YOKTUR
+// ve eklenmemelidir.
+export function validateClaimsUsed(claimsUsed, productContext = {}) {
+  if (!Array.isArray(claimsUsed)) return [];
+  return claimsUsed
+    .slice(0, MAX_CLAIMS_USED)
+    .map((entry) => {
+      const claim = coerceString(entry?.claim, { maxLength: 300 });
+      if (!claim) return null;
+      const declaredUrl = coerceString(entry?.sourceUrl, { maxLength: 500 });
+      const knownUrl = declaredUrl && (productContext.sourceUrls || []).includes(declaredUrl) ? declaredUrl : null;
+      const fact = findGroundedFact(claim, productContext, knownUrl);
+      if (fact) return { claim, provenance: "verified", sourceUrl: fact.sourceUrl };
+      return { claim, provenance: "unverified" };
+    })
     .filter(Boolean);
-}
-
-function isFactualClaim(text) {
-  return FACTUAL_CLAIM_PATTERNS.some((pattern) => pattern.test(text));
-}
-
-function requiresVerifiedSource(text, productContext) {
-  if (VERIFIED_ONLY_PATTERNS.some((pattern) => pattern.test(text))) return true;
-  const prohibited = new Set((productContext.prohibitedClaims || []).map((item) => item.category));
-  if (prohibited.has("origin") && /\b(?:menşe|menşei|üretim yeri|made in|yerli üretim|ithal)\b/iu.test(text)) return true;
-  if (prohibited.has("performance") && /\b(?:performans|verim|tasarruf|dayanıklı)\b/iu.test(text)) return true;
-  return false;
-}
-
-function isSupportedByUserBrief(claim, userBrief) {
-  const claimNorm = normalizeForMatch(claim);
-  const briefNorm = normalizeForMatch(sanitizeUserText(userBrief, { maxLength: 500 }));
-  if (!claimNorm || !briefNorm) return false;
-  return briefNorm.includes(claimNorm) || claimNorm.includes(briefNorm) || tokenOverlapRatio(claimNorm, briefNorm) >= 0.75;
-}
-
-function collectCandidateClaimFragments(candidate) {
-  const textValues = [candidate.title, candidate.concept, candidate.hook, candidate.creativeDirection, candidate.fullNarrationText];
-  for (const scene of Array.isArray(candidate.scenes) ? candidate.scenes : []) {
-    textValues.push(scene?.visualDescription, scene?.action, scene?.narrationText, scene?.onScreenText, scene?.veoPrompt);
-  }
-  return textValues.flatMap(splitClaimFragments).filter(isFactualClaim);
-}
-
-function unverifiedClaim(claim) {
-  throw new ReelScriptError(`Doğrulanamayan ürün iddiası: "${claim}". Bu factual/high-risk iddia güvenilir ürün bilgisinde doğrulanamadı.`, {
-    code: "UNVERIFIED_PRODUCT_CLAIM",
-    details: { claim }
-  });
-}
-
-export function validateClaimsUsed(claimsUsed, productContext, { userBrief = "", candidate = null } = {}) {
-  const rawEntries = claimsUsed === undefined || claimsUsed === null ? [] : claimsUsed;
-  if (!Array.isArray(rawEntries)) throw new ReelScriptError('"claimsUsed" bir dizi olmalı.', { code: "UNVERIFIED_PRODUCT_CLAIM" });
-  const entries = rawEntries.map((entry) => {
-    const claim = String(entry?.claim || "").trim();
-    const sourceUrl = String(entry?.sourceUrl || "").trim();
-    if (!claim) {
-      throw new ReelScriptError("claimsUsed içindeki her kayıt claim taşımalı.", { code: "UNVERIFIED_PRODUCT_CLAIM", details: { claim } });
-    }
-    if (sourceUrl && !(productContext.sourceUrls || []).includes(sourceUrl)) {
-      unverifiedClaim(claim);
-    }
-    return { claim, sourceUrl };
-  });
-
-  const fragments = [
-    ...entries.flatMap((entry) => splitClaimFragments(entry.claim)).filter(isFactualClaim),
-    ...(candidate ? collectCandidateClaimFragments(candidate) : [])
-  ];
-  const normalized = [];
-  const seen = [];
-
-  for (const fragment of fragments) {
-    const key = normalizeForMatch(fragment);
-    if (!key || seen.some((existing) => existing.includes(key) || key.includes(existing))) continue;
-    seen.push(key);
-    const matchingEntry = entries.find((entry) => {
-      const entryNorm = normalizeForMatch(entry.claim);
-      return entryNorm.includes(key) || key.includes(entryNorm);
-    });
-    const fact = findGroundedFact(fragment, productContext, matchingEntry?.sourceUrl || null);
-    if (fact) {
-      normalized.push({ claim: fragment, provenance: "verified", sourceUrl: fact.sourceUrl });
-      continue;
-    }
-    if (!requiresVerifiedSource(fragment, productContext) && isSupportedByUserBrief(fragment, userBrief)) {
-      normalized.push({ claim: fragment, provenance: "user_provided" });
-      continue;
-    }
-    unverifiedClaim(fragment);
-  }
-
-  // Modelin claimsUsed'e koyduğu fakat risk detektörünün teknik/factual
-  // bulmadığı yaratıcı metinler serbesttir; provenance üretilmeden atılır.
-  // Buna karşılık gerçek verifiedFacts eşleşmesi olan risksiz factual kayıtlar
-  // kaynaklarıyla korunur.
-  for (const entry of entries) {
-    if (splitClaimFragments(entry.claim).some(isFactualClaim)) continue;
-    const fact = findGroundedFact(entry.claim, productContext, entry.sourceUrl || null);
-    if (fact) normalized.push({ claim: entry.claim, provenance: "verified", sourceUrl: fact.sourceUrl });
-  }
-  return normalized;
 }
 
 function coerceMusicBrief(raw) {
@@ -325,10 +227,15 @@ function coerceNegativeConstraints(value) {
 }
 
 // candidate: provider'dan (OpenAI/Google) parse edilmiş ham JSON.
-// productContext: getBuzsuProductContext() çıktısı (claimsUsed grounding
-// için). durationSeconds: KULLANICININ isteğinden gelir (candidate'teki
-// değere GÜVENİLMEZ — AI süreyi değiştiremez).
-export function validateReelScript(candidate, { durationSeconds, productContext, userBrief = "" }) {
+// productContext: getBuzsuProductContext() çıktısı (claimsUsed kaynak ataması
+// için — claim doğruluğu BLOKLAMAZ). durationSeconds: KULLANICININ isteğinden
+// gelir (candidate'teki değere GÜVENİLMEZ — AI süreyi değiştiremez).
+//
+// Burada uygulanan validasyonlar TEKNİK/YAPISALdır ve korunur: schema/scene
+// structure, scene timing, narration bütçesi, deterministik Veo sessiz-video
+// kısıtı ve Product Identity Lock. Bunlar ürünün ne söylediğini sansürlemek
+// için değil, Reel pipeline'ının bozulmasını engellemek içindir.
+export function validateReelScript(candidate, { durationSeconds, productContext }) {
   if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
     throw new ReelScriptError("Provider yanıtı geçerli bir JSON nesnesi değil.", { code: "STRUCTURED_JSON_INVALID" });
   }
@@ -348,7 +255,7 @@ export function validateReelScript(candidate, { durationSeconds, productContext,
   const estimatedNarrationSeconds = validateNarrationBudget(fullNarrationText, durationSeconds);
 
   const musicBrief = coerceMusicBrief(candidate.musicBrief);
-  const claimsUsed = validateClaimsUsed(candidate.claimsUsed, productContext, { userBrief, candidate });
+  const claimsUsed = validateClaimsUsed(candidate.claimsUsed, productContext);
   const negativeConstraints = coerceNegativeConstraints(candidate.negativeConstraints);
   const warnings = Array.isArray(candidate.warnings) ? candidate.warnings.map((item) => coerceString(item, { maxLength: 200 })).filter(Boolean) : [];
 

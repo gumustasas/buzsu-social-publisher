@@ -241,8 +241,17 @@
   function renderScript() {
     const script = state.reelScript;
     const summary = byId("reels-v2-script-summary");
-    const claims = (script.claimsUsed || []).map((claim) => `<div class="reels-v2-claim">${escapeHtml(claim.claim)}${safeUrl(claim.sourceUrl) ? `<br><a href="${escapeHtml(claim.sourceUrl)}" target="_blank" rel="noopener">Kaynak ↗</a>` : ""}</div>`).join("");
-    summary.innerHTML = `<h4>${escapeHtml(script.title)}</h4><p><strong>Konsept:</strong> ${escapeHtml(script.concept)}</p><p><strong>Hook:</strong> ${escapeHtml(script.hook)}</p><p class="meta">${escapeHtml(script.provider)} · ${escapeHtml(script.modelUsed)} · ${escapeHtml(script.modelTier || "custom")} · ${escapeHtml(script.durationSeconds)} sn · ${escapeHtml(script.aspectRatio)}</p>${claims ? `<strong>Kullanılan factual ürün bilgileri</strong><div class="reels-v2-claims">${claims}</div>` : '<p class="hint">Grounding gerektiren factual ürün iddiası kullanılmadı.</p>'}`;
+    // claim'ler BLOKLANMAZ (ürün kararı) — burada yalnız kaynak eşleşmesi
+    // gösterilir, böylece onaylayan kişi neyin doğrulanmış bilgiye dayandığını
+    // görerek karar verir.
+    const claims = (script.claimsUsed || []).map((claim) => {
+      const verified = claim.provenance === "verified" && safeUrl(claim.sourceUrl);
+      const badge = verified
+        ? `<br><a href="${escapeHtml(claim.sourceUrl)}" target="_blank" rel="noopener">Doğrulanmış kaynak ↗</a>`
+        : '<br><span class="hint">Kaynak eşleşmesi bulunamadı — lütfen kendiniz kontrol edin</span>';
+      return `<div class="reels-v2-claim">${escapeHtml(claim.claim)}${badge}</div>`;
+    }).join("");
+    summary.innerHTML = `<h4>${escapeHtml(script.title)}</h4><p><strong>Konsept:</strong> ${escapeHtml(script.concept)}</p><p><strong>Hook:</strong> ${escapeHtml(script.hook)}</p><p class="meta">${escapeHtml(script.provider)} · ${escapeHtml(script.modelUsed)} · ${escapeHtml(script.modelTier || "custom")} · ${escapeHtml(script.durationSeconds)} sn · ${escapeHtml(script.aspectRatio)}</p>${claims ? `<strong>Kullanılan ürün iddiaları</strong><div class="reels-v2-claims">${claims}</div>` : '<p class="hint">Model factual ürün iddiası bildirmedi.</p>'}`;
     summary.classList.remove("hidden");
     byId("reels-v2-scenes").innerHTML = script.scenes.map((scene) => `<article class="reels-v2-scene${state.approvedScenes[scene.sceneId] ? " approved" : ""}" data-scene-id="${escapeHtml(scene.sceneId)}"><div class="reels-v2-scene-head"><strong>${escapeHtml(scene.sceneId)} · ${escapeHtml(scene.startSeconds)}–${escapeHtml(scene.endSeconds)} sn</strong><span>${state.approvedScenes[scene.sceneId] ? "✓ Onaylandı" : "Onay bekliyor"}</span></div><p class="meta">Amaç: ${escapeHtml(scene.purpose)} · Ürün görünürlüğü: ${escapeHtml(scene.productVisibility)}</p><div class="reels-v2-scene-grid"><label class="field-label wide">Görsel açıklama<textarea data-scene-field="visualDescription" rows="2">${escapeHtml(scene.visualDescription)}</textarea></label><label class="field-label">Aksiyon<textarea data-scene-field="action" rows="2">${escapeHtml(scene.action)}</textarea></label><label class="field-label">Kamera<textarea data-scene-field="camera" rows="2">${escapeHtml(scene.camera)}</textarea></label><label class="field-label wide">Türkçe seslendirme<textarea data-scene-field="narrationText" rows="2">${escapeHtml(scene.narrationText)}</textarea></label><label class="field-label">Ekran yazısı<input data-scene-field="onScreenText" value="${escapeHtml(scene.onScreenText)}"></label><label class="field-label">Geçiş<input data-scene-field="transition" value="${escapeHtml(scene.transition)}"></label><label class="field-label wide">Creative Veo prompt<textarea data-scene-field="veoPrompt" rows="4">${escapeHtml(creativePrompt(scene.veoPrompt))}</textarea></label></div><strong class="meta" style="display:block;margin-top:8px">Sistem kısıtları — değiştirilemez</strong><div class="reels-v2-constraints">${escapeHtml(sceneConstraints(scene))}</div><div class="reels-v2-actions"><button type="button" data-approve-scene="${escapeHtml(scene.sceneId)}">${state.approvedScenes[scene.sceneId] ? "Onayı kaldır" : "Doğrula ve onayla"}</button></div></article>`).join("");
     byId("reels-v2-validate").disabled = false;
@@ -267,7 +276,7 @@
     const candidate = collectSceneEdits();
     if (!candidate) return;
     message.textContent = "Sahneler doğrulanıyor (ücretsiz, inference yok)...";
-    const response = await v2Api("/api/reel-script?action=validate", { method: "POST", body: JSON.stringify({ productId: selectedProductId, userBrief: state.creativeSettings.userBrief, reelScript: candidate }) });
+    const response = await v2Api("/api/reel-script?action=validate", { method: "POST", body: JSON.stringify({ productId: selectedProductId, reelScript: candidate }) });
     const data = await response.json();
     if (!response.ok) throw new Error(`${data.code ? `${data.code}: ` : ""}${data.error || "Doğrulama başarısız"}`);
     state.reelScript = data.reelScript;

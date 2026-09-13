@@ -11,7 +11,8 @@ import { validateReelScript, ReelScriptError, REEL_OBJECTIVES, REEL_ASPECT_RATIO
 //
 //   productId/productUrl -> getBuzsuProductContext -> verified product facts
 //   -> provider/model resolution (model-registry.js) -> structured ReelScript
-//   -> validateReelScript (claims/timing/narration/veo constraints)
+//   -> validateReelScript (structure/timing/narration/veo constraints;
+//      product-claim doğruluğu BLOKLAMAZ, claimsUsed yalnız işaretlenir)
 //   -> kullanıcıya sonuç
 //
 // Bu adımda Veo/TTS/Lyria/Omni/FFmpeg HİÇ ÇALIŞTIRILMAZ — yalnızca senaryo
@@ -92,7 +93,7 @@ export async function generateReelScript(input = {}, env = process.env, deps = {
   const promptText = buildReelScriptPrompt({ productContext, userBrief: input.userBrief, durationSeconds, objective: input.objective, aspectRatio });
   const generate = GENERATOR_BY_PROVIDER[resolvedProvider];
   const rawCandidate = await generate({ model: resolvedModel, promptText }, env, generationDeps);
-  const validated = validateReelScript(rawCandidate, { durationSeconds, productContext, userBrief: input.userBrief });
+  const validated = validateReelScript(rawCandidate, { durationSeconds, productContext });
 
   return {
     scriptId: randomUUIDImpl(),
