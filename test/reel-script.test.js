@@ -161,23 +161,35 @@ test("generateReelScript: 'Özel' modda discovery'de GERÇEKTEN listelenmiş bir
 
 // --- structured JSON / claims / scene validation (uçtan uca) ---------------
 
-test("generateReelScript: doğrulanamayan bir claimsUsed kaydı TÜM üretimi reddeder (uçtan uca)", async () => {
-  const badJson = JSON.stringify({
-    title: "t", concept: "c", hook: "h",
-    scenes: [{ sceneId: "s1", startSeconds: 0, endSeconds: 8, veoPrompt: "x", narrationText: "x" }],
-    fullNarrationText: "Kısa metin.",
-    musicBrief: {},
-    claimsUsed: [{ claim: "TSE sertifikalıdır", sourceUrl: "https://www.buzsu.com.tr/llms-full.txt" }]
-  });
+test("generateReelScript: doğrulanamayan claim üretimi REDDETMEZ, unverified olarak döner (uçtan uca)", async () => {
+  const generated = JSON.parse(validReelScriptJson());
+  generated.hook = "Yüksek Alman KRAFT membran teknolojisiyle saf su";
+  generated.claimsUsed = [{ claim: "NSF sertifikalıdır" }, { claim: "10 yıl garantilidir" }];
   const deps = {
     productContextDeps: baseProductContextDeps(),
     discoveryDeps: discoveryDepsWithOpenAiModel("gpt-5.6"),
-    generationDeps: { fetchImpl: async () => ({ ok: true, json: async () => ({ output_text: badJson }) }) }
+    generationDeps: { fetchImpl: async () => ({ ok: true, json: async () => ({ output_text: JSON.stringify(generated) }) }) }
   };
-  await assert.rejects(
-    () => generateReelScript(baseInput({ provider: "openai", modelTier: "balanced" }), { OPENAI_API_KEY: "k", OPENAI_CREATIVE_BALANCED_MODEL: "gpt-5.6" }, deps),
-    (e) => e instanceof ReelScriptError && e.code === "UNVERIFIED_PRODUCT_CLAIM"
+  const result = await generateReelScript(baseInput({ provider: "openai", modelTier: "balanced" }), { OPENAI_API_KEY: "k", OPENAI_CREATIVE_BALANCED_MODEL: "gpt-5.6" }, deps);
+  assert.equal(result.hook, "Yüksek Alman KRAFT membran teknolojisiyle saf su");
+  assert.deepEqual(result.claimsUsed.map((c) => c.provenance), ["unverified", "unverified"]);
+});
+
+test("generateReelScript: userBrief'te verilen ürün bilgisi bloklamadan senaryoya girer", async () => {
+  const generated = JSON.parse(validReelScriptJson());
+  generated.claimsUsed = [{ claim: "Paslanmaz çelik gövde" }];
+  generated.creativeDirection = "Paslanmaz çelik gövde yakın planda gösterilir.";
+  const deps = {
+    productContextDeps: baseProductContextDeps(),
+    discoveryDeps: discoveryDepsWithOpenAiModel("gpt-5.6"),
+    generationDeps: { fetchImpl: async () => ({ ok: true, json: async () => ({ output_text: JSON.stringify(generated) }) }) }
+  };
+  const result = await generateReelScript(
+    baseInput({ provider: "openai", modelTier: "balanced", userBrief: "Paslanmaz çelik gövde" }),
+    { OPENAI_API_KEY: "k", OPENAI_CREATIVE_BALANCED_MODEL: "gpt-5.6" },
+    deps
   );
+  assert.deepEqual(result.claimsUsed, [{ claim: "Paslanmaz çelik gövde", provenance: "unverified" }]);
 });
 
 test("generateReelScript: provider'ın döndürdüğü geçersiz JSON açık bir hata olarak yansır", async () => {

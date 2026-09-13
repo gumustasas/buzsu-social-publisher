@@ -13,6 +13,8 @@ export const PRODUCT_VISIBILITY_VALUES = ["hero", "visible", "background", "none
 const MAX_SCENES = 12;
 const MAX_FIELD_LENGTH = 500;
 const MAX_NEGATIVE_CONSTRAINTS = 10;
+// claimsUsed yalnız bilgilendirici bir listedir (bloklamaz); sınırsız büyümesin.
+const MAX_CLAIMS_USED = 20;
 // turkish-tts.js'teki VOICEOVER_TOO_LONG ile AYNI tolerans (%15) — otomatik
 // kısaltma YAPILMAZ, sadece reddedilir (bkz. validateNarrationBudget).
 const NARRATION_TOLERANCE = 1.15;
@@ -145,7 +147,11 @@ export function validateNarrationBudget(fullNarrationText, durationSeconds) {
 }
 
 function normalizeForMatch(text) {
-  return String(text || "").toLocaleLowerCase("tr-TR").replace(/\s+/g, " ").trim();
+  return String(text || "")
+    .toLocaleLowerCase("tr-TR")
+    .replace(/[^\p{L}\p{N}%]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function tokenOverlapRatio(a, b) {
@@ -157,43 +163,51 @@ function tokenOverlapRatio(a, b) {
   return common / aTokens.size;
 }
 
-// Bir claim'in GERÇEKTEN productContext.verifiedFacts'ten geldiğini
-// (AI tarafından uydurulmadığını) doğrular: sourceUrl bilinen kaynaklardan
-// biri olmalı VE claim metni o sourceUrl'e ait GERÇEK bir fact ile
-// örtüşmeli (birebir substring veya yeterli kelime örtüşmesi — tam
-// birebir eşleşme zorunlu tutulmadı, çünkü AI claim'i cümle içinde hafifçe
-// yeniden bağlayabilir; ama tamamen farklı bir iddia asla geçemez).
-function isClaimGrounded(claim, sourceUrl, productContext) {
-  if (!sourceUrl || !productContext.sourceUrls.includes(sourceUrl)) return false;
+// Bir claim'in productContext.verifiedFacts ile eşleşip eşleşmediğini bulur.
+// Bu bir KAPI değildir, yalnızca KAYNAK ATAMASI içindir: eşleşme varsa
+// claim'e fact'in gerçek sourceUrl'ü yazılır. Model bir sourceUrl verdiyse
+// yalnız o kaynağın fact'leri içinde aranır; vermediyse tüm verifiedFacts
+// taranır. Eşleşme bulunamaması bir hata DEĞİLDİR (bkz. validateClaimsUsed).
+function findGroundedFact(claim, productContext, sourceUrl = null) {
+  if (sourceUrl && !(productContext.sourceUrls || []).includes(sourceUrl)) return null;
   const claimNorm = normalizeForMatch(claim);
-  if (!claimNorm) return false;
-  return (productContext.verifiedFacts || []).some((fact) => {
-    if (fact.sourceUrl !== sourceUrl) return false;
+  if (!claimNorm) return null;
+  return (productContext.verifiedFacts || []).find((fact) => {
+    if (sourceUrl && fact.sourceUrl !== sourceUrl) return false;
     const factNorm = normalizeForMatch(fact.fact);
     if (!factNorm) return false;
     return factNorm.includes(claimNorm) || claimNorm.includes(factNorm) || tokenOverlapRatio(claimNorm, factNorm) >= 0.6;
-  });
+  }) || null;
 }
 
-// Creative sloganlar/genel reklam dili claimsUsed'e HİÇ girmemeli — bu
-// fonksiyon yalnızca GİRİLMİŞ olan kayıtları doğrular (LLM'e "yalnızca
-// teknik/ürün iddialarını buraya koy" talimatı prompt seviyesinde verilir,
-// bkz. reel-script-prompt.js); burada kaynağı olmayan/örtüşmeyen HERHANGİ
-// bir kayıt varsa TÜM istek reddedilir.
-export function validateClaimsUsed(claimsUsed, productContext) {
-  if (claimsUsed === undefined || claimsUsed === null) return [];
-  if (!Array.isArray(claimsUsed)) throw new ReelScriptError('"claimsUsed" bir dizi olmalı.', { code: "UNVERIFIED_PRODUCT_CLAIM" });
-  return claimsUsed.map((entry) => {
-    const claim = String(entry?.claim || "").trim();
-    const sourceUrl = String(entry?.sourceUrl || "").trim();
-    if (!claim || !sourceUrl) {
-      throw new ReelScriptError("claimsUsed içindeki her kayıt claim ve sourceUrl taşımalı.", { code: "UNVERIFIED_PRODUCT_CLAIM", details: { claim, sourceUrl } });
-    }
-    if (!isClaimGrounded(claim, sourceUrl, productContext)) {
-      throw new ReelScriptError(`Doğrulanamayan ürün iddiası: "${claim}". Bu iddia buzsu.com.tr'den alınan verifiedFacts içinde bulunamadı.`, { code: "UNVERIFIED_PRODUCT_CLAIM", details: { claim, sourceUrl } });
-    }
-    return { claim, sourceUrl };
-  });
+// ÜRÜN KARARI: product-claim doğruluğu ReelScript üretiminin/validasyonunun
+// BLOCKING validator'ı DEĞİLDİR. Doğrulanamayan bir ürün iddiası artık
+// senaryoyu REDDETMEZ — UNVERIFIED_PRODUCT_CLAIM hata sınıfı bu yoldan
+// tamamen kaldırıldı. Product Intelligence korunur ve modeli gerçek ürün
+// bilgisine yönlendirmeye devam eder (bkz. creative-providers/reel-script-prompt.js),
+// fakat bu bir kapı değil bir YÖNLENDİRMEdir.
+//
+// Bu fonksiyon yalnız KAYNAK ATAMASI yapar: modelin bildirdiği her claim,
+// verifiedFacts ile eşleşiyorsa fact'in gerçek sourceUrl'ü ile "verified",
+// eşleşmiyorsa "unverified" olarak işaretlenir. Hiçbir claim atılmaz,
+// sansürlenmez veya reddedilmez; işaretleme yalnızca dashboard onay
+// ekranındaki insan incelemesine görünürlük sağlamak içindir.
+// Burada whitelist/denylist/regex claim filtresi veya claim-classifier YOKTUR
+// ve eklenmemelidir.
+export function validateClaimsUsed(claimsUsed, productContext = {}) {
+  if (!Array.isArray(claimsUsed)) return [];
+  return claimsUsed
+    .slice(0, MAX_CLAIMS_USED)
+    .map((entry) => {
+      const claim = coerceString(entry?.claim, { maxLength: 300 });
+      if (!claim) return null;
+      const declaredUrl = coerceString(entry?.sourceUrl, { maxLength: 500 });
+      const knownUrl = declaredUrl && (productContext.sourceUrls || []).includes(declaredUrl) ? declaredUrl : null;
+      const fact = findGroundedFact(claim, productContext, knownUrl);
+      if (fact) return { claim, provenance: "verified", sourceUrl: fact.sourceUrl };
+      return { claim, provenance: "unverified" };
+    })
+    .filter(Boolean);
 }
 
 function coerceMusicBrief(raw) {
@@ -213,9 +227,14 @@ function coerceNegativeConstraints(value) {
 }
 
 // candidate: provider'dan (OpenAI/Google) parse edilmiş ham JSON.
-// productContext: getBuzsuProductContext() çıktısı (claimsUsed grounding
-// için). durationSeconds: KULLANICININ isteğinden gelir (candidate'teki
-// değere GÜVENİLMEZ — AI süreyi değiştiremez).
+// productContext: getBuzsuProductContext() çıktısı (claimsUsed kaynak ataması
+// için — claim doğruluğu BLOKLAMAZ). durationSeconds: KULLANICININ isteğinden
+// gelir (candidate'teki değere GÜVENİLMEZ — AI süreyi değiştiremez).
+//
+// Burada uygulanan validasyonlar TEKNİK/YAPISALdır ve korunur: schema/scene
+// structure, scene timing, narration bütçesi, deterministik Veo sessiz-video
+// kısıtı ve Product Identity Lock. Bunlar ürünün ne söylediğini sansürlemek
+// için değil, Reel pipeline'ının bozulmasını engellemek içindir.
 export function validateReelScript(candidate, { durationSeconds, productContext }) {
   if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
     throw new ReelScriptError("Provider yanıtı geçerli bir JSON nesnesi değil.", { code: "STRUCTURED_JSON_INVALID" });

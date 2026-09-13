@@ -594,12 +594,25 @@ FFmpeg'i bu adımda hiç çalıştırmaz. **GERÇEK PARA HARCAR** (bir inference
 
 - **`src/lib/reel-script-schema.js`**: `validateReelScript()` — provider'dan
   gelen ham JSON'un tek doğrulama katmanı:
-  - **Claims grounding**: `claimsUsed`'deki her kayıt (`{claim, sourceUrl}`)
-    `getBuzsuProductContext`'in `verifiedFacts`'inden GERÇEKTEN
-    doğrulanmalı (sourceUrl bilinen kaynaklardan biri olmalı VE claim metni
-    o kaynaktaki gerçek bir cümleyle örtüşmeli) — yoksa **`UNVERIFIED_PRODUCT_CLAIM`**
-    ile TÜM üretim reddedilir. Creative sloganlar/genel reklam dili
-    `claimsUsed`'e hiç girmez, kaynak gerektirmez.
+  - **Claim policy (ÜRÜN KARARI — bilinçli olarak non-blocking)**: Product
+    Intelligence AI üretimini YÖNLENDİRİR, fakat product-claim grounding
+    ReelScript üretimini veya validasyonunu **BLOKLAMAZ**. Doğrulanamayan bir
+    ürün iddiası artık senaryoyu reddetmez; **`UNVERIFIED_PRODUCT_CLAIM`
+    hata sınıfı bu yoldan tamamen kaldırılmıştır**. Neden: fail-closed claim
+    filtresi pratikte meşru reklam dilini bloklayarak acceptance'ı durdurdu
+    (ör. "Yüksek Alman KRAFT membran teknolojisiyle saf su"). Bu karar
+    iddiaların otomatik olarak DOĞRU kabul edildiği anlamına gelmez —
+    doğruluk sorumluluğu, sahne onay ekranındaki insan incelemesine aittir.
+    Whitelist/denylist/regex claim filtresi veya LLM claim-classifier
+    eklenmemiştir ve eklenmemelidir.
+  - **claimsUsed = kaynak ataması (görünürlük)**: her öğe
+    `{claim, provenance, sourceUrl?}` biçiminde normalize edilir.
+    `verifiedFacts` ile eşleşen claim `provenance:"verified"` ve fact'in
+    GERÇEK `sourceUrl`'ü ile döner; eşleşmeyen claim `provenance:"unverified"`
+    olarak işaretlenir ve dashboard'da "kaynak eşleşmesi bulunamadı" uyarısıyla
+    gösterilir. Model veya client'ın gönderdiği `provenance`/`sourceUrl`
+    değerine GÜVENİLMEZ: kaynak yalnız server'ın çözdüğü Product Intelligence
+    verisinden atanır, uydurma URL geri yansıtılmaz.
   - **Sahne zamanlaması**: 0'dan başlama, çakışmama, negatif olmama, toplam
     süreyi aşmama — ihlalde **`INVALID_SCENE_TIMING`**.
   - **Narration bütçesi**: `video-narration.js`'teki
@@ -702,3 +715,4 @@ Vercel Pro kurulumu için proje kökü bu reponun kökü (Root Directory boş b�
 `run-publisher.ps1` (`npm run publish` → `src/publish-approved.js`), Windows'ta **yalnızca yerel/manuel** tek seferlik tetikleme için bir seçenektir — production'da buna karşılık gelen, zamanlanmış (Görev Zamanlayıcı) bir görev **yoktur** (doğrulandı). Aynı anda hem bunu zamanlanmış olarak çalıştırıp hem Vercel Cron'u açık bırakmayın: ikisi de aynı Airtable kuyruğuna karşı `runPublisher()`'ı çalıştırır ve lease mekanizması atomik olmadığı için (özellikle saat başlarında, Vercel Cron'un tetiklendiği anlarda) aynı kaydın iki kez yayınlanma riski vardır.
 
 GitHub Actions manuel doğrulama için kullanılabilir.
+

@@ -36,6 +36,13 @@ test("buildReelScriptPrompt: durationSeconds/objective/aspectRatio prompt metnin
   assert.match(prompt, /1:1/);
 });
 
+test("buildReelScriptPrompt: creative dili serbest bırakır ve modeli gerçek ürün bilgisine yönlendirir (bloklama iddiası içermez)", () => {
+  const prompt = buildReelScriptPrompt({ productContext: PRODUCT_CONTEXT, userBrief: "Paslanmaz çelik gövde", durationSeconds: 8, objective: "sales", aspectRatio: "9:16" });
+  assert.match(prompt, /normal yaratıcı reklam dili serbesttir/i);
+  assert.match(prompt, /teknik özellikleri gereksiz yere kendin uydurma/i);
+  assert.match(prompt, /senaryo bu yüzden reddedilmez/i);
+});
+
 test("parseReelScriptJson: ```json çevrelenmiş yanıtı temizleyip parse eder", () => {
   const parsed = parseReelScriptJson('```json\n{"title":"x"}\n```');
   assert.deepEqual(parsed, { title: "x" });

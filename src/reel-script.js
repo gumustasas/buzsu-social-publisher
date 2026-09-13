@@ -11,7 +11,8 @@ import { validateReelScript, ReelScriptError, REEL_OBJECTIVES, REEL_ASPECT_RATIO
 //
 //   productId/productUrl -> getBuzsuProductContext -> verified product facts
 //   -> provider/model resolution (model-registry.js) -> structured ReelScript
-//   -> validateReelScript (claims/timing/narration/veo constraints)
+//   -> validateReelScript (structure/timing/narration/veo constraints;
+//      product-claim doğruluğu BLOKLAMAZ, claimsUsed yalnız işaretlenir)
 //   -> kullanıcıya sonuç
 //
 // Bu adımda Veo/TTS/Lyria/Omni/FFmpeg HİÇ ÇALIŞTIRILMAZ — yalnızca senaryo
