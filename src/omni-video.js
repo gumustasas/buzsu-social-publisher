@@ -197,6 +197,52 @@ function extractOmniVideoOutput(data) {
   return { done: true, error: textSummary || "Omni model_output adımında video bulunamadı." };
 }
 
+// model_output bir `uri` taşıması ("delivery":"uri" istendiğinde), videonun
+// O ANDA indirilebilir olduğu ANLAMINA GELMEZ — Google'ın Files API'sindeki
+// diğer tüm dosyalar gibi çıktı dosyası da PROCESSING -> ACTIVE (veya FAILED)
+// durumundan geçer. Bu yüzden uri'den dosya kimliği ayrıştırılıp Files API
+// (GET /v1beta/files/{id}) İLE DURUM DOĞRULANMADAN indirme denenmez.
+// Google'ın döndürdüğü tam URI metne güvenmek yerine (o metnin gelecekte
+// başka bir yapıya sahip olması durumuna karşı savunmacı olarak) yalnızca
+// içindeki dosya kimliği çıkarılır; indirme URL'i buradan, bilinen
+// `:download?alt=media` şekliyle YENİDEN KURULUR.
+function extractFileId(uri) {
+  const match = String(uri || "").match(/\/files\/([^/:?]+)/);
+  if (!match) throw new Error(`Omni çıktı URI'sinden dosya kimliği ayrıştırılamadı: ${uri}`);
+  return match[1];
+}
+
+function omniFileDownloadUrl(fileId) {
+  return `${API_BASE}/files/${fileId}:download?alt=media`;
+}
+
+// Tek seferlik durum kontrolü (waitForOmniFileActive'in aksine burada
+// BEKLEME/tekrar deneme YOK — PROCESSING durumu bir hata değil, çağıran
+// tarafın "OUTPUT_PROCESSING" olarak geri dönüp daha sonra tekrar
+// sorgulaması gereken normal bir ara durumdur).
+async function checkOmniFileState(fileId, env) {
+  const response = await fetch(`${API_BASE}/files/${fileId}`, { headers: { "x-goog-api-key": env.GEMINI_API_KEY } });
+  if (!response.ok) throw new Error(`Omni çıktı dosyası durumu sorgulanamadı (HTTP ${response.status}).`);
+  const data = await response.json();
+  return data.state;
+}
+
+// extractOmniVideoOutput'un ürettiği ham çıktıyı (uri/base64Data/error/
+// done) gerçek bir iş durumuna çevirir. Bir `uri` varsa dosya ACTIVE olana
+// kadar COMPLETED denmez — "OUTPUT_PROCESSING" adında ayrı bir ara durum
+// döner (submitOmniVideoEdit VE omniInteractionStatus'un ikisi de bunu
+// kullanır, davranış tek bir yerden yönetilir).
+async function resolveOmniOutput(output, env) {
+  if (output.error) throw new Error(`Omni video düzenleme tamamlandı ama video üretmedi: ${output.error}`);
+  if (!output.done) return { status: "IN_PROGRESS", outputFileId: null, fileUri: null, videoBase64: null, videoMimeType: null };
+  if (output.base64Data) return { status: "COMPLETED", outputFileId: null, fileUri: null, videoBase64: output.base64Data, videoMimeType: output.mimeType || null };
+  const fileId = extractFileId(output.uri);
+  const state = await checkOmniFileState(fileId, env);
+  if (state === "FAILED") throw new Error("Omni çıktı videosu işlenemedi (Files API state: FAILED).");
+  if (state !== "ACTIVE") return { status: "OUTPUT_PROCESSING", outputFileId: fileId, fileUri: null, videoBase64: null, videoMimeType: output.mimeType || null };
+  return { status: "COMPLETED", outputFileId: fileId, fileUri: omniFileDownloadUrl(fileId), videoBase64: null, videoMimeType: output.mimeType || null };
+}
+
 // existingVideoUrl: düzeltilecek, zaten üretilmiş/render edilmiş video
 // (örn. compose_product_video ya da Veo çıktısı) — herkese açık HTTPS URL.
 // referenceImageUrl: korunması istenen ürünün gerçek görseli (opsiyonel).
@@ -229,47 +275,57 @@ export async function submitOmniVideoEdit(existingVideoUrl, env = process.env, {
   // istek gövdesi resmi dokümanla (arama motoru üzerinden erişilen özet +
   // kullanıcı tarafından ayrıca teyit edilen şema) karşılaştırılıp
   // düzeltildi: input dizisi düz {type,uri,text} öğeleri (role/content/
-  // file_data/inline_data DEĞİL); response_format bir DİZİ ve
-  // aspect_ratio/resolution generation_config'te değil response_format
-  // öğesinin İÇİNDE. Yine de tek bir istek gövdesi burada izole tutuluyor —
-  // gerçek şema küçük bir noktada farklı çıkarsa düzeltme tek buradan.
+  // file_data/inline_data DEĞİL); response_format bir NESNE (dokümanda dizi
+  // de kabul ediliyor ama tek-öğe nesne şekli daha net doğrulanan örnekle
+  // eşleşiyor), aspect_ratio/resolution generation_config'te değil
+  // response_format'ın İÇİNDE. Yine de tek bir istek gövdesi burada izole
+  // tutuluyor — gerçek şema küçük bir noktada farklı çıkarsa düzeltme tek
+  // buradan.
   const response = await fetch(`${API_BASE}/interactions`, {
     method: "POST",
     headers: omniHeaders(env),
     body: JSON.stringify({
       model: OMNI_MODEL,
       input,
-      response_format: [{ type: "video", delivery: "uri", aspect_ratio: aspectRatio, resolution }]
+      response_format: { type: "video", delivery: "uri", aspect_ratio: aspectRatio, resolution }
     })
   });
   const data = await readOmniJson(response, { model: OMNI_MODEL });
   const interactionId = normalizeInteractionId(data.id || data.name);
   if (!interactionId) throw new Error("Omni interaction id alınamadı.");
   const output = extractOmniVideoOutput(data);
-  if (output.error) throw new Error(`Omni video düzenleme tamamlandı ama video üretmedi: ${output.error}`);
+  const resolved = await resolveOmniOutput(output, env);
   return {
     provider: "omni",
     model: OMNI_MODEL,
     interactionId,
-    status: output.done ? "COMPLETED" : "IN_PROGRESS",
-    fileUri: output.uri || null,
-    videoBase64: output.base64Data || null,
-    videoMimeType: output.mimeType || null,
+    ...resolved,
     sourceVideoUrl: existingVideoUrl,
     editPrompt: prompt,
     createdAt: new Date().toISOString()
   };
 }
 
+// job.outputFileId set edilmişse (bir önceki adımda model_output zaten bir
+// uri üretmiş ama dosya henüz ACTIVE değilmiş), GET /interactions/{id}'ye
+// HİÇ gidilmez — doğrudan Files API'den (GET /v1beta/files/{id}) dosyanın
+// durumu sorgulanır. Bu, kullanıcı doğrulaması: "URI oluştuktan sonra takip
+// Files API'ye geçmeli; GET /interactions/{id} yalnızca henüz model_output
+// oluşmadığında kullanılabilir."
 export async function omniInteractionStatus(job, env = process.env) {
   if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY Vercel Production ortamında tanımlı değil.");
   if (!job?.interactionId) throw new Error("Omni iş bilgisi eksik.");
+  if (job.outputFileId) {
+    const state = await checkOmniFileState(job.outputFileId, env);
+    if (state === "FAILED") throw new Error("Omni çıktı videosu işlenemedi (Files API state: FAILED).");
+    if (state !== "ACTIVE") return { ...job, status: "OUTPUT_PROCESSING" };
+    return { ...job, status: "COMPLETED", fileUri: omniFileDownloadUrl(job.outputFileId), videoBase64: null };
+  }
   const response = await fetch(`${API_BASE}/interactions/${normalizeInteractionId(job.interactionId)}`, { headers: { "x-goog-api-key": env.GEMINI_API_KEY } });
   const data = await readOmniJson(response, { model: job.model });
   const output = extractOmniVideoOutput(data);
-  if (!output.done) return { ...job, status: "IN_PROGRESS" };
-  if (output.error) throw new Error(`Omni video düzenleme tamamlandı ama video üretmedi: ${output.error}`);
-  return { ...job, status: "COMPLETED", fileUri: output.uri || null, videoBase64: output.base64Data || null, videoMimeType: output.mimeType || null };
+  const resolved = await resolveOmniOutput(output, env);
+  return { ...job, ...resolved };
 }
 
 export async function downloadOmniVideo(fileUri, env = process.env) {

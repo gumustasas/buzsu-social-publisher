@@ -2,16 +2,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { submitOmniVideoEdit, omniInteractionStatus, downloadOmniVideo, waitForOmniFileActive, OmniApiError, OMNI_MODEL } from "../src/omni-video.js";
 
+const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+const OUTPUT_FILE_ID = "out789";
+const OUTPUT_URI = `${API_BASE}/files/${OUTPUT_FILE_ID}:download?alt=media`;
+
 // Genel amaçlı mock fetch — src/omni-video.js'nin akışındaki ardışık
 // isteklere (video indirme -> Files API start -> Files API upload/finalize
-// -> dosya durumu poll -> /interactions POST -> [opsiyonel] görsel indirme +
-// aynı Files API akışı) URL/metoda göre yanıt üretir. Gerçek ağ isteği
-// HİÇBİR testte atılmaz. Files API her iki medya için de AYNI mock dosya
-// adını (files/abc123) döner — testler her ikisinin de Files API'den geçtiğini
-// çağrı sayısıyla doğrular.
-function baseMockFetch({ onInteractions, fileState = "ACTIVE" } = {}) {
+// -> GİRDİ dosyası durumu poll -> /interactions POST -> [opsiyonel] görsel
+// aynı Files API akışı -> ÇIKTI dosyası durum kontrolü -> [opsiyonel] çıktı
+// indirme) URL/metoda göre yanıt üretir. Gerçek ağ isteği HİÇBİR testte
+// atılmaz. Girdi dosyaları için sabit files/abc123, çıktı dosyası için ayrı
+// bir kimlik (out789) kullanılır — ikisi birbirine karışmasın diye.
+function baseMockFetch({ onInteractions, inputFileState = "ACTIVE", outputFileState = "ACTIVE" } = {}) {
   let interactionsCallCount = 0;
   let filesUploadStartCount = 0;
+  let outputFileStatusCallCount = 0;
+  let outputDownloadCallCount = 0;
   const fn = async (url, options) => {
     const href = String(url);
     if (!options && href.startsWith("https://example.com/video")) {
@@ -28,19 +34,33 @@ function baseMockFetch({ onInteractions, fileState = "ACTIVE" } = {}) {
       return { ok: true, json: async () => ({ file: { uri: "https://example.com/files/abc123", name: "files/abc123", mimeType: "video/mp4" } }) };
     }
     if (href.includes("/v1beta/files/abc123")) {
-      return { ok: true, json: async () => ({ name: "files/abc123", uri: "https://example.com/files/abc123", mimeType: "video/mp4", state: fileState }) };
+      return { ok: true, json: async () => ({ name: "files/abc123", uri: "https://example.com/files/abc123", mimeType: "video/mp4", state: inputFileState }) };
+    }
+    if (href === `${API_BASE}/files/${OUTPUT_FILE_ID}`) {
+      outputFileStatusCallCount++;
+      return { ok: true, json: async () => ({ name: `files/${OUTPUT_FILE_ID}`, state: outputFileState }) };
+    }
+    if (href === OUTPUT_URI) {
+      outputDownloadCallCount++;
+      return { ok: true, arrayBuffer: async () => new Uint8Array([7, 8, 9]).buffer };
     }
     if (href.endsWith("/v1beta/interactions")) {
       interactionsCallCount++;
       if (onInteractions) return onInteractions(url, options, interactionsCallCount);
       return {
         ok: true,
-        json: async () => ({ id: "v1_xyz", steps: [{ type: "model_output", content: [{ type: "video", uri: "https://example.com/files/output.mp4", mime_type: "video/mp4" }] }] })
+        json: async () => ({ id: "v1_xyz", steps: [{ type: "model_output", content: [{ type: "video", uri: OUTPUT_URI, mime_type: "video/mp4" }] }] })
       };
     }
     throw new Error(`Beklenmeyen fetch: ${href}`);
   };
-  return { fn, getInteractionsCallCount: () => interactionsCallCount, getFilesUploadStartCount: () => filesUploadStartCount };
+  return {
+    fn,
+    getInteractionsCallCount: () => interactionsCallCount,
+    getFilesUploadStartCount: () => filesUploadStartCount,
+    getOutputFileStatusCallCount: () => outputFileStatusCallCount,
+    getOutputDownloadCallCount: () => outputDownloadCallCount
+  };
 }
 
 test("submitOmniVideoEdit rejects without confirmed:true, before any network call", async () => {
@@ -86,9 +106,6 @@ test("submitOmniVideoEdit rejects an unsupported resolution", async () => {
   );
 });
 
-// Şema düzeltmesi: input dizisi düz {type,uri,mime_type}/{type,text} öğeleri
-// olmalı — role/content/file_data/inline_data DEĞİL (bkz. resmi doküman
-// doğrulaması, önceki sürümde yanlış varsayılmıştı).
 test("submitOmniVideoEdit sends the documented flat {type,uri}/{type,text} input array, not role/content/file_data", async () => {
   const originalFetch = global.fetch;
   let capturedBody = null;
@@ -110,9 +127,9 @@ test("submitOmniVideoEdit sends the documented flat {type,uri}/{type,text} input
   }
 });
 
-// Şema düzeltmesi: response_format bir DİZİ, aspect_ratio/resolution
-// generation_config'te değil response_format öğesinin İÇİNDE.
-test("submitOmniVideoEdit sends response_format as an array with delivery/aspect_ratio/resolution inside the element", async () => {
+// response_format bir NESNE olmalı, dizi DEĞİL — aspect_ratio/resolution
+// doğrudan response_format'ın altında (generation_config'te değil).
+test("submitOmniVideoEdit sends response_format as a plain object (not an array) with delivery/aspect_ratio/resolution directly under it", async () => {
   const originalFetch = global.fetch;
   let capturedBody = null;
   const { fn } = baseMockFetch({
@@ -121,18 +138,16 @@ test("submitOmniVideoEdit sends response_format as an array with delivery/aspect
   global.fetch = fn;
   try {
     await submitOmniVideoEdit("https://example.com/video.mp4", { GEMINI_API_KEY: "test" }, { editPrompt: "fix", resolution: "720p", aspectRatio: "16:9", confirmed: true });
-    assert.ok(Array.isArray(capturedBody.response_format));
-    assert.equal(capturedBody.response_format[0].type, "video");
-    assert.equal(capturedBody.response_format[0].delivery, "uri");
-    assert.equal(capturedBody.response_format[0].aspect_ratio, "16:9");
-    assert.equal(capturedBody.response_format[0].resolution, "720p");
+    assert.equal(Array.isArray(capturedBody.response_format), false);
+    assert.equal(capturedBody.response_format.type, "video");
+    assert.equal(capturedBody.response_format.delivery, "uri");
+    assert.equal(capturedBody.response_format.aspect_ratio, "16:9");
+    assert.equal(capturedBody.response_format.resolution, "720p");
   } finally {
     global.fetch = originalFetch;
   }
 });
 
-// Şema düzeltmesi: referans görsel de Files API'ye yüklenip {type:"image",uri}
-// olarak eklenir — inline_data/base64 KULLANILMAZ.
 test("submitOmniVideoEdit uploads the reference image through Files API too and adds it as {type:'image',uri}, not inline_data", async () => {
   const originalFetch = global.fetch;
   let capturedBody = null;
@@ -168,29 +183,58 @@ test("submitOmniVideoEdit without referenceImageUrl sends only video + text inpu
   }
 });
 
-// Şema düzeltmesi: tamamlanmış çıktı outputs[]/output[] DEĞİL, steps[]
-// içindeki type:"model_output" adımının content[]'inde (type:"video").
-test("submitOmniVideoEdit returns COMPLETED with fileUri when steps[] carries a model_output video part with a uri", async () => {
-  const { fn } = baseMockFetch();
+// Kritik düzeltme: bir çıktı URI'si gelmesi COMPLETED anlamına gelmez —
+// dosya Files API'de ACTIVE olana kadar iş "OUTPUT_PROCESSING" kalmalı ve
+// indirme HİÇ denenmemeli.
+test("submitOmniVideoEdit returns OUTPUT_PROCESSING (not COMPLETED) when the model_output uri's file is still PROCESSING in the Files API", async () => {
+  const { fn, getOutputDownloadCallCount } = baseMockFetch({ outputFileState: "PROCESSING" });
+  const originalFetch = global.fetch;
+  global.fetch = fn;
+  try {
+    const job = await submitOmniVideoEdit("https://example.com/video.mp4", { GEMINI_API_KEY: "test" }, { editPrompt: "fix", confirmed: true });
+    assert.equal(job.status, "OUTPUT_PROCESSING");
+    assert.equal(job.fileUri, null);
+    assert.equal(job.outputFileId, OUTPUT_FILE_ID);
+    assert.equal(getOutputDownloadCallCount(), 0); // ACTIVE olmadan indirme denenmemeli
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("submitOmniVideoEdit returns COMPLETED with a canonical :download?alt=media fileUri once the Files API reports the output file ACTIVE", async () => {
+  const { fn } = baseMockFetch({ outputFileState: "ACTIVE" });
   const originalFetch = global.fetch;
   global.fetch = fn;
   try {
     const job = await submitOmniVideoEdit("https://example.com/video.mp4", { GEMINI_API_KEY: "test" }, { editPrompt: "fix", confirmed: true });
     assert.equal(job.status, "COMPLETED");
-    assert.equal(job.fileUri, "https://example.com/files/output.mp4");
+    assert.equal(job.fileUri, OUTPUT_URI);
+    assert.equal(job.outputFileId, OUTPUT_FILE_ID);
     assert.equal(job.videoBase64, null);
-    assert.equal(job.provider, "omni");
     assert.equal(job.interactionId, "v1_xyz");
   } finally {
     global.fetch = originalFetch;
   }
 });
 
-// Google, delivery:"uri" istense bile inline base64 döndürebiliyor —
-// extractOmniVideoOutput ikisini de tanımalı, biri "her zaman doğru şekil"
-// diye varsayılmamalı.
-test("submitOmniVideoEdit returns COMPLETED with videoBase64 when the model_output video part carries inline base64 data instead of a uri", async () => {
-  const { fn } = baseMockFetch({
+test("submitOmniVideoEdit throws a clear error when the Files API reports the output file FAILED", async () => {
+  const { fn } = baseMockFetch({ outputFileState: "FAILED" });
+  const originalFetch = global.fetch;
+  global.fetch = fn;
+  try {
+    await assert.rejects(
+      () => submitOmniVideoEdit("https://example.com/video.mp4", { GEMINI_API_KEY: "test" }, { editPrompt: "fix", confirmed: true }),
+      /FAILED/
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// Google, delivery:"uri" istense bile inline base64 döndürebiliyor — bu
+// durumda Files API'ye HİÇ gidilmez (video zaten elde), doğrudan COMPLETED.
+test("submitOmniVideoEdit returns COMPLETED with videoBase64 (skipping the Files API check entirely) when the model_output video part carries inline base64 data instead of a uri", async () => {
+  const { fn, getOutputFileStatusCallCount } = baseMockFetch({
     onInteractions: () => ({ ok: true, json: async () => ({ id: "v1_xyz", steps: [{ type: "model_output", content: [{ type: "video", data: "AQIDBA==", mime_type: "video/mp4" }] }] }) })
   });
   const originalFetch = global.fetch;
@@ -200,6 +244,7 @@ test("submitOmniVideoEdit returns COMPLETED with videoBase64 when the model_outp
     assert.equal(job.status, "COMPLETED");
     assert.equal(job.fileUri, null);
     assert.equal(job.videoBase64, "AQIDBA==");
+    assert.equal(getOutputFileStatusCallCount(), 0);
   } finally {
     global.fetch = originalFetch;
   }
@@ -219,9 +264,6 @@ test("submitOmniVideoEdit returns IN_PROGRESS (not an error) when steps[] has no
   }
 });
 
-// Kullanıcı doğrulaması: model_output VARSA ama içinde video YOKSA (örn.
-// metinle reddetme) bu sessizce IN_PROGRESS'e düşüp hayalî polling'e
-// geçmemeli — açık bir hata fırlatılmalı.
 test("submitOmniVideoEdit throws a clear error when a model_output step exists but carries no video part (never silently falls into fake polling)", async () => {
   const { fn } = baseMockFetch({
     onInteractions: () => ({ ok: true, json: async () => ({ id: "v1_xyz", steps: [{ type: "model_output", content: [{ type: "text", text: "Bu videoyu düzenleyemem çünkü ..." }] }] }) })
@@ -238,10 +280,6 @@ test("submitOmniVideoEdit throws a clear error when a model_output step exists b
   }
 });
 
-// interactionId normalizasyonu: Google "name" alanında zaten "interactions/"
-// önekiyle tam kaynak yolunu dönerse, bu önek bir kez temizlenmeli —
-// aksi halde sonraki GET isteği .../interactions/interactions/xyz gibi
-// YANLIŞ bir URL'e giderdi.
 test("submitOmniVideoEdit normalizes an interaction id that already carries an 'interactions/' prefix in the 'name' field", async () => {
   const { fn } = baseMockFetch({ onInteractions: () => ({ ok: true, json: async () => ({ name: "interactions/v1_xyz", steps: [] }) }) });
   const originalFetch = global.fetch;
@@ -368,13 +406,13 @@ test("omniInteractionStatus rejects when job has no interactionId", async () => 
   );
 });
 
-test("omniInteractionStatus never duplicates an 'interactions/' prefix when polling by URL", async () => {
+test("omniInteractionStatus never duplicates an 'interactions/' prefix when polling by URL (no outputFileId on the job yet)", async () => {
   const originalFetch = global.fetch;
   let requestedUrl = null;
   global.fetch = async (url) => { requestedUrl = String(url); return { ok: true, json: async () => ({ id: "v1_xyz", steps: [] }) }; };
   try {
     await omniInteractionStatus({ interactionId: "v1_xyz", model: OMNI_MODEL }, { GEMINI_API_KEY: "test" });
-    assert.equal(requestedUrl, "https://generativelanguage.googleapis.com/v1beta/interactions/v1_xyz");
+    assert.equal(requestedUrl, `${API_BASE}/interactions/v1_xyz`);
   } finally {
     global.fetch = originalFetch;
   }
@@ -391,23 +429,52 @@ test("omniInteractionStatus returns IN_PROGRESS while no model_output step is pr
   }
 });
 
-test("omniInteractionStatus returns COMPLETED with fileUri once a model_output video part with a uri appears", async () => {
+// Kullanıcı doğrulaması: bir job zaten outputFileId biliyorsa (önceki bir
+// çağrıda model_output bir uri üretmiş), sonraki durum sorgusu GET
+// /interactions/{id}'YE HİÇ GİTMEMELİ — doğrudan Files API'yi sorgulamalı.
+test("omniInteractionStatus polls the Files API directly (never GET /interactions/{id}) once job.outputFileId is known", async () => {
   const originalFetch = global.fetch;
-  global.fetch = async () => ({ ok: true, json: async () => ({ id: "v1_xyz", steps: [{ type: "model_output", content: [{ type: "video", uri: "https://example.com/files/final.mp4", mime_type: "video/mp4" }] }] }) });
+  let requestedUrl = null;
+  global.fetch = async (url) => { requestedUrl = String(url); return { ok: true, json: async () => ({ name: `files/${OUTPUT_FILE_ID}`, state: "PROCESSING" }) }; };
   try {
-    const job = await omniInteractionStatus({ interactionId: "v1_xyz", model: OMNI_MODEL }, { GEMINI_API_KEY: "test" });
-    assert.equal(job.status, "COMPLETED");
-    assert.equal(job.fileUri, "https://example.com/files/final.mp4");
+    const job = await omniInteractionStatus({ interactionId: "v1_xyz", model: OMNI_MODEL, outputFileId: OUTPUT_FILE_ID }, { GEMINI_API_KEY: "test" });
+    assert.equal(requestedUrl, `${API_BASE}/files/${OUTPUT_FILE_ID}`);
+    assert.equal(job.status, "OUTPUT_PROCESSING");
   } finally {
     global.fetch = originalFetch;
   }
 });
 
-// Bu, Google'ın "GET /interactions/{id} delivery:'uri' istenmiş olsa bile
-// inline base64 döndürebilir" davranışının polling tarafındaki karşılığı —
-// önceki sürümde omniInteractionStatus SADECE bir uri bekliyordu ve bu
-// durumda sonsuza kadar IN_PROGRESS kalabilirdi.
-test("omniInteractionStatus returns COMPLETED with videoBase64 when polling returns inline base64 instead of a uri (regression guard for the fix)", async () => {
+test("omniInteractionStatus returns COMPLETED with the canonical download fileUri once the Files API reports the output file ACTIVE", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, json: async () => ({ name: `files/${OUTPUT_FILE_ID}`, state: "ACTIVE" }) });
+  try {
+    const job = await omniInteractionStatus({ interactionId: "v1_xyz", model: OMNI_MODEL, outputFileId: OUTPUT_FILE_ID }, { GEMINI_API_KEY: "test" });
+    assert.equal(job.status, "COMPLETED");
+    assert.equal(job.fileUri, OUTPUT_URI);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("omniInteractionStatus throws when the Files API reports the output file FAILED", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, json: async () => ({ name: `files/${OUTPUT_FILE_ID}`, state: "FAILED" }) });
+  try {
+    await assert.rejects(
+      () => omniInteractionStatus({ interactionId: "v1_xyz", model: OMNI_MODEL, outputFileId: OUTPUT_FILE_ID }, { GEMINI_API_KEY: "test" }),
+      /FAILED/
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// Google, delivery:"uri" istenmiş olsa bile durum sorgusunda inline base64
+// döndürebiliyor — henüz outputFileId bilinmeyen bir job için bu, hâlâ
+// omniInteractionStatus'un GET /interactions/{id} yolundan (base64 dalı)
+// ele alınır.
+test("omniInteractionStatus returns COMPLETED with videoBase64 when GET /interactions/{id} returns inline base64 instead of a uri (regression guard for the fix)", async () => {
   const originalFetch = global.fetch;
   global.fetch = async () => ({ ok: true, json: async () => ({ id: "v1_xyz", steps: [{ type: "model_output", content: [{ type: "video", data: "AQIDBA==", mime_type: "video/mp4" }] }] }) });
   try {
@@ -433,7 +500,7 @@ test("omniInteractionStatus throws a clear error when a model_output step exists
   }
 });
 
-test("omniInteractionStatus classifies a 429 the same way as the initial submit call", async () => {
+test("omniInteractionStatus classifies a 429 from GET /interactions/{id} the same way as the initial submit call", async () => {
   const originalFetch = global.fetch;
   global.fetch = async () => ({ ok: false, status: 429, headers: { get: () => null }, json: async () => ({ error: { status: "RESOURCE_EXHAUSTED", message: "quota" } }) });
   try {
@@ -450,6 +517,18 @@ test("downloadOmniVideo throws a clear error on a non-ok response", async () => 
   global.fetch = async () => ({ ok: false, status: 403 });
   try {
     await assert.rejects(() => downloadOmniVideo("https://example.com/files/final.mp4", { GEMINI_API_KEY: "test" }), /HTTP 403/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("downloadOmniVideo fetches the exact canonical :download?alt=media URL it is given", async () => {
+  const originalFetch = global.fetch;
+  let requestedUrl = null;
+  global.fetch = async (url) => { requestedUrl = String(url); return { ok: true, arrayBuffer: async () => new Uint8Array([1]).buffer }; };
+  try {
+    await downloadOmniVideo(OUTPUT_URI, { GEMINI_API_KEY: "test" });
+    assert.equal(requestedUrl, OUTPUT_URI);
   } finally {
     global.fetch = originalFetch;
   }

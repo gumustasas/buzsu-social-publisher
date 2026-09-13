@@ -453,8 +453,9 @@ aynı `GEMINI_API_KEY`'i kullanır — ayrı bir hesap/anahtar gerekmez.
   resumable protokol) ve `ACTIVE` duruma gelmesi beklenir; `input` dizisine
   dokümante edilen düz `{type:"video"|"image", uri, mime_type}` / `{type:"text",
   text}` öğeleri olarak eklenir (inline base64 kullanılmaz). Çıktı isteği
-  `response_format: [{type:"video", delivery:"uri", aspect_ratio, resolution}]`
-  şeklinde bir DİZİ olarak gönderilir.
+  `response_format: {type:"video", delivery:"uri", aspect_ratio, resolution}`
+  şeklinde bir NESNE olarak gönderilir (doküman dizi biçimini de kabul ediyor;
+  bu iki şekil de geçerli — burada tek-öğe nesne şekli kullanılıyor).
 - **Çözünürlük**: `360p` (varsayılan, en ucuz — taslak/deneme için önerilir),
   `720p`, `1080p`, `4k`.
 - **`confirmed:true` şart** — hem MCP aracında hem HTTP/dashboard katmanında;
@@ -487,6 +488,16 @@ aynı `GEMINI_API_KEY`'i kullanır — ayrı bir hesap/anahtar gerekmez.
   tanır, biri "her zaman doğru şekil" diye varsayılmaz. `model_output` adımı
   var ama içinde video parçası yoksa (örn. metinle reddetme) bu **açık bir
   hata** olarak fırlatılır — sessizce `IN_PROGRESS`'e düşülmez.
+- **Çıktı dosyası hazır olana kadar indirme yapılmaz**: `model_output`'ta bir
+  `uri` gelmesi videonun HEMEN indirilebilir olduğu anlamına gelmez — çıktı
+  da Files API'deki diğer dosyalar gibi `PROCESSING` → `ACTIVE`/`FAILED`
+  durumundan geçer. URI'den dosya kimliği güvenli şekilde ayrıştırılır
+  (Google'ın döndürdüğü tam URI metnine güvenmek yerine, indirme URL'i
+  bilinen `GET /v1beta/files/{id}:download?alt=media` şekliyle yeniden
+  kurulur); `ACTIVE` doğrulanana kadar iş `"OUTPUT_PROCESSING"` durumunda
+  kalır, `FAILED` olursa açık bir hata fırlatılır. Dosya zaten `outputFileId`
+  ile biliniyorsa sonraki durum sorguları `GET /v1beta/interactions/{id}`'ye
+  DEĞİL doğrudan Files API'ye gider.
 - **Bilinen sınırlama**: Interactions API çok yeni bir yüzey olduğu için
   (27 Ağustos 2026 itibarıyla genel kullanıma açıldı) bu ortamda
   `ai.google.dev`'e doğrudan ağ erişimi yok; şema, arama motoru üzerinden
