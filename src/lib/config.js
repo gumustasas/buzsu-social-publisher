@@ -38,6 +38,12 @@ export const GITHUB_REPO_NAME = process.env.GITHUB_REPO_NAME || "buzsu-social-pu
 export const VIDEO_RENDER_WORKFLOW_FILE = process.env.VIDEO_RENDER_WORKFLOW_FILE || "render-product-video.yml";
 export const VIDEO_RENDER_REF = process.env.VIDEO_RENDER_REF || "main";
 
+// compose_reel_audio (bkz. src/reel-audio-compose.js), aynı sebeple
+// (Vercel süre/bellek sınırları) render-product-video.yml'nin AYRI, kendi
+// job şekline (video+seslendirme+müzik, medya listesi değil) sahip bir
+// eşleniğini kullanır.
+export const REEL_AUDIO_RENDER_WORKFLOW_FILE = process.env.REEL_AUDIO_RENDER_WORKFLOW_FILE || "render-reel-audio.yml";
+
 export function assertMetaGraphVersionCurrent() {
   const parsed = parseMetaGraphVersionNumber(META_GRAPH_VERSION);
   if (parsed === null) {

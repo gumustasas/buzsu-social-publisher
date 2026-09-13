@@ -258,6 +258,64 @@ test("tools/call: generate_omni_video_edit'in REGION_UNAVAILABLE hatası isError
   }
 });
 
+// Türkçe seslendirme + Lyria müzik + FFmpeg mix mimarisi — bkz.
+// src/turkish-tts.js, src/lyria-music.js, src/reel-audio-compose.js.
+test("generate_video_narration is a free tool — no confirmed required", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ narrationText: "Kısa metin.", musicBrief: {} }) }] } }] }) });
+  try {
+    const text = await callTool("generate_video_narration", { scenario: "test", durationSeconds: 8 });
+    const parsed = JSON.parse(text);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.narrationText, "Kısa metin.");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generate_turkish_voiceover confirmed:false ile hiçbir ağ isteği atmadan reddeder", async () => {
+  const originalFetch = global.fetch;
+  let calls = 0;
+  global.fetch = async () => { calls++; throw new Error("fetch should not be called without confirmed:true"); };
+  try {
+    await assert.rejects(() => callTool("generate_turkish_voiceover", { text: "test", confirmed: false }), /confirmed:true/);
+    assert.equal(calls, 0);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("tools/call: generate_turkish_voiceover'ın TURKISH_TTS_UNAVAILABLE hatası isError:true ile birlikte geçerli JSON içeren bir content.text döner (asla başka bir dile otomatik geçmez)", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: false, status: 400, headers: { get: () => null }, json: async () => ({ error: { status: "INVALID_ARGUMENT", message: "Language tr-TR is not supported." } }) });
+  try {
+    const response = await handleMessage({ id: 1, method: "tools/call", params: { name: "generate_turkish_voiceover", arguments: { text: "test", confirmed: true } } });
+    assert.equal(response.result.isError, true);
+    const parsed = JSON.parse(response.result.content[0].text);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.code, "TURKISH_TTS_UNAVAILABLE");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generate_lyria_music confirmed:false ile hiçbir ağ isteği atmadan reddeder", async () => {
+  const originalFetch = global.fetch;
+  let calls = 0;
+  global.fetch = async () => { calls++; throw new Error("fetch should not be called without confirmed:true"); };
+  try {
+    await assert.rejects(() => callTool("generate_lyria_music", { scenario: "test", confirmed: false }), /confirmed:true/);
+    assert.equal(calls, 0);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("compose_reel_audio validates its input (videoUrl + en az bir ses) before any network/GitHub dispatch access", async () => {
+  await assert.rejects(() => callTool("compose_reel_audio", {}), /videoUrl/);
+  await assert.rejects(() => callTool("compose_reel_audio", { videoUrl: "https://example.com/v.mp4" }), /voiceoverUrl.*musicUrl/);
+});
+
 // Bulunan aktarım hatası: get_omni_video_status önceki turda outputFileId'yi
 // kabul etmiyor/geri döndürmüyordu — bu, MCP istemcisinin (dashboard değil,
 // ChatGPT/Codex gibi bağlayıcılar) her sorguda gereksiz yere

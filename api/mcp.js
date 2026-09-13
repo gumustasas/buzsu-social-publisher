@@ -17,6 +17,10 @@ import { fetchPublicImage, decodeImageBase64, imageExtensionFor, extractDriveFil
 import { validateSceneImage } from "../src/lib/scene-validation.js";
 import { normalizeDraftFields } from "../src/lib/queue.js";
 import { composeProductVideo, getVideoRenderStatus } from "../src/video-compose.js";
+import { generateVideoNarration, NARRATION_STYLES } from "../src/video-narration.js";
+import { generateTurkishVoiceover, turkishVoiceoverStatus, TTS_STYLES } from "../src/turkish-tts.js";
+import { generateLyriaMusic, lyriaMusicStatus, LYRIA_TIERS } from "../src/lyria-music.js";
+import { composeReelAudio, getReelAudioStatus } from "../src/reel-audio-compose.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
 const SERVER_INFO = { name: "buzsu-social-publisher", version: "1.0.0" };
@@ -367,6 +371,107 @@ const TOOLS = [
       },
       required: ["interactionId"]
     }
+  },
+  {
+    name: "generate_video_narration",
+    description: "Bir video senaryosundan, videonun SÜRESİNE uygun uzunlukta Türkçe voice-over metni ve o senaryodan türetilmiş bir müzik brief'i üretir. ÜCRETSİZDİR (yalnızca metin üretimi, generate_caption ile aynı profil) — confirmed gerektirmez. Çıktı, generate_turkish_voiceover'ın `text` parametresine ve generate_lyria_music'in `musicBrief` parametresine doğrudan verilebilir.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scenario: { type: "string", description: "Video senaryosu/açıklaması (Türkçe) — örn. Reels/Video sekmesindeki video hareketi/prompt alanından alınabilir." },
+        productName: { type: "string", description: "İsteğe bağlı — ürün adı, metne doğal şekilde geçirilir." },
+        durationSeconds: { type: "number", description: "Videonun gerçek süresi, saniye — metin bu süreye SIĞACAK uzunlukta üretilir (örn. 8sn video için 20sn'lik metin üretilmez)." },
+        style: { type: "string", enum: NARRATION_STYLES, description: "Seslendirme tonu (varsayılan 'reklam')." }
+      },
+      required: ["scenario", "durationSeconds"]
+    }
+  },
+  {
+    name: "generate_turkish_voiceover",
+    description: "Google'ın Gemini TTS modeliyle GERÇEK Türkçe (tr-TR) seslendirme sesi üretir — İngilizceye veya başka bir dile ASLA otomatik geçmez; Türkçe desteklenmiyorsa TURKISH_TTS_UNAVAILABLE hatası döner. GERÇEK PARA HARCAR, confirmed:true olmadan çalışmaz. targetDurationSeconds verilirse ve gerçek ses süresi bunu önemli ölçüde aşarsa VOICEOVER_TOO_LONG hatası döner (metni AI ile kısaltıp tekrar deneyin — generate_video_narration'ı daha kısa bir durationSeconds ile tekrar çağırın). Üretim uzun sürerse (nadiren) IN_PROGRESS + interactionId döner, get_voiceover_status ile sorgulayın.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Seslendirilecek Türkçe metin (örn. generate_video_narration çıktısı — kullanıcı düzenlemiş olabilir)." },
+        style: { type: "string", enum: TTS_STYLES, description: "İsteğe bağlı, günlükleme/ses seçimi ipucu amaçlı (varsayılan 'reklam')." },
+        gender: { type: "string", enum: ["female", "male", "auto"], description: "Ses tercihi (varsayılan 'auto'). Google'ın ses adları resmi olarak cinsiyete göre etiketlenmemiştir — bu, yaygın algılanan tona dayanan bir varsayılan eşlemedir; kesin bir ses istiyorsanız `voice` parametresini kullanın." },
+        voice: { type: "string", description: "İsteğe bağlı — Google'ın prebuilt ses adını doğrudan belirtir (örn. 'Kore', 'Puck'), gender eşlemesini geçersiz kılar." },
+        targetDurationSeconds: { type: "number", description: "İsteğe bağlı — videonun süresi. Verilirse gerçek ses süresi bunu %15'ten fazla aşarsa VOICEOVER_TOO_LONG hatası döner." },
+        confirmed: { type: "boolean", description: "true olmadan hiçbir API çağrısı yapılmaz/ücret alınmaz." }
+      },
+      required: ["text", "confirmed"]
+    }
+  },
+  {
+    name: "get_voiceover_status",
+    description: "generate_turkish_voiceover'ın IN_PROGRESS döndürdüğü nadir durumda interaction'ın durumunu sorgular. Tamamlandıysa sesi indirip Vercel Blob'a yükler ve herkese açık audioUrl döner.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        interactionId: { type: "string", description: "generate_turkish_voiceover yanıtındaki interactionId." },
+        model: { type: "string", description: "generate_turkish_voiceover yanıtındaki model (isteğe bağlı)." }
+      },
+      required: ["interactionId"]
+    }
+  },
+  {
+    name: "generate_lyria_music",
+    description: "Google'ın Lyria 3 modeliyle (Clip: ~30sn, hızlı/ucuz — Pro: ~3dk'ya kadar, yüksek kalite) senaryoya uygun, SÖZSÜZ (instrumental) müzik üretir. Kullanıcıdan ayrıca bir müzik promptu İSTEMEZ — musicPrompt verilmezse scenario + musicBrief'ten (bkz. generate_video_narration çıktısı) otomatik türetilir. GERÇEK PARA HARCAR, confirmed:true olmadan çalışmaz. Üretim uzun sürerse (özellikle Pro) IN_PROGRESS + interactionId döner, get_lyria_music_status ile sorgulayın.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scenario: { type: "string", description: "Video senaryosu — musicPrompt otomatik türetimi için (musicPrompt verilmezse zorunlu)." },
+        musicBrief: {
+          type: "object",
+          description: "İsteğe bağlı — generate_video_narration çıktısındaki musicBrief nesnesi, otomatik prompt türetimini yönlendirir.",
+          properties: {
+            mood: { type: "string" }, energy: { type: "string" }, tempo: { type: "string" }, description: { type: "string" }
+          }
+        },
+        musicPrompt: { type: "string", description: "İsteğe bağlı — kullanıcı doğrudan bir müzik promptu vermek isterse (otomatik türetimi atlar). 'Instrumental only. No vocals.' otomatik olarak eklenir." },
+        durationSeconds: { type: "number", description: "İsteğe bağlı — hedef süre. Clip için Google'ın kendi ~30sn varsayılanı geçerli olabilir (garanti edilmiyor)." },
+        tier: { type: "string", enum: LYRIA_TIERS, description: "Varsayılan 'clip' (hızlı/ucuz, önerilen). 'pro' daha yüksek kalite ve daha uzun süre için." },
+        confirmed: { type: "boolean", description: "true olmadan hiçbir API çağrısı yapılmaz/ücret alınmaz." }
+      },
+      required: ["confirmed"]
+    }
+  },
+  {
+    name: "get_lyria_music_status",
+    description: "generate_lyria_music'in IN_PROGRESS döndürdüğü durumda interaction'ın durumunu sorgular. Tamamlandıysa müziği indirip Vercel Blob'a yükler ve herkese açık audioUrl döner.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        interactionId: { type: "string", description: "generate_lyria_music yanıtındaki interactionId." },
+        model: { type: "string", description: "generate_lyria_music yanıtındaki model (isteğe bağlı)." }
+      },
+      required: ["interactionId"]
+    }
+  },
+  {
+    name: "compose_reel_audio",
+    description: "Zaten üretilmiş bir videoya Türkçe seslendirme ve/veya Lyria müziğini FFmpeg ile ekler (ducking: seslendirme çalarken müzik otomatik kısılır; limiter: clipping önlenir). ÜCRETSİZDİR (yalnızca FFmpeg, ücretli bir API çağrısı yok) — confirmed gerektirmez. voiceoverUrl/musicUrl'den en az biri gerekli. Video akışı yeniden kodlanmaz (-c:v copy) — yalnızca ses işlenir. Render GitHub Actions'ın ücretsiz kuyruğunda çalışır (birkaç dakika sürebilir); bu tool işi başlatıp hemen bir jobId döner, sonucu get_reel_audio_status ile sorgulayın.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        videoUrl: { type: "string", description: "Ses eklenecek, zaten üretilmiş videonun herkese açık HTTPS URL'si (örn. generate_video_clip/get_video_clip_status, generate_omni_video_edit veya compose_product_video çıktısı)." },
+        voiceoverUrl: { type: "string", description: "İsteğe bağlı — generate_turkish_voiceover/get_voiceover_status çıktısındaki audioUrl." },
+        musicUrl: { type: "string", description: "İsteğe bağlı — generate_lyria_music/get_lyria_music_status çıktısındaki audioUrl." },
+        musicVolume: { type: "number", description: "Müzik seviyesi, 0-1 aralığında (varsayılan 0.5 — yaklaşık -16dB, seslendirmenin altında). 0 tamamen susturur." }
+      },
+      required: ["videoUrl"]
+    }
+  },
+  {
+    name: "get_reel_audio_status",
+    description: "compose_reel_audio ile başlatılmış bir ses mix işinin durumunu sorgular. status 'queued'/'rendering' ise birkaç dakika sonra tekrar deneyin; 'completed' ise videoUrl, durationSeconds, voiceoverIncluded, musicIncluded döner; 'failed' ise error alanında sebep bulunur.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        jobId: { type: "string", description: "compose_reel_audio yanıtındaki jobId." }
+      },
+      required: ["jobId"]
+    }
   }
 ];
 
@@ -685,6 +790,78 @@ export async function callTool(name, args) {
       }
       return JSON.stringify({ ok: true, status: "COMPLETED", videoUrl }, null, 2);
     }
+    case "generate_video_narration": {
+      const narration = await generateVideoNarration(
+        { scenario: args.scenario, productName: args.productName, durationSeconds: args.durationSeconds, style: args.style },
+        process.env
+      );
+      return JSON.stringify({ ok: true, ...narration }, null, 2);
+    }
+    case "generate_turkish_voiceover": {
+      if (args.confirmed !== true) throw new Error("Bu işlem gerçek API kredisi harcar. Onaylamak için confirmed:true gönderin.");
+      const result = await generateTurkishVoiceover(
+        { text: args.text, style: args.style, gender: args.gender, voice: args.voice, targetDurationSeconds: args.targetDurationSeconds, confirmed: true },
+        process.env
+      );
+      if (result.status !== "COMPLETED") return JSON.stringify({ ok: true, ...result }, null, 2);
+      let audioUrl = null;
+      if (process.env.BLOB_READ_WRITE_TOKEN) {
+        const blob = await put(`turkish-voiceover/${Date.now()}.wav`, result.audioBuffer, { access: "public", contentType: result.mimeType || "audio/wav" });
+        audioUrl = blob.url;
+      }
+      const { audioBuffer, ...rest } = result;
+      return JSON.stringify({ ok: true, ...rest, audioUrl, downloadNote: audioUrl ? undefined : "BLOB_READ_WRITE_TOKEN tanımlı olmadığı için ses kalıcı bir bağlantı alamadı." }, null, 2);
+    }
+    case "get_voiceover_status": {
+      if (!String(args.interactionId || "").trim()) throw new Error("interactionId gerekli.");
+      const status = await turkishVoiceoverStatus({ interactionId: args.interactionId, model: args.model }, process.env);
+      if (status.status !== "COMPLETED") return JSON.stringify({ ok: true, ...status }, null, 2);
+      let audioUrl = null;
+      if (process.env.BLOB_READ_WRITE_TOKEN) {
+        const safeName = String(args.interactionId).replace(/[^a-zA-Z0-9_-]/g, "_").slice(-80);
+        const blob = await put(`turkish-voiceover/${safeName}-${Date.now()}.wav`, status.audioBuffer, { access: "public", contentType: status.mimeType || "audio/wav" });
+        audioUrl = blob.url;
+      }
+      const { audioBuffer, ...rest } = status;
+      return JSON.stringify({ ok: true, ...rest, audioUrl }, null, 2);
+    }
+    case "generate_lyria_music": {
+      if (args.confirmed !== true) throw new Error("Bu işlem gerçek API kredisi harcar. Onaylamak için confirmed:true gönderin.");
+      const result = await generateLyriaMusic(
+        { scenario: args.scenario, musicBrief: args.musicBrief, musicPrompt: args.musicPrompt, durationSeconds: args.durationSeconds, tier: args.tier || "clip", confirmed: true },
+        process.env
+      );
+      if (result.status !== "COMPLETED") return JSON.stringify({ ok: true, ...result }, null, 2);
+      let musicUrl = null;
+      if (process.env.BLOB_READ_WRITE_TOKEN) {
+        const blob = await put(`lyria-music/${Date.now()}.mp3`, result.audioBuffer, { access: "public", contentType: result.mimeType || "audio/mpeg" });
+        musicUrl = blob.url;
+      }
+      const { audioBuffer, ...rest } = result;
+      return JSON.stringify({ ok: true, ...rest, musicUrl, downloadNote: musicUrl ? undefined : "BLOB_READ_WRITE_TOKEN tanımlı olmadığı için müzik kalıcı bir bağlantı alamadı." }, null, 2);
+    }
+    case "get_lyria_music_status": {
+      if (!String(args.interactionId || "").trim()) throw new Error("interactionId gerekli.");
+      const status = await lyriaMusicStatus({ interactionId: args.interactionId, model: args.model }, process.env);
+      if (status.status !== "COMPLETED") return JSON.stringify({ ok: true, ...status }, null, 2);
+      let musicUrl = null;
+      if (process.env.BLOB_READ_WRITE_TOKEN) {
+        const safeName = String(args.interactionId).replace(/[^a-zA-Z0-9_-]/g, "_").slice(-80);
+        const blob = await put(`lyria-music/${safeName}-${Date.now()}.mp3`, status.audioBuffer, { access: "public", contentType: status.mimeType || "audio/mpeg" });
+        musicUrl = blob.url;
+      }
+      const { audioBuffer, ...rest } = status;
+      return JSON.stringify({ ok: true, ...rest, musicUrl }, null, 2);
+    }
+    case "compose_reel_audio": {
+      const result = await composeReelAudio(args);
+      return JSON.stringify(result, null, 2);
+    }
+    case "get_reel_audio_status": {
+      if (!String(args.jobId || "").trim()) throw new Error("jobId gerekli.");
+      const status = await getReelAudioStatus(args.jobId);
+      return JSON.stringify(status, null, 2);
+    }
     case "get_autopilot_status": {
       const enabled = await getAutopilotEnabled();
       return JSON.stringify({ ok: true, enabled }, null, 2);
@@ -738,7 +915,7 @@ export async function handleMessage(msg) {
         // RATE_LIMITED veya REGION_UNAVAILABLE + toJSON metodu) kilitleniyor
         // — code'u olan ama bu şekle uymayan sıradan bir hata eskisi gibi
         // düz "Hata: ..." metnine düşer.
-        const structuredCodes = new Set(["RATE_LIMITED", "REGION_UNAVAILABLE"]);
+        const structuredCodes = new Set(["RATE_LIMITED", "REGION_UNAVAILABLE", "TURKISH_TTS_UNAVAILABLE"]);
         const text = structuredCodes.has(error.code) && typeof error.toJSON === "function"
           ? JSON.stringify({ ok: false, ...error.toJSON() })
           : `Hata: ${error.message}`;

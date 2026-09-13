@@ -65,7 +65,7 @@ export default async function handler(request, response) {
           motion = await generateMotionPlan(textProvider, body.sceneDescription, process.env);
           motionSource = "ai";
         }
-        const sections = buildVideoPromptSections({ productTitle: title, motion });
+        const sections = buildVideoPromptSections({ productTitle: title, motion, allowNativeAudio: body.allowNativeAudio === true });
         prompt = renderVideoPrompt(sections);
       }
       // Bu, sadece fal.ai'nin kendi API sınırı (fal-ai/minimax-video/

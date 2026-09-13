@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import { assertPublicHttpsUrl, fetchPublicImage, fetchPublicAudio, decodeImageBase64, imageExtensionFor, isPrivateIp, extractDriveFileId, normalizeDriveUrl, normalizeImageForMeta } from "../src/lib/upload-media.js";
+import { assertPublicHttpsUrl, fetchPublicImage, fetchPublicAudio, fetchPublicVideo, decodeImageBase64, imageExtensionFor, isPrivateIp, extractDriveFileId, normalizeDriveUrl, normalizeImageForMeta } from "../src/lib/upload-media.js";
 
 const TINY_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
@@ -316,6 +316,28 @@ test("fetchPublicAudio re-validates the SSRF check after following a redirect to
     throw new Error("bu URL'e gidilmemeliydi");
   };
   await assert.rejects(() => fetchPublicAudio("https://public.example.com/redirect", { fetchImpl, lookup }), /özel\/yerel/);
+});
+
+// compose_reel_audio (bkz. src/reel-audio-compose.js) düzenlenecek mevcut
+// videosu için — fetchPublicImage/fetchPublicAudio ile aynı SSRF-güvenli
+// indirme çekirdeğini paylaşır.
+test("fetchPublicVideo downloads a valid MP4 and returns its buffer + mimeType", async () => {
+  const lookup = async () => [{ address: "93.184.216.34" }];
+  const bytes = Buffer.from([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70]);
+  const fetchImpl = async () => ({
+    ok: true, status: 200,
+    headers: { get: (name) => ({ "content-type": "video/mp4", "content-length": String(bytes.length) }[name] || null) },
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+  });
+  const { buffer, mimeType } = await fetchPublicVideo("https://example.com/reel.mp4", { fetchImpl, lookup });
+  assert.equal(mimeType, "video/mp4");
+  assert.equal(buffer.length, bytes.length);
+});
+
+test("fetchPublicVideo rejects an unsupported content type (e.g. an image mistakenly passed as a video URL)", async () => {
+  const lookup = async () => [{ address: "93.184.216.34" }];
+  const fetchImpl = async () => ({ ok: true, status: 200, headers: { get: (name) => (name === "content-type" ? "image/png" : null) }, arrayBuffer: async () => new ArrayBuffer(4) });
+  await assert.rejects(() => fetchPublicVideo("https://example.com/not-a-video.png", { fetchImpl, lookup }), /Desteklenmeyen video tipi/);
 });
 
 test("normalizeImageForMeta produces a file that is genuinely re-decodable with the expected pixel dimensions and the declared Content-Type — not just bytes that happen not to throw", async () => {

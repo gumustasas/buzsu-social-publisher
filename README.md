@@ -508,6 +508,63 @@ aynı `GEMINI_API_KEY`'i kullanır — ayrı bir hesap/anahtar gerekmez.
   fonksiyonda yapılır. **İlk gerçek (ücretli, 360p) deneme öncesinde bu alan
   adlarının resmi dokümandan teyit edilmesi önerilir.**
 
+## Türkçe seslendirme + AI müzik (generate_video_narration / generate_turkish_voiceover / generate_lyria_music / compose_reel_audio)
+
+Veo/fal/Omni'nin kendi ürettiği video sesini KULLANMAZ — bunun yerine bağımsız,
+kontrollü bir zincir: senaryo → Türkçe voice-over metni → gerçek Türkçe TTS
+sesi → senaryoya uygun sözsüz müzik → FFmpeg ile mix. Mevcut Veo/Omni/FFmpeg
+koduna dokunmaz, tamamen ek/bağımsız bir katmandır.
+
+- **`generate_video_narration`**: ÜCRETSİZ (yalnızca metin üretimi, mevcut
+  `generateContent` deseniyle). Video süresine göre Türkçe kelime hızı tahmini
+  (`TURKISH_WORDS_PER_SECOND = 2.5`, ~150 kelime/dk — belgelenmiş bir Türkçe
+  "kesin" oran yok, bu bir TAHMİN) kullanılarak hedef kelime sayısı promptta
+  istenir; ayrıca senaryodan bir `musicBrief` türetilir.
+- **`generate_turkish_voiceover`**: `gemini-3.1-flash-tts-preview` (Interactions
+  API, `POST /v1beta/interactions`) ile GERÇEK Türkçe (`tr-TR`) ses üretir —
+  Türkçe desteklenmiyorsa `TURKISH_TTS_UNAVAILABLE` hatası döner, **başka bir
+  dile asla otomatik geçilmez**. Gerçek ses süresi WAV başlığından veya ham
+  L16 PCM'den **ffmpeg olmadan, matematiksel olarak** ölçülür (Vercel
+  serverless'ta ffmpeg yok). `targetDurationSeconds` verilirse ve gerçek süre
+  bunu %15'ten fazla aşarsa **otomatik hızlandırma yapılmaz** —
+  `VOICEOVER_TOO_LONG` hatası döner, metni AI ile kısaltıp tekrar denemek
+  gerekir.
+- **`generate_lyria_music`**: `lyria-3-clip-preview` (varsayılan, ~30sn) veya
+  `lyria-3-pro-preview` (~3dk'ya kadar) ile sözsüz müzik üretir. Kullanıcıdan
+  ayrıca bir müzik promptu İSTEMEZ — `musicPrompt` verilmezse `scenario` +
+  `musicBrief`'ten otomatik türetilir; "Instrumental only. No vocals." her
+  zaman metne eklenir (response_format'taki `instrumental` alanı yoksayılsa
+  bile).
+- **`compose_reel_audio`**: ÜCRETSİZDİR (yalnızca FFmpeg) — `confirmed`
+  gerektirmez. Video + [seslendirme] + [müzik] birleşimini
+  `render-product-video.yml` ile AYNI mimariyle (Vercel süre/bellek sınırları
+  riskli olduğu için GitHub Actions kuyruğu + `video-jobs.js` üzerinden Vercel
+  Blob'da durum) yapar — ayrı bir mekanizma icat edilmedi. Seslendirme ana ses
+  (0dB); müzik varsayılan ~-16dB altına alınır ve seslendirme çalarken
+  `sidechaincompress` ile otomatik kısılır ("ducking"); çıkışta `alimiter` ile
+  clipping önlenir. Video akışı **yeniden kodlanmaz** (`-c:v copy`) — yalnızca
+  ses işlenir.
+- **Veo/fal prompt varsayılanı değişti**: artık varsayılan olarak
+  `buildVideoPromptSections`'a "Sessiz video: konuşma, anlatım, arka plan
+  müziği veya otomatik altyazı ekleme" kısıtı ekleniyor (Veo'nun kendi sesi bu
+  yeni ses zinciriyle çakışırdı) — `allowNativeAudio:true` ile kaldırılabilir
+  (dashboard'da "Video promptunu önizle" düğmesinin yanındaki onay kutusu).
+  Serbest metin promptu (`freePrompt`) bu şablonu hiç kullanmadığı için
+  etkilenmez.
+- **Test kapsamı dışı bırakılan tek şey**: gerçek `BLOB_READ_WRITE_TOKEN` +
+  `@vercel/blob` `put()` akışı — bu depoda o modülü mock'layan bir test
+  altyapısı yok, gerçek bir ağ isteği tetiklemek "gerçek çağrı yapılmaz"
+  ilkesini ihlal ederdi.
+
+**Bilinen doğrulama sınırları** (Omni'deki aynı ağ politikası kısıtı nedeniyle
+`ai.google.dev`'e doğrudan erişim yok, arama sonuçlarıyla çapraz doğrulandı):
+model kimlikleri (`gemini-3.1-flash-tts-preview`, `lyria-3-clip-preview`,
+`lyria-3-pro-preview`) doküman sayfa URL'lerinden alındığı için yüksek
+güvenilirlikte; ancak TTS/Lyria `response_format` içindeki tam alan adları
+(`voice_name`, `language_code`, `instrumental`, `duration_seconds`) ve çıktı
+dosyasının Omni'deki gibi Files API ACTIVE beklemesi gerekip gerekmediği
+**doğrulanmadı** — gerçek ücretli ilk denemeden önce teyit edilmesi önerilir.
+
 ## Sonraki adım
 
 Dry-run doğru çalıştıktan sonra Meta API için ayrı gönderim scripti eklenir. O aşamada da önce test modu, sonra tek kayıtla kontrollü canlı paylaşım yapılmalıdır.
