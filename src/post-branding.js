@@ -185,21 +185,32 @@ export async function composeVideoFrame(imageBuffer, { title } = {}) {
 // — logonun kendi renk paletiyle tasarlandığı zemine uygun — ve başlık/alt
 // başlık metni de aynı sebeple koyu laciverte çevrildi (eskiden beyazdı,
 // artık açık zeminde okunmuyordu).
-export async function composeClosingScene({ title = "Buzsu – İhtiyacınıza uygun su çözümünü keşfedin", subtitle = "buzsu.com.tr" } = {}) {
-  const logoTargetWidth = 220;
+export async function composeClosingScene({
+  title = "Su arıtma sistemleri ürünlerinde en iyi fiyat garantisi",
+  subtitle = "Daha fazlası için buzsu.com.tr'yi ziyaret edin"
+} = {}) {
+  const logoTargetWidth = 260;
   const logoMeta = await sharp(LOGO_PATH).metadata();
   const logoHeight = Math.round((logoMeta.height / logoMeta.width) * logoTargetWidth);
   const logoBuffer = await sharp(LOGO_PATH).resize(logoTargetWidth, logoHeight).toBuffer();
   const logoLeft = Math.round((VIDEO_WIDTH - logoTargetWidth) / 2);
-  const logoTop = Math.round(VIDEO_HEIGHT * 0.36);
+  const logoTop = Math.round(VIDEO_HEIGHT * 0.34);
 
+  // NOT: title/subtitle burada gerçek bir SVG <text> düğümüne değil,
+  // doğrudan opentype.js ile üretilen bir vektör <path>'e dönüşüyor — yani
+  // XML-escape (&, <, >, ', ") burada bir güvenlik/geçerlilik faydası
+  // sağlamaz, tam tersine kesme işareti gibi karakterleri "&apos;" gibi
+  // harf harf çizilen bozuk bir metne çevirir. Bu yüzden ham metin
+  // kullanılıyor (title'daki "buzsu.com.tr'yi" bu yüzden escapeXml'den
+  // GEÇİRİLMİYOR — geçirilirse kesme işareti yerine "&apos;" harfleri çizilir).
   const titleSize = 46;
-  const escapedTitle = escapeXml(title);
-  const titleLines = wrapTitle(escapedTitle, titleSize, VIDEO_WIDTH - 140, 3);
+  const titleLines = wrapTitle(title, titleSize, VIDEO_WIDTH - 140, 3);
   const titleLineHeight = titleSize * 1.25;
   const titleStartY = logoTop + logoHeight + 90;
-  const subtitleSize = 34;
-  const subtitleY = titleStartY + titleLines.length * titleLineHeight + 30;
+  const subtitleSize = 40;
+  const subtitleLines = wrapTitle(subtitle, subtitleSize, VIDEO_WIDTH - 140, 2);
+  const subtitleLineHeight = subtitleSize * 1.25;
+  const subtitleStartY = titleStartY + titleLines.length * titleLineHeight + 30;
 
   const textColor = "#04102b";
   const centeredPath = (text, y, size) => {
@@ -210,7 +221,7 @@ export async function composeClosingScene({ title = "Buzsu – İhtiyacınıza u
 
   const textSvg = Buffer.from(`<svg width="${VIDEO_WIDTH}" height="${VIDEO_HEIGHT}" xmlns="http://www.w3.org/2000/svg">
     ${titleLines.map((line, i) => centeredPath(line, titleStartY + i * titleLineHeight, titleSize)).join("")}
-    ${centeredPath(escapeXml(subtitle), subtitleY, subtitleSize)}
+    ${subtitleLines.map((line, i) => centeredPath(line, subtitleStartY + i * subtitleLineHeight, subtitleSize)).join("")}
   </svg>`);
 
   const background = await sharp(CLOSING_BACKGROUND_PATH)
