@@ -594,12 +594,8 @@ FFmpeg'i bu adımda hiç çalıştırmaz. **GERÇEK PARA HARCAR** (bir inference
 
 - **`src/lib/reel-script-schema.js`**: `validateReelScript()` — provider'dan
   gelen ham JSON'un tek doğrulama katmanı:
-  - **Claims grounding**: `claimsUsed`'deki her kayıt (`{claim, sourceUrl}`)
-    `getBuzsuProductContext`'in `verifiedFacts`'inden GERÇEKTEN
-    doğrulanmalı (sourceUrl bilinen kaynaklardan biri olmalı VE claim metni
-    o kaynaktaki gerçek bir cümleyle örtüşmeli) — yoksa **`UNVERIFIED_PRODUCT_CLAIM`**
-    ile TÜM üretim reddedilir. Creative sloganlar/genel reklam dili
-    `claimsUsed`'e hiç girmez, kaynak gerektirmez.
+  - **Claims grounding policy**: creative language is allowed by default; normal yaratıcı reklam dili grounding veya source URL gerektirmez. Yalnız deterministik olarak tespit edilen factual/high-risk ürün claim'leri doğrulanır. `claimsUsed` öğeleri `{claim, provenance, sourceUrl?}` biçiminde normalize edilebilir: Product Intelligence ile doğrulanan claim `provenance:"verified"` ve ilgili gerçek `sourceUrl` değerini korur; kullanıcının gerçek `userBrief` metniyle server tarafında desteklenen makul claim `provenance:"user_provided"` değerini korur ve source URL taşımak zorunda değildir. Modelin veya client'ın gönderdiği provenance değerine güvenilmez.
+  - **Fail-closed güvenlik**: sağlık/güvenlik, sertifika/onay, garanti, kapasite/debi, ölçülebilir performans, yüzde/oran, tasarruf ve bakım süresi gibi yüksek-risk kategorilerde korumalar devam eder. Bu iddialar güvenilir Product Intelligence bilgisiyle doğrulanamıyorsa **`UNVERIFIED_PRODUCT_CLAIM`** ile tüm üretim reddedilir; `user_provided` bir güvenlik bypass'ı değildir.
   - **Sahne zamanlaması**: 0'dan başlama, çakışmama, negatif olmama, toplam
     süreyi aşmama — ihlalde **`INVALID_SCENE_TIMING`**.
   - **Narration bütçesi**: `video-narration.js`'teki
@@ -702,3 +698,4 @@ Vercel Pro kurulumu için proje kökü bu reponun kökü (Root Directory boş b�
 `run-publisher.ps1` (`npm run publish` → `src/publish-approved.js`), Windows'ta **yalnızca yerel/manuel** tek seferlik tetikleme için bir seçenektir — production'da buna karşılık gelen, zamanlanmış (Görev Zamanlayıcı) bir görev **yoktur** (doğrulandı). Aynı anda hem bunu zamanlanmış olarak çalıştırıp hem Vercel Cron'u açık bırakmayın: ikisi de aynı Airtable kuyruğuna karşı `runPublisher()`'ı çalıştırır ve lease mekanizması atomik olmadığı için (özellikle saat başlarında, Vercel Cron'un tetiklendiği anlarda) aynı kaydın iki kez yayınlanma riski vardır.
 
 GitHub Actions manuel doğrulama için kullanılabilir.
+
