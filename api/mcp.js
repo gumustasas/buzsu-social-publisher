@@ -21,6 +21,7 @@ import { generateVideoNarration, NARRATION_STYLES } from "../src/video-narration
 import { generateTurkishVoiceover, turkishVoiceoverStatus, TTS_STYLES } from "../src/turkish-tts.js";
 import { generateLyriaMusic, lyriaMusicStatus, LYRIA_TIERS } from "../src/lyria-music.js";
 import { composeReelAudio, getReelAudioStatus } from "../src/reel-audio-compose.js";
+import { getBuzsuProductContext } from "../src/lib/product-intelligence.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
 const SERVER_INFO = { name: "buzsu-social-publisher", version: "1.0.0" };
@@ -370,6 +371,18 @@ const TOOLS = [
         model: { type: "string", description: "generate_omni_video_edit yanıtındaki model (isteğe bağlı, günlükleme amaçlı)." }
       },
       required: ["interactionId"]
+    }
+  },
+  {
+    name: "get_buzsu_product_context",
+    description: "AI Reels V2 senaryo yazımından ÖNCE GERÇEK Buzsu ürün bilgisini buzsu.com.tr'den (öncelik: llms-full.txt grounding + mevcut katalog/görsel modülleri; yalnızca destekleyici olarak ürün sayfası meta description) okur ve normalize eder. verifiedFacts SADECE kaynak metinden alınan birebir alıntılardır — AI ile yeniden yazılmaz/uydurulmaz — her biri sourceUrl taşır. prohibitedClaims, kaynakta doğrulanmayan sabit bir iddia kategorisi listesidir (sağlık/sertifika/garanti/performans/menşe), AI bu kategorilerde iddia UYDURMAMALIDIR. ÜCRETSİZDİR, hiçbir AI/paid API çağrısı yapmaz. productId veya productUrl'den en az biri gerekli (ikisi de verilirse productUrl önceliklidir). productUrl yalnızca buzsu.com.tr/www.buzsu.com.tr kabul eder (www'siz otomatik canonicalize edilir), başka host'lar ve yönlendirme sonucu başka host'a çıkan zincirler reddedilir. Sonuç ~30 dakika Vercel Blob'da önbelleğe alınır (contentHash/fetchedAt ile) — refresh:true ile zorla yenilenir.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        productId: { type: "string", description: "list_products'tan alınan ürün id'si (Airtable kaydı veya katalog ürünü)." },
+        productUrl: { type: "string", description: "Ürün sayfası URL'si — yalnızca buzsu.com.tr/www.buzsu.com.tr kabul edilir." },
+        refresh: { type: "boolean", description: "true ise önbelleği atlar, ürünü yeniden okur (varsayılan false)." }
+      }
     }
   },
   {
@@ -789,6 +802,10 @@ export async function callTool(name, args) {
         videoUrl = blob.url;
       }
       return JSON.stringify({ ok: true, status: "COMPLETED", videoUrl }, null, 2);
+    }
+    case "get_buzsu_product_context": {
+      const result = await getBuzsuProductContext({ productId: args.productId, productUrl: args.productUrl, refresh: args.refresh === true });
+      return JSON.stringify({ ok: true, ...result }, null, 2);
     }
     case "generate_video_narration": {
       const narration = await generateVideoNarration(
