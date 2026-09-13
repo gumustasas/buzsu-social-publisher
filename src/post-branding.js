@@ -212,6 +212,14 @@ export async function composeClosingScene({
   const subtitleLineHeight = subtitleSize * 1.25;
   const subtitleStartY = titleStartY + titleLines.length * titleLineHeight + 30;
 
+  // Alt başlık artık serbest bir CTA cümlesi olduğundan (bkz. subtitle),
+  // site adresi ayrıca, kendi başına büyük/kalın bir damga satırı olarak da
+  // tekrar ediliyor — CTA cümlesinin içine gömülü "buzsu.com.tr" kolayca
+  // atlanabilir, ayrı bir satır olarak daha görünür.
+  const urlLine = "WWW.BUZSU.COM.TR";
+  const urlSize = 44;
+  const urlY = subtitleStartY + subtitleLines.length * subtitleLineHeight + 50;
+
   const textColor = "#04102b";
   const centeredPath = (text, y, size) => {
     const width = boldFont.getAdvanceWidth(text, size);
@@ -222,6 +230,7 @@ export async function composeClosingScene({
   const textSvg = Buffer.from(`<svg width="${VIDEO_WIDTH}" height="${VIDEO_HEIGHT}" xmlns="http://www.w3.org/2000/svg">
     ${titleLines.map((line, i) => centeredPath(line, titleStartY + i * titleLineHeight, titleSize)).join("")}
     ${subtitleLines.map((line, i) => centeredPath(line, subtitleStartY + i * subtitleLineHeight, subtitleSize)).join("")}
+    ${centeredPath(urlLine, urlY, urlSize)}
   </svg>`);
 
   const background = await sharp(CLOSING_BACKGROUND_PATH)
