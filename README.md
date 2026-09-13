@@ -508,6 +508,40 @@ aynı `GEMINI_API_KEY`'i kullanır — ayrı bir hesap/anahtar gerekmez.
   fonksiyonda yapılır. **İlk gerçek (ücretli, 360p) deneme öncesinde bu alan
   adlarının resmi dokümandan teyit edilmesi önerilir.**
 
+## AI Reels V2 — Creative Provider abstraction + model registry (src/creative-providers/)
+
+AI Reels V2 mimarisinin ikinci aşaması (PR-B): `generate_reel_script` (henüz
+eklenmedi) için OpenAI+Google model DISCOVERY ve tier registry katmanı.
+**Hiçbir tahmini/uydurma model adı registry'ye eklenmez** — yalnızca gerçek
+`GET /v1/models` (OpenAI) ve `GET /v1beta/models` (Google) uç noktalarından
+(ikisi de ÜCRETSİZ envanter okuma, generation/inference DEĞİL) o an
+erişilebilir modeller normalize edilir.
+
+- **`src/creative-providers/openai.js`**: `listOpenAiModels()`. OpenAI'nin
+  `/v1/models` yanıtı capability/tip alanı içermediğinden (Google'daki
+  `supportedGenerationMethods`'ın eşdeğeri yok), görsel/TTS/embedding/
+  moderation/transkripsiyon/gerçek-zamanlı-ses ailelerini bilinen ID
+  kalıplarına göre bir DENYLIST ile eler — **doğrulanmış bir capability
+  alanı değil, en iyi tahmin bir sezgiseldir** (kod içinde belgelenmiştir).
+- **`src/creative-providers/google.js`**: `listGoogleModels()`. Google
+  GERÇEK bir capability sinyali döner (`supportedGenerationMethods`
+  içinde `generateContent`); buna ek olarak görsel/Veo/Lyria/TTS gibi
+  generateContent destekleyen ama senaryo-metni modeli OLMAYAN aileler
+  isim deny-list'iyle elenir. Sayfalama (`nextPageToken`) takip edilir.
+- **`src/creative-providers/model-registry.js`**: tier eşlemesi (economy/
+  balanced/quality/premium) **tamamen env override + gerçek discovery
+  doğrulamasına** dayanır — hard-code edilmiş varsayılan model adı YOKTUR:
+  - Override yok → `available:false, reason:"not_configured"` (tahmini model atanmaz).
+  - Override var ama discovery'de yok → `available:false, reason:"model_not_found"` (sessizce başka modele geçilmez).
+  - `OPENAI_CREATIVE_ECONOMY_MODEL` / `_BALANCED_MODEL` / `_QUALITY_MODEL` / `_PREMIUM_MODEL` ve `GOOGLE_CREATIVE_*_MODEL` env değişkenleriyle yapılandırılır.
+  - `resolveAutoSelection(tier, ...)`: "auto" kendi tahmin ETMEZ, sabit öncelik sırasıyla (openai → google) hangi sağlayıcı bu tier için gerçekten yapılandırılmış+erişilebilirse onu seçer; hiçbiri uygun değilse `reason:"no_available_provider_for_tier"` — farklı bir tier'a veya daha pahalı bir modele ASLA sessizce düşülmez.
+  - `isModelSelectable(provider, model, discovery)`: "Özel" mod için — kullanıcı serbest metinle model adı yazamaz, yalnızca discovery'de GERÇEKTEN listelenmiş bir çifti seçebilir (dashboard PR-D bunu kullanacak).
+- API key yoksa (`OPENAI_API_KEY`/`OPENAI_IMAGE_API_KEY`, `GEMINI_API_KEY`)
+  hiçbir fetch atılmadan `available:false, reason:"missing_api_key"` döner —
+  hata fırlatılmaz, diğer sağlayıcıyı etkilemez.
+- Henüz `generate_reel_script`'e veya `api/mcp.js`'e bağlanmadı (PR-C/PR-D'de
+  kullanılacak) — bu PR yalnızca discovery+registry katmanıdır.
+
 ## AI Reels V2 — Product Intelligence (get_buzsu_product_context)
 
 AI Reels V2 mimarisinin ilk aşaması (PR-A): senaryo yazımından ÖNCE GERÇEK Buzsu
