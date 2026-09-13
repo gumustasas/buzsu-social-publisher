@@ -357,11 +357,12 @@ const TOOLS = [
   },
   {
     name: "get_omni_video_status",
-    description: "generate_omni_video_edit ile başlatılmış bir Omni interaction'ın durumunu sorgular. Tamamlandıysa videoyu indirip Vercel Blob'a yükler ve herkese açık videoUrl döner; henüz bitmediyse IN_PROGRESS döner.",
+    description: "generate_omni_video_edit ile başlatılmış bir Omni interaction'ın (veya çıktı dosyasının) durumunu sorgular. Tamamlandıysa (COMPLETED) videoyu indirip Vercel Blob'a yükler ve herkese açık videoUrl döner; henüz bitmediyse (IN_PROGRESS/OUTPUT_PROCESSING) tüm durum alanlarını (outputFileId dahil) olduğu gibi geri döner — BİR SONRAKİ ÇAĞRIDA outputFileId'yi bu yanıttan aynen aktarın, aksi halde takip gereksiz yere /interactions/{id} yoluna düşer.",
     inputSchema: {
       type: "object",
       properties: {
         interactionId: { type: "string", description: "generate_omni_video_edit yanıtındaki interactionId." },
+        outputFileId: { type: "string", description: "İsteğe bağlı — önceki bir get_omni_video_status/generate_omni_video_edit yanıtında outputFileId doluysa (status OUTPUT_PROCESSING olduğunda), bu çağrıya aynen aktarın. Verilirse durum sorgusu GET /interactions/{id} yerine doğrudan Files API'yi (GET /v1beta/files/{outputFileId}) sorgular." },
         model: { type: "string", description: "generate_omni_video_edit yanıtındaki model (isteğe bağlı, günlükleme amaçlı)." }
       },
       required: ["interactionId"]
@@ -665,8 +666,12 @@ export async function callTool(name, args) {
     }
     case "get_omni_video_status": {
       if (!String(args.interactionId || "").trim()) throw new Error("interactionId gerekli.");
-      const status = await omniInteractionStatus({ interactionId: args.interactionId, model: args.model || OMNI_MODEL }, process.env);
-      if (status.status !== "COMPLETED") return JSON.stringify({ ok: true, status: status.status }, null, 2);
+      const status = await omniInteractionStatus({ interactionId: args.interactionId, outputFileId: args.outputFileId || null, model: args.model || OMNI_MODEL }, process.env);
+      // status.status===undefined tüm alanları (outputFileId dahil)
+      // olduğu gibi geri döner — aksi halde çağıran taraf outputFileId'yi
+      // kaybedip bir sonraki sorguda gereksiz yere GET /interactions/{id}
+      // yoluna düşerdi (bkz. yukarıdaki tool açıklaması).
+      if (status.status !== "COMPLETED") return JSON.stringify({ ok: true, ...status }, null, 2);
       // Google, delivery:"uri" istenmiş olsa bile GET /interactions/{id} ile
       // durum sorgularken videoyu inline base64 döndürebiliyor (bkz.
       // src/omni-video.js:extractOmniVideoOutput) — fileUri yoksa videoBase64

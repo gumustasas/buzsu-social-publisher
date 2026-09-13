@@ -275,12 +275,11 @@ export async function submitOmniVideoEdit(existingVideoUrl, env = process.env, {
   // istek gövdesi resmi dokümanla (arama motoru üzerinden erişilen özet +
   // kullanıcı tarafından ayrıca teyit edilen şema) karşılaştırılıp
   // düzeltildi: input dizisi düz {type,uri,text} öğeleri (role/content/
-  // file_data/inline_data DEĞİL); response_format bir NESNE (dokümanda dizi
-  // de kabul ediliyor ama tek-öğe nesne şekli daha net doğrulanan örnekle
-  // eşleşiyor), aspect_ratio/resolution generation_config'te değil
-  // response_format'ın İÇİNDE. Yine de tek bir istek gövdesi burada izole
-  // tutuluyor — gerçek şema küçük bir noktada farklı çıkarsa düzeltme tek
-  // buradan.
+  // file_data/inline_data DEĞİL); response_format en net doğrulanan örnekte
+  // görülen NESNE şekliyle gönderiliyor (aspect_ratio/resolution
+  // generation_config'te değil response_format'ın İÇİNDE). Yine de tek bir
+  // istek gövdesi burada izole tutuluyor — gerçek şema küçük bir noktada
+  // farklı çıkarsa düzeltme tek buradan.
   const response = await fetch(`${API_BASE}/interactions`, {
     method: "POST",
     headers: omniHeaders(env),

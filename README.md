@@ -454,8 +454,8 @@ aynı `GEMINI_API_KEY`'i kullanır — ayrı bir hesap/anahtar gerekmez.
   dokümante edilen düz `{type:"video"|"image", uri, mime_type}` / `{type:"text",
   text}` öğeleri olarak eklenir (inline base64 kullanılmaz). Çıktı isteği
   `response_format: {type:"video", delivery:"uri", aspect_ratio, resolution}`
-  şeklinde bir NESNE olarak gönderilir (doküman dizi biçimini de kabul ediyor;
-  bu iki şekil de geçerli — burada tek-öğe nesne şekli kullanılıyor).
+  şeklinde bir NESNE olarak gönderilir — en net doğrulanan örnekte görülen
+  şekil budur.
 - **Çözünürlük**: `360p` (varsayılan, en ucuz — taslak/deneme için önerilir),
   `720p`, `1080p`, `4k`.
 - **`confirmed:true` şart** — hem MCP aracında hem HTTP/dashboard katmanında;

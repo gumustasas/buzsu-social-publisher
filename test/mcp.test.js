@@ -258,6 +258,39 @@ test("tools/call: generate_omni_video_edit'in REGION_UNAVAILABLE hatası isError
   }
 });
 
+// Bulunan aktarım hatası: get_omni_video_status önceki turda outputFileId'yi
+// kabul etmiyor/geri döndürmüyordu — bu, MCP istemcisinin (dashboard değil,
+// ChatGPT/Codex gibi bağlayıcılar) her sorguda gereksiz yere
+// GET /interactions/{id}'ye düşmesine yol açıyordu. Bu test tam döngüyü
+// (outputFileId ver -> yalnızca Files API çağrılsın -> PROCESSING'de
+// outputFileId korunsun) doğruluyor.
+test("get_omni_video_status: outputFileId verilirse yalnızca Files API'yi sorgular (GET /interactions/{id}'ye gitmez) ve PROCESSING'de outputFileId'yi yanıtta korur", async () => {
+  const originalFetch = global.fetch;
+  let requestedUrl = null;
+  global.fetch = async (url) => {
+    requestedUrl = String(url);
+    return { ok: true, json: async () => ({ name: "files/out789", state: "PROCESSING" }) };
+  };
+  try {
+    const text = await callTool("get_omni_video_status", { interactionId: "v1_xyz", outputFileId: "out789", model: "gemini-omni-1.1-flash" });
+    assert.equal(requestedUrl, "https://generativelanguage.googleapis.com/v1beta/files/out789");
+    const parsed = JSON.parse(text);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.status, "OUTPUT_PROCESSING");
+    assert.equal(parsed.outputFileId, "out789"); // korunmalı — aksi halde bir sonraki çağrı bunu kaybeder
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// BLOB_READ_WRITE_TOKEN gerektiren gerçek Blob upload akışı burada
+// KASITLI olarak test edilmiyor — bu depodaki hiçbir test @vercel/blob'un
+// put() fonksiyonunu mock'lamıyor (modül mock altyapısı yok); bir token
+// verip gerçek bir ağ isteği tetiklemek "gerçek ücretli/ağ çağrısı yapılmaz"
+// ilkesini ihlal ederdi. ACTIVE durumundaki dosyanın doğru URL'den doğru
+// şekilde indirildiği (downloadOmniVideo) zaten src/omni-video.js ve
+// api/omni-video.js testlerinde ayrı ayrı doğrulanıyor; burada yalnızca
+// MCP'ye özgü outputFileId aktarım hatası (asıl bulunan sorun) test edilir.
 test("tools/call: code'u olmayan (mevcut/genel) bir hata hâlâ düz \"Hata: ...\" metni döner (regresyon — davranış bozulmadı)", async () => {
   const response = await handleMessage({ id: 1, method: "tools/call", params: { name: "get_draft", arguments: {} } });
   assert.equal(response.result.isError, true);
