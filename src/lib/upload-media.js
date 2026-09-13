@@ -182,6 +182,17 @@ export async function fetchPublicAudio(rawUrl, { maxBytes = MAX_AUDIO_BYTES, fet
   return fetchPublicMediaFile(rawUrl, { maxBytes, fetchImpl, lookup, allowedMimeTypes: ALLOWED_AUDIO_MIME_TYPES, mediaLabel: "Müzik", mediaTypesLabel: "MP3/MP4/WAV/OGG" });
 }
 
+// compose_reel_audio'nun (bkz. src/reel-audio-compose.js) düzenlenecek
+// mevcut videosu için — fetchPublicImage/fetchPublicAudio ile aynı
+// SSRF-güvenli indirme mantığı, yalnızca izin verilen MIME türleri ve
+// (video dosyaları daha büyük olduğu için) boyut sınırı farklı.
+export const ALLOWED_VIDEO_MIME_TYPES = new Set(["video/mp4", "video/quicktime", "video/webm"]);
+export const MAX_VIDEO_BYTES = 200 * 1024 * 1024;
+
+export async function fetchPublicVideo(rawUrl, { maxBytes = MAX_VIDEO_BYTES, fetchImpl = fetch, lookup } = {}) {
+  return fetchPublicMediaFile(rawUrl, { maxBytes, fetchImpl, lookup, allowedMimeTypes: ALLOWED_VIDEO_MIME_TYPES, mediaLabel: "Video", mediaTypesLabel: "MP4/MOV/WebM" });
+}
+
 // ChatGPT/kullanıcı tarafından doğrudan base64 olarak gönderilen bir
 // görseli doğrular ve arabelleğe çözer.
 export function decodeImageBase64(base64, mimeType, { maxBytes = MAX_MEDIA_BYTES } = {}) {

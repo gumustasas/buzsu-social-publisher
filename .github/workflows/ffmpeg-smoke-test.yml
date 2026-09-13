@@ -44,3 +44,30 @@ jobs:
           path: local-output/smoke-test/
           retention-days: 14
           if-no-files-found: warn
+
+  reel-audio-smoke-test:
+    runs-on: ubuntu-latest
+    # compose_reel_audio'nun (src/lib/reel-audio-ffmpeg.js) sidechaincompress/
+    # amix/alimiter filtre grafiğini GERÇEK ffmpeg'e karşı doğrular — depo
+    # fixture'ı gerektirmez, girdiler ffmpeg'in kendi lavfi jeneratörleriyle
+    # (color/sine) sentetik üretilir (bkz. scripts/smoke-test-reel-audio.mjs).
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Render + verify reel audio smoke test
+        run: node scripts/smoke-test-reel-audio.mjs
+      - name: Upload smoke test output (MP4 + rapor)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reel-audio-smoke-test-output
+          path: local-output/smoke-test-reel-audio/
+          retention-days: 14
+          if-no-files-found: warn

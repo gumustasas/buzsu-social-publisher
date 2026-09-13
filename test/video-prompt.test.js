@@ -40,3 +40,24 @@ test("buildVideoPrompt is a thin convenience wrapper around sections+render", ()
   const prompt = buildVideoPrompt("Code Advantage", "hareket metni");
   assert.equal(prompt, renderVideoPrompt(buildVideoPromptSections({ productTitle: "Code Advantage", motion: "hareket metni" })));
 });
+
+// Türkçe seslendirme + Lyria müzik + FFmpeg mix mimarisi eklenince Veo/fal'ın
+// kendi sesi (varsa) bu katmanlarla çakışır — bu yüzden varsayılan olarak
+// "sessiz video" kısıtı eklenir; kullanıcı allowNativeAudio:true ile bunu
+// kaldırabilir (bkz. api/reels.js).
+test("buildVideoPromptSections adds a 'no audio' constraint by default (Veo/fal native audio would collide with the TTS+Lyria+FFmpeg mix pipeline)", () => {
+  const sections = buildVideoPromptSections({ productTitle: "Code Advantage" });
+  assert.match(sections.constraints, /Sessiz video/);
+});
+
+test("buildVideoPromptSections omits the 'no audio' constraint when allowNativeAudio:true is explicitly given", () => {
+  const sections = buildVideoPromptSections({ productTitle: "Code Advantage", allowNativeAudio: true });
+  assert.doesNotMatch(sections.constraints, /Sessiz video/);
+});
+
+test("buildVideoPrompt forwards its third argument as allowNativeAudio", () => {
+  const promptDefault = buildVideoPrompt("Code Advantage", "hareket metni");
+  const promptWithAudio = buildVideoPrompt("Code Advantage", "hareket metni", true);
+  assert.match(promptDefault, /Sessiz video/);
+  assert.doesNotMatch(promptWithAudio, /Sessiz video/);
+});
