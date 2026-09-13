@@ -1,4 +1,4 @@
-/* AI REELS V2 — PR-D. Bu dosya yalnız Product -> Script -> Scene Approval akışıdır. */
+/* AI REELS V2 — PR-D (Product -> Script -> Scene Approval) + PR-E (Step 5: sahne bazlı Veo video üretimi). Adım 6/7 (Ses & Müzik, Final Reel) hâlâ pasif/sonraki PR. */
 (function () {
   "use strict";
 
@@ -17,6 +17,8 @@
     reelScript: null,
     approvedScenes: {},
     generatedSceneVideos: {},
+    sceneReferenceImages: {},
+    videoSettings: { modelTier: "auto", resolution: "" },
     narration: null,
     music: null,
     finalVideo: null
@@ -36,6 +38,12 @@
   let pendingPaidTimer = null;
   let selectedProductId = "";
   let productCatalog = [];
+  // Step 5 (PR-E): sahne bazlı Veo onayı — dashboard.html'deki mevcut
+  // #generate-reel danger-button ile AYNI iki-adımlı desen, ama sahne
+  // başına AYRI bir anahtar (confirmKey referans görseli + tier/resolution'ı
+  // da içerir — herhangi biri değişirse onay iptal olur).
+  const pendingSceneConfirm = {};
+  const pendingSceneConfirmTimers = {};
 
   const byId = (id) => document.getElementById(id);
   const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
@@ -50,12 +58,18 @@
     select.innerHTML = values.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(labeler(value))}</option>`).join("");
   }
 
+  function allScenesVideoCompleted() {
+    return Boolean(state.reelScript?.scenes?.length) && state.reelScript.scenes.every((scene) => state.generatedSceneVideos[scene.sceneId]?.status === "completed" && state.generatedSceneVideos[scene.sceneId]?.videoUrl);
+  }
+
   function renderSteps() {
     const labels = ["Ürün", "Kreatif Ayarlar", "AI Senaryo", "Sahne Onayı", "Video Üretimi", "Ses & Müzik", "Final Reel"];
     byId("reels-v2-steps").innerHTML = labels.map((label, index) => {
       const step = index + 1;
-      const passive = step > 4;
-      const complete = step < state.currentStep || (step === 4 && allScenesApproved());
+      // Adım 5 (Video Üretimi) bu PR'da AKTİF hale geldi — yalnız 6/7
+      // (Ses & Müzik, Final Reel) hâlâ pasif ve "Sonraki PR" olarak kalır.
+      const passive = step > 5;
+      const complete = step < state.currentStep || (step === 4 && allScenesApproved()) || (step === 5 && allScenesVideoCompleted());
       const className = `reels-v2-step${complete ? " complete" : step === state.currentStep ? " active" : ""}`;
       return `<button type="button" class="${className}" data-v2-step="${step}"${passive ? " disabled" : ""}>${step}. ${escapeHtml(label)}${passive ? " · Sonraki PR" : ""}</button>`;
     }).join("");
@@ -72,6 +86,9 @@
   function resetScriptState() {
     state.reelScript = null;
     state.approvedScenes = {};
+    state.generatedSceneVideos = {};
+    state.sceneReferenceImages = {};
+    Object.keys(pendingSceneConfirm).forEach(resetSceneConfirm);
     state.currentStep = state.productContext ? 2 : 1;
     byId("reels-v2-script-summary").classList.add("hidden");
     byId("reels-v2-script-summary").innerHTML = "";
@@ -79,7 +96,15 @@
     byId("reels-v2-validate").disabled = true;
     byId("reels-v2-approve-all").disabled = true;
     byId("reels-v2-approval-message").textContent = "";
+    byId("reels-v2-video-scenes").innerHTML = '<p class="hint">Önce Adım 4\'te sahneleri onaylayın.</p>';
+    byId("reels-v2-video-message").textContent = "";
     renderSteps();
+  }
+
+  function resetSceneConfirm(sceneId) {
+    delete pendingSceneConfirm[sceneId];
+    clearTimeout(pendingSceneConfirmTimers[sceneId]);
+    delete pendingSceneConfirmTimers[sceneId];
   }
 
   function settingChanged(invalidateConfirmation = true) {
@@ -257,6 +282,7 @@
     byId("reels-v2-validate").disabled = false;
     byId("reels-v2-approve-all").disabled = false;
     renderSteps();
+    renderVideoScenes();
   }
 
   function collectSceneEdits() {
@@ -282,7 +308,7 @@
     state.reelScript = data.reelScript;
     if (approveAll) state.approvedScenes = Object.fromEntries(state.reelScript.scenes.map((scene) => [scene.sceneId, true]));
     if (approveSceneId) state.approvedScenes[approveSceneId] = true;
-    state.currentStep = allScenesApproved() ? 4 : state.currentStep;
+    state.currentStep = allScenesApproved() ? 5 : state.currentStep;
     autofillAudio(state.reelScript);
     renderScript();
     message.textContent = allScenesApproved() ? "Tüm sahneler doğrulandı ve onaylandı. PR-D akışı tamamlandı." : "Değişiklikler server tarafından doğrulandı.";
@@ -290,6 +316,166 @@
 
   function allScenesApproved() {
     return Boolean(state.reelScript?.scenes?.length) && state.reelScript.scenes.every((scene) => state.approvedScenes[scene.sceneId] === true);
+  }
+
+  // AI Reels V2 PR-E — Step 5 (Video Üretimi). YENİ bir Veo sistemi YAZILMAZ;
+  // burada yalnızca PR-D'nin zaten onayladığı scene.veoPrompt, /api/reel-scene-video
+  // (mevcut submitVeoVideo'yu saran TEK yeni endpoint) ve /api/veo-video
+  // (mevcut, DEĞİŞTİRİLMEMİŞ durum sorgulama endpoint'i) üzerinden çağrılır.
+  //
+  // dashboard.html'deki #generate-reel VEYA #veo-model-tier'a HİÇ dokunulmaz
+  // — bu, o akıştan tamamen AYRI, izole bir sahne bazlı akıştır.
+
+  // RATE_LIMITED (bkz. src/veo-video.js:VeoApiError) — dashboard.html'deki
+  // veoErrorMessage ile AYNI mantık, ama bu dosya izole kalması gerektiği için
+  // (bkz. test/dashboard-reels-v2.test.js) kendi kopyası.
+  function veoErrorMessage(data, fallback) {
+    const base = (data && data.error) || fallback || "Video üretimi başarısız";
+    if (!data || data.code !== "RATE_LIMITED") return base;
+    const alts = (data.alternatives || []).map((item) => item.label || item.tier).join(", ");
+    return `${base}${alts ? ` Alternatif modeller: ${alts}.` : ""}`;
+  }
+
+  // Gerçek backend durumları (IN_PROGRESS/COMPLETED, ya da bir hata) burada
+  // spesifikasyonun istediği sabit UI durum kümesine normalize edilir:
+  // idle | awaiting_confirmation | generating | completed | failed.
+  function sceneVideoUiStatus(sceneId) {
+    const entry = state.generatedSceneVideos[sceneId];
+    if (entry?.pending) return "generating";
+    if (entry?.status === "completed" && entry.videoUrl) return "completed";
+    if (entry?.status === "failed") return "failed";
+    return pendingSceneConfirm[sceneId] ? "awaiting_confirmation" : "idle";
+  }
+
+  function renderVideoScenes() {
+    const container = byId("reels-v2-video-scenes");
+    if (!state.reelScript?.scenes?.length) {
+      container.innerHTML = '<p class="hint">Önce Adım 3-4\'te bir senaryo üretip sahneleri onaylayın.</p>';
+      return;
+    }
+    const images = (state.productContext?.productImageUrls || []).filter(safeUrl);
+    const statusLabels = { idle: "Üretilmedi", awaiting_confirmation: "Onay bekliyor — tekrar bas", generating: "Üretiliyor (Veo)...", completed: "Tamamlandı", failed: "Başarısız" };
+    container.innerHTML = state.reelScript.scenes.map((scene) => {
+      const approved = state.approvedScenes[scene.sceneId] === true;
+      const entry = state.generatedSceneVideos[scene.sceneId];
+      const uiStatus = sceneVideoUiStatus(scene.sceneId);
+      const selectedRef = state.sceneReferenceImages[scene.sceneId] || "";
+      const thumbs = images.map((url) => `<button type="button" class="reels-v2-ref-thumb${selectedRef === url ? " selected" : ""}" data-video-ref-thumb data-scene-id="${escapeHtml(scene.sceneId)}" data-url="${escapeHtml(url)}"><img src="${escapeHtml(url)}" alt=""></button>`).join("")
+        || '<p class="hint">Bu ürün için görsel bulunamadı — referans görseli olmadan Veo video üretilemez.</p>';
+      const buttonLabel = entry?.videoUrl ? "Sahneyi yeniden üret (ücretli)" : "Sahne videosu üret (ücretli)";
+      const disabled = !approved || !selectedRef || uiStatus === "generating";
+      const preview = entry?.videoUrl ? `<video controls src="${escapeHtml(entry.videoUrl)}" style="width:100%;max-width:280px;border-radius:8px;margin-top:8px;background:#0e1a25"></video>` : "";
+      const errorLine = entry?.error ? `<p class="error">${escapeHtml(entry.error)}</p>` : "";
+      return `<article class="reels-v2-scene${uiStatus === "completed" ? " approved" : ""}" data-video-scene-id="${escapeHtml(scene.sceneId)}">
+        <div class="reels-v2-scene-head"><strong>${escapeHtml(scene.sceneId)} · ${escapeHtml(scene.startSeconds)}–${escapeHtml(scene.endSeconds)} sn</strong><span>${approved ? statusLabels[uiStatus] : "Onay bekliyor (Adım 4)"}</span></div>
+        <p class="meta">Referans ürün görseli seçin (image-to-video girdisi):</p>
+        <div class="reels-v2-ref-thumbs">${thumbs}</div>
+        <div class="reels-v2-actions"><button type="button" data-generate-scene-video data-scene-id="${escapeHtml(scene.sceneId)}"${disabled ? " disabled" : ""}>${buttonLabel}</button></div>
+        ${errorLine}${preview}
+      </article>`;
+    }).join("");
+  }
+
+  async function pollSceneVideo(sceneId) {
+    const entry = state.generatedSceneVideos[sceneId];
+    if (!entry || !entry.pending || !entry.jobId) return;
+    try {
+      const response = await v2Api("/api/veo-video", { method: "POST", body: JSON.stringify({ job: { operationName: entry.jobId, model: entry.model } }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(veoErrorMessage(data));
+      const job = data.veo;
+      // Polling ASLA yeni bir iş başlatmaz/mevcut işi yeniden tetiklemez —
+      // yalnızca aynı operationName'in durumunu okur (bkz. api/veo-video.js).
+      if (job.status !== "COMPLETED") {
+        setTimeout(() => pollSceneVideo(sceneId), 5000);
+        return;
+      }
+      const current = state.generatedSceneVideos[sceneId] || entry;
+      state.generatedSceneVideos[sceneId] = {
+        status: "completed",
+        jobId: entry.jobId,
+        model: entry.model,
+        provider: entry.provider,
+        createdAt: entry.createdAt,
+        videoUrl: job.videoUrl || current.videoUrl || null,
+        pending: false,
+        error: job.videoUrl ? null : (job.downloadNote || "Video hazır ama kalıcı bağlantı alınamadı.")
+      };
+      renderVideoScenes();
+      renderSteps();
+    } catch (error) {
+      // §9: hata durumunda ASLA başka bir provider/model'e otomatik geçilmez,
+      // otomatik ikinci bir üretim BAŞLATILMAZ. Önceki (varsa) tamamlanmış
+      // sonuç KORUNUR — yalnızca yeni deneme başarısız işaretlenir.
+      const current = state.generatedSceneVideos[sceneId] || entry;
+      state.generatedSceneVideos[sceneId] = { ...current, pending: false, status: current.videoUrl ? "completed" : "failed", error: error.message };
+      renderVideoScenes();
+    }
+  }
+
+  async function generateSceneVideo(sceneId) {
+    const message = byId("reels-v2-video-message");
+    const scene = state.reelScript?.scenes?.find((item) => item.sceneId === sceneId);
+    if (!scene) return;
+    // §2: onaylanmamış sahne için üretim ASLA tetiklenmez.
+    if (state.approvedScenes[sceneId] !== true) { message.textContent = "Bu sahne henüz onaylanmadı — önce Adım 4'te doğrulayıp onaylayın."; return; }
+    const referenceImageUrl = state.sceneReferenceImages[sceneId];
+    if (!referenceImageUrl) { message.textContent = "Önce bu sahne için bir referans ürün görseli seçin."; return; }
+    const modelTier = state.videoSettings.modelTier;
+    const resolution = state.videoSettings.resolution;
+    const confirmKey = `${sceneId}:${referenceImageUrl}:${modelTier}:${resolution}`;
+    // §8: İLK TIKLAMA ASLA ücretli çağrı tetiklemez — yalnızca özet/onay gösterir.
+    if (pendingSceneConfirm[sceneId] !== confirmKey) {
+      pendingSceneConfirm[sceneId] = confirmKey;
+      clearTimeout(pendingSceneConfirmTimers[sceneId]);
+      pendingSceneConfirmTimers[sceneId] = setTimeout(() => { resetSceneConfirm(sceneId); renderVideoScenes(); }, 8000);
+      renderVideoScenes();
+      message.textContent = `${sceneId}: Google Veo 3.1 ile gerçek bir video oluşturulacak (${Math.max(1, Math.round(scene.endSeconds - scene.startSeconds))} sn, ${resolution || "varsayılan çözünürlük"}, ${modelTier}) ve Google kredinizden düşülecek. Onaylamak için butona 8 saniye içinde tekrar bas.`;
+      return;
+    }
+    resetSceneConfirm(sceneId);
+    const durationSeconds = Math.max(1, Math.round(Number(scene.endSeconds) - Number(scene.startSeconds)));
+    const previous = state.generatedSceneVideos[sceneId] || { status: "idle", jobId: null, model: null, provider: null, createdAt: null, videoUrl: null, error: null };
+    // §12: eski (varsa tamamlanmış) sonuç, yeni üretim BAŞARILI olana kadar
+    // ASLA silinmez — videoUrl burada korunur, yalnızca pending:true eklenir.
+    state.generatedSceneVideos[sceneId] = { ...previous, pending: true, error: null };
+    renderVideoScenes();
+    message.textContent = `${sceneId} için Veo 3.1 video üretimi başladı (Google kredinizden düşülür).`;
+    try {
+      const response = await v2Api("/api/reel-scene-video", {
+        method: "POST",
+        body: JSON.stringify({
+          sceneId,
+          approved: true,
+          confirmed: true,
+          referenceImageUrl,
+          referenceImageRequired: scene.referenceImageRequired === true,
+          veoPrompt: scene.veoPrompt,
+          aspectRatio: state.creativeSettings.aspectRatio,
+          durationSeconds,
+          resolution: resolution || undefined,
+          model: modelTier === "auto" ? undefined : modelTier
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(veoErrorMessage(data));
+      state.generatedSceneVideos[sceneId] = {
+        status: "generating",
+        jobId: data.veo.operationName,
+        model: data.veo.model,
+        provider: data.veo.provider,
+        createdAt: data.veo.createdAt,
+        videoUrl: previous.videoUrl || null,
+        pending: true,
+        error: null
+      };
+      renderVideoScenes();
+      pollSceneVideo(sceneId);
+    } catch (error) {
+      state.generatedSceneVideos[sceneId] = { ...previous, pending: false, status: previous.videoUrl ? "completed" : "failed", error: error.message };
+      renderVideoScenes();
+      message.textContent = error.message;
+    }
   }
 
   async function generateScript() {
@@ -335,6 +521,9 @@
         modelTier: resolved.custom ? data.reelScript.modelTier : resolved.tier
       };
       state.approvedScenes = {};
+      state.generatedSceneVideos = {};
+      state.sceneReferenceImages = {};
+      Object.keys(pendingSceneConfirm).forEach(resetSceneConfirm);
       state.currentStep = 4;
       autofillAudio(state.reelScript);
       renderScript();
@@ -368,6 +557,7 @@
     card.classList.remove("approved");
     card.querySelector(".reels-v2-scene-head span").textContent = "Düzenlendi · yeniden onay gerekli";
     renderSteps();
+    renderVideoScenes();
   });
   byId("reels-v2-scenes").addEventListener("click", (event) => {
     const button = event.target.closest("[data-approve-scene]");
@@ -376,6 +566,30 @@
     if (state.approvedScenes[sceneId]) { state.approvedScenes[sceneId] = false; renderScript(); return; }
     button.disabled = true;
     validateEdits({ approveSceneId: sceneId }).catch((error) => { byId("reels-v2-approval-message").textContent = error.message; }).finally(() => { button.disabled = false; });
+  });
+  // Adım 5 (Video Üretimi) — referans görsel seçimi ve sahne bazlı Veo üretimi.
+  byId("reels-v2-video-tier").addEventListener("change", () => {
+    state.videoSettings.modelTier = byId("reels-v2-video-tier").value;
+    Object.keys(pendingSceneConfirm).forEach(resetSceneConfirm);
+    renderVideoScenes();
+  });
+  byId("reels-v2-video-resolution").addEventListener("change", () => {
+    state.videoSettings.resolution = byId("reels-v2-video-resolution").value;
+    Object.keys(pendingSceneConfirm).forEach(resetSceneConfirm);
+    renderVideoScenes();
+  });
+  byId("reels-v2-video-scenes").addEventListener("click", (event) => {
+    const thumbButton = event.target.closest("[data-video-ref-thumb]");
+    if (thumbButton) {
+      const sceneId = thumbButton.dataset.sceneId;
+      state.sceneReferenceImages[sceneId] = thumbButton.dataset.url;
+      resetSceneConfirm(sceneId);
+      renderVideoScenes();
+      return;
+    }
+    const generateButton = event.target.closest("[data-generate-scene-video]");
+    if (!generateButton) return;
+    generateSceneVideo(generateButton.dataset.sceneId);
   });
   document.querySelectorAll('.brand-rail [data-tab="reels"]').forEach((button) => button.addEventListener("click", initialize));
   const workspace = byId("workspace");
