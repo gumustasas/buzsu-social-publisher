@@ -641,13 +641,14 @@ FFmpeg'i bu adımda hiç çalıştırmaz. **GERÇEK PARA HARCAR** (bir inference
 - **`generate_reel_script` (MCP tool)**: `productId`/`productUrl`'den en az
   biri yeterli (PR-A ile aynı kural); `confirmed:true` şart.
 
-## AI Reels V2 — dashboard sihirbazı (PR-D: Ürün→Senaryo→Sahne Onayı, PR-E: Sahne Videosu)
+## AI Reels V2 — dashboard sihirbazı (PR-D: Ürün→Senaryo→Sahne Onayı, PR-E: Sahne Videosu, PR-F/G: Ses & Müzik + Final Reel)
 
 Dashboard'da (`dashboard-reels-v2.js` + `dashboard.html`, `data-tab="reels"`
 altındaki "AI Reels V2" paneli) 7 adımlı bir sihirbaz: 1. Ürün, 2. Kreatif
 Ayarlar, 3. AI Senaryo, 4. Sahne Onayı (PR-D — yukarıdaki
 `generate_reel_script`/`validateReelScript`'i kullanır), **5. Video Üretimi
-(PR-E)**, 6. Ses & Müzik, 7. Final Reel (6/7 hâlâ pasif, sonraki PR).
+(PR-E)**, **6. Ses & Müzik (PR-F/G)**, **7. Final Reel (PR-F/G)** — tüm 7
+adım aktif, pasif adım kalmadı.
 
 **PR-E, YENİ bir Veo sistemi yazmaz** — PR-D'de zaten onaylanan
 `reelScript.scenes[i].veoPrompt`'u (deterministik "sessiz" + gerektiğinde
@@ -686,6 +687,59 @@ Product Identity Lock kısıtları PR-D'de zaten eklenmiş) MEVCUT
 - Product-claim bloklama (PR-D'de kaldırılan `UNVERIFIED_PRODUCT_CLAIM`
   mekanizması) bu adımda da YOKTUR ve eklenmemiştir — Product Intelligence
   hâlâ yalnız bağlam/context'tir.
+
+**PR-F/G, Adım 6 (Ses & Müzik) ve Adım 7 (Final Reel)'i aktif eder — YENİ
+bir TTS/Lyria/FFmpeg sistemi yazılmadı.** Aşağıdaki "Türkçe seslendirme +
+AI müzik" bölümündeki `generate_turkish_voiceover`/`generate_lyria_music`
+(ve onların `/api/turkish-tts`/`/api/lyria-music` HTTP uçları — dashboard'un
+ayrı, standalone "Türkçe Seslendirme ve AI Müzik" panelinin de kullandığı
+AYNI uçlar) doğrudan çağrılır; o panele hiç dokunulmadı, sihirbazın kendi
+izole Adım 6 UI'sı vardır.
+
+- **Adım 6**: `reelScript.fullNarrationText` / `musicBrief.lyriaPrompt`
+  varsayılan olarak doldurulur (yalnız YENİ bir senaryo üretildiğinde —
+  sahne düzenleme/onaylarında ÜZERİNE YAZILMAZ, kullanıcı elle
+  düzenleyebilir). TTS/Lyria üretimi ikisi de GERÇEK PARA HARCAR — Adım 5
+  ile AYNI iki-adımlı "tekrar bas" onay deseni (ilk tıklama hiçbir API
+  çağrısı yapmaz), sonuçlar `state.narration`/`state.music` içinde
+  (`idle|awaiting_confirmation|generating|completed|failed`) ayrı ayrı
+  tutulur. Hata durumunda otomatik başka bir provider/model'e ASLA geçilmez.
+- **Adım 7 — eksik parça raporu**: mevcut `compose_reel_audio` (bkz. altta)
+  yalnız TEK bir ZATEN VAR OLAN videoya ses mix'i yapıyor, **sahne
+  birleştirme (concat) hiç desteklemiyor** — Adım 5, sahne başına AYRI bir
+  Veo klibi ürettiği için bu eksikti. En küçük ek olarak:
+  - **`src/lib/reel-scene-concat-ffmpeg.js`** (yeni, saf argv üretici):
+    sahne videolarını `reelScript.scenes` SIRASINA göre, yalnız VİDEO
+    akışını (`concat=...:a=0`) birleştirir — her Veo klibinin kendi ses
+    kanalı olup olmadığını varsaymaya gerek kalmaz (Veo sahneleri zaten
+    deterministik olarak "sessiz" kısıtıyla üretiliyor). Tek sahne varsa
+    concat filtresi hiç çalıştırılmaz (`-c:v copy`).
+  - **`src/reel-final-assembly.js`** (yeni, `compose_reel_audio`'nun AYNI
+    workflow_dispatch + `video-jobs.js` Blob job-status mimarisi):
+    `composeReelFinal({sceneVideoUrls[], voiceoverUrl?, musicUrl?})` —
+    `getReelFinalStatus`, `getReelAudioStatus`'un KENDİSİDİR (yeniden
+    yazılmadı, aynen export edildi — jobId/Blob tabanlı durum sorgusu
+    zaten üreten workflow'dan bağımsız).
+  - **`scripts/render-reel-final.mjs`** + **`.github/workflows/render-reel-final.yml`**:
+    sahneleri indirir, concat eder, sonra AYNI, DEĞİŞTİRİLMEMİŞ
+    `buildReelAudioFfmpegArgs` (`src/lib/reel-audio-ffmpeg.js`) ile
+    seslendirme/müzik mix'inden geçirir — ses-mix FFmpeg mantığı burada
+    TEKRAR YAZILMADI.
+  - **`api/reel-final.js`** (yeni, `api/reel-audio.js` ile AYNI GET/POST
+    deseni). FFmpeg concat+mix ÜCRETSİZDİR — `confirmed:true` İSTENMEZ
+    (`compose_reel_audio` ile AYNI kural).
+  - Final Reel yalnız **tüm sahnelerin videosu tamamlanmış VE en az bir ses
+    kaynağı (seslendirme veya müzik) hazır** olduğunda tetiklenebilir — bu,
+    FFmpeg katmanının (`buildReelAudioFfmpegArgs`) kendi zorunlu kıldığı
+    "en az biri" kısıtından gelir, yeni icat edilmedi. Yeniden compose,
+    Veo/TTS/Lyria'yı OTOMATİK TETİKLEMEZ; bir sahne/seslendirme/müzik yeniden
+    üretilirse mevcut final video otomatik SİLİNMEZ, yalnız arayüzde
+    "güncelliğini kaybetti" olarak işaretlenir — kullanıcı yeniden compose
+    etmeyi kendi seçer.
+- Bilinen mimari kısıt: mevcut job/durum sorgulama sisteminde (Veo/TTS/
+  Lyria/final compose, hepsi) per-user job ownership yok — bu PR-F/G'nin
+  yeni eklediği bir açık değil, PR-E'den devam eden, mevcut mimarinin
+  bilinen bir sınırıdır.
 
 ## Türkçe seslendirme + AI müzik (generate_video_narration / generate_turkish_voiceover / generate_lyria_music / compose_reel_audio)
 

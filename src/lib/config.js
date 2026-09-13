@@ -44,6 +44,12 @@ export const VIDEO_RENDER_REF = process.env.VIDEO_RENDER_REF || "main";
 // eşleniğini kullanır.
 export const REEL_AUDIO_RENDER_WORKFLOW_FILE = process.env.REEL_AUDIO_RENDER_WORKFLOW_FILE || "render-reel-audio.yml";
 
+// compose_reel_final (bkz. src/reel-final-assembly.js, AI Reels V2 PR-F/G) —
+// AYNI sebeple (Vercel süre/bellek sınırları) render-reel-audio.yml'nin
+// sahne-concat + AYNI ses-mix katmanını (buildReelAudioFfmpegArgs, reuse
+// edilir) birleştiren AYRI bir eşleniği.
+export const REEL_FINAL_RENDER_WORKFLOW_FILE = process.env.REEL_FINAL_RENDER_WORKFLOW_FILE || "render-reel-final.yml";
+
 export function assertMetaGraphVersionCurrent() {
   const parsed = parseMetaGraphVersionNumber(META_GRAPH_VERSION);
   if (parsed === null) {
