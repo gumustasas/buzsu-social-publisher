@@ -3,7 +3,10 @@
 // gibi) hep aynı şablonu (mutfak+aile) üretiyordu. Bu modül, buzsu.com.tr'nin
 // yayınladığı llms-full.txt dosyasından ürüne ait gerçek metni bulup AI
 // prompt'una "grounding" (gerçek bilgi) olarak ekler.
-const LLMS_FULL_URL = "https://www.buzsu.com.tr/llms-full.txt";
+// product-intelligence.js (get_buzsu_product_context) verifiedFacts'in
+// sourceUrl'ü olarak AYNI sabiti kullanır — tek kaynaktan doğruluk için
+// export edildi.
+export const LLMS_FULL_URL = "https://www.buzsu.com.tr/llms-full.txt";
 const CACHE_TTL_MS = 30 * 60 * 1000;
 const CONTEXT_WINDOW_BEFORE = 200;
 const CONTEXT_WINDOW_AFTER = 1400;

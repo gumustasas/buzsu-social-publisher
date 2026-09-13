@@ -508,6 +508,40 @@ aynı `GEMINI_API_KEY`'i kullanır — ayrı bir hesap/anahtar gerekmez.
   fonksiyonda yapılır. **İlk gerçek (ücretli, 360p) deneme öncesinde bu alan
   adlarının resmi dokümandan teyit edilmesi önerilir.**
 
+## AI Reels V2 — Product Intelligence (get_buzsu_product_context)
+
+AI Reels V2 mimarisinin ilk aşaması (PR-A): senaryo yazımından ÖNCE GERÇEK Buzsu
+ürün bilgisini buzsu.com.tr'den okuyup normalize eder. Sıfırdan bir fetch/cache
+mimarisi icat ETMEZ — mevcut `src/lib/buzsu-url.js`, `product-context.js`
+(llms-full.txt grounding), `products.js`/`product-catalog.js`/`feed-catalog.js`
+(katalog+görsel), `product-installation-context.js` (deterministik kategori
+sınıflandırması) modüllerini birleştirir; kalıcı önbellek için `video-jobs.js`
+ile AYNI Vercel Blob deseni (`product-context-cache/<url>.json`) kullanılır.
+ÜCRETSİZDİR — hiçbir AI/paid API çağrısı yapmaz.
+
+- **Girdi**: `productId` (list_products'tan) veya `productUrl`'den en az biri;
+  ikisi de verilirse `productUrl` önceliklidir. `refresh:true` önbelleği atlar.
+- **Allowlist**: `productUrl` yalnızca `buzsu.com.tr`/`www.buzsu.com.tr` kabul
+  eder (www'siz otomatik `www.buzsu.com.tr`'ye canonicalize edilir); başka
+  hiçbir host — ve yönlendirme sonucu başka bir host'a çıkan zincirler de —
+  kabul edilmez (her redirect adımı aynı allowlist'ten yeniden geçer).
+  `productId` ile gelen istekte de kullanılan URL aynı kontrolden geçer.
+- **verifiedFacts**: kaynak metinden (öncelik: llms-full.txt grounding;
+  yalnızca eşleşme yoksa destekleyici olarak ürün sayfası meta description)
+  alınan BİREBİR cümle alıntılarıdır — AI ile yeniden yazılmaz/uydurulmaz, her
+  biri `sourceUrl` taşır. `technicalFeatures`/`sellingPoints`/`useCases`/
+  `targetAudience`, AYNI birebir cümlelerin anahtar kelimeye göre (deterministik
+  sezgisel) sınıflandırılmasıyla doldurulur — yeni metin üretilmez.
+- **prohibitedClaims**: "sayfada geçmeyen her şeyi" listeleyen sonsuz bir alan
+  DEĞİL; sabit 5 kategori (sağlık/sertifika/garanti/performans-tasarruf/menşe —
+  `src/lib/product-claims.js`, health kategorisi mevcut `content-worker.js`
+  `riskyClaims`'i reuse eder). Bir kategori kaynak metinde EN AZ bir kez
+  doğrulanırsa listeden düşer.
+- **Önbellek**: sonuç ~30 dakika Vercel Blob'da (`fetchedAt`/`contentHash` ile)
+  tutulur; okuma bozuk/eksik JSON ise sessizce yok sayılıp yeniden üretilir,
+  yazım başarısız olursa (ör. `BLOB_READ_WRITE_TOKEN` yok) tool FAIL OLMAZ —
+  taze context döner, hata `warnings`'e eklenir.
+
 ## Türkçe seslendirme + AI müzik (generate_video_narration / generate_turkish_voiceover / generate_lyria_music / compose_reel_audio)
 
 Veo/fal/Omni'nin kendi ürettiği video sesini KULLANMAZ — bunun yerine bağımsız,

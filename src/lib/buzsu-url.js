@@ -5,6 +5,14 @@
 // gerektiren birbirinden sapabilecek kopyalar oluşmaz.
 const SITE_ORIGIN = "https://www.buzsu.com.tr";
 
+// www'siz "buzsu.com.tr" gerçek sitenin de kabul ettiği, sık paylaşılan bir
+// yazım biçimi — bu yüzden allowlist'e www.buzsu.com.tr'nin YANINDA (onun
+// yerine değil) eklendi ve www.buzsu.com.tr'ye canonicalize edilir. Başka
+// HİÇBİR host (alt alan adı, benzer görünen domain, başka bir site) kabul
+// edilmez — get_buzsu_product_context (bkz. product-intelligence.js) hem
+// girdi URL'i hem de her yönlendirme adımını bu fonksiyondan geçirir.
+const ALLOWED_HOSTNAMES = new Set(["www.buzsu.com.tr", "buzsu.com.tr"]);
+
 export function resolveProductUrl(rawUrl) {
   const trimmed = String(rawUrl || "").trim();
   if (!trimmed) return null;
@@ -15,7 +23,7 @@ export function resolveProductUrl(rawUrl) {
   } catch {
     return null;
   }
-  if (parsed.hostname !== "www.buzsu.com.tr") return null;
+  if (!ALLOWED_HOSTNAMES.has(parsed.hostname)) return null;
   return `${SITE_ORIGIN}${parsed.pathname.replace(/\/+$/, "")}/`;
 }
 

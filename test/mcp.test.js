@@ -316,6 +316,62 @@ test("compose_reel_audio validates its input (videoUrl + en az bir ses) before a
   await assert.rejects(() => callTool("compose_reel_audio", { videoUrl: "https://example.com/v.mp4" }), /voiceoverUrl.*musicUrl/);
 });
 
+// AI Reels V2 PR-A: Product Intelligence — src/lib/product-intelligence.js.
+// Bu araç ÜCRETSİZDİR, hiçbir AI/paid API çağrısına gitmez; yalnızca
+// buzsu.com.tr (llms-full.txt/feed.xml/ürün sayfası) ve Airtable'a fetch
+// atar. NOT: src/lib/product-context.js, src/lib/product-catalog.js ve
+// src/lib/feed-catalog.js modül-seviyesi (process ömrü boyunca) bir
+// in-memory cache tutar — bu dosyadaki get_buzsu_product_context testleri
+// bu yüzden BİLEREK az sayıda ve birbirinden bağımsız (fetch'e hiç
+// gitmeyen erken-hata testleri + tek bir mutlu-yol testi) tutuldu; ileride
+// buraya YENİ bir mutlu-yol testi eklerken bu paylaşılan cache'in önceki
+// testten gelen içeriği döndürebileceğini unutmayın.
+test("get_buzsu_product_context: productId veya productUrl verilmeden hiçbir fetch atmadan hata verir", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => { throw new Error(`fetch çağrılmamalıydı: ${url}`); };
+  try {
+    await assert.rejects(() => callTool("get_buzsu_product_context", {}), /productId veya productUrl gerekli/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("get_buzsu_product_context: allowlist dışı bir productUrl hiçbir fetch atmadan reddedilir", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => { throw new Error(`fetch çağrılmamalıydı: ${url}`); };
+  try {
+    await assert.rejects(() => callTool("get_buzsu_product_context", { productUrl: "https://evil-buzsu.com.tr/urun/" }), /buzsu\.com\.tr/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("get_buzsu_product_context: gerçek uçtan uca akış — buzsu.com.tr/llms-full.txt'ten verifiedFacts + sourceUrl üretir, hiçbir AI/paid API'ye gitmez", async () => {
+  const originalFetch = global.fetch;
+  const LLMS_TEXT = `#### ⭐ Ana Ürün: Code Su Arıtma Cihazı
+**URL:** https://www.buzsu.com.tr/code-su-aritma-cihazi/
+Code Su Arıtma Cihazı 3 kademeli filtre sistemi ile mutfağınıza kurulur. Kolay bakım gerektirir.`;
+  global.fetch = async (url) => {
+    const href = String(url);
+    if (href.includes("api.airtable.com")) return { ok: true, json: async () => ({ records: [] }) };
+    if (href.includes("llms-full.txt")) return { ok: true, text: async () => LLMS_TEXT };
+    if (href.includes("feed.xml")) return { ok: true, text: async () => "<rss><channel></channel></rss>" };
+    throw new Error(`Beklenmeyen (ücretli/AI olmayan bir kaynak dışı) fetch: ${href}`);
+  };
+  try {
+    const result = JSON.parse(await callTool("get_buzsu_product_context", { productUrl: "https://www.buzsu.com.tr/code-su-aritma-cihazi/" }));
+    assert.equal(result.ok, true);
+    assert.equal(result.canonicalUrl, "https://www.buzsu.com.tr/code-su-aritma-cihazi/");
+    assert.ok(result.verifiedFacts.length > 0);
+    assert.equal(result.verifiedFacts[0].sourceUrl, "https://www.buzsu.com.tr/llms-full.txt");
+    assert.ok(result.sourceUrls.includes("https://www.buzsu.com.tr/llms-full.txt"));
+    assert.equal(result.fromCache, false);
+    assert.ok(Array.isArray(result.prohibitedClaims));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 // Bulunan aktarım hatası: get_omni_video_status önceki turda outputFileId'yi
 // kabul etmiyor/geri döndürmüyordu — bu, MCP istemcisinin (dashboard değil,
 // ChatGPT/Codex gibi bağlayıcılar) her sorguda gereksiz yere
