@@ -210,6 +210,87 @@ test("tools/call: generate_video_clip'in RATE_LIMITED hatası isError:true ile b
   }
 });
 
+test("generate_omni_video_edit confirmed:false ile hiçbir ağ isteği atmadan reddeder (Veo'daki confirmed kuralının Omni karşılığı)", async () => {
+  const originalFetch = global.fetch;
+  let calls = 0;
+  global.fetch = async () => { calls++; throw new Error("fetch should not be called without confirmed:true"); };
+  try {
+    await assert.rejects(
+      () => callTool("generate_omni_video_edit", { existingVideoUrl: "https://example.com/video.mp4", editPrompt: "fix", confirmed: false }),
+      /confirmed:true/
+    );
+    assert.equal(calls, 0);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// generate_omni_video_edit'in REGION_UNAVAILABLE hatası (bkz.
+// src/omni-video.js:OmniApiError, api/mcp.js tools/call catch bloğu),
+// RATE_LIMITED ile aynı yapılandırılmış-JSON muamelesini görüyor mu diye
+// doğrular — mcp.js'deki catch koşulu bu PR ile RATE_LIMITED'den
+// REGION_UNAVAILABLE'ı da kapsayacak şekilde genişletildi.
+test("tools/call: generate_omni_video_edit'in REGION_UNAVAILABLE hatası isError:true ile birlikte geçerli JSON içeren bir content.text döner", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (url, options) => {
+    const href = String(url);
+    if (!options && href.startsWith("https://example.com/video")) return { ok: true, headers: { get: () => "video/mp4" }, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer };
+    if (href.includes("/upload/v1beta/files") && options?.headers?.["X-Goog-Upload-Command"] === "start") return { ok: true, headers: { get: (name) => (name === "x-goog-upload-url" ? "https://example.com/upload-session" : null) } };
+    if (href === "https://example.com/upload-session") return { ok: true, json: async () => ({ file: { uri: "https://example.com/files/abc123", name: "files/abc123", mimeType: "video/mp4" } }) };
+    if (href.includes("/v1beta/files/abc123")) return { ok: true, json: async () => ({ name: "files/abc123", uri: "https://example.com/files/abc123", mimeType: "video/mp4", state: "ACTIVE" }) };
+    if (href.endsWith("/v1beta/interactions")) return { ok: false, status: 403, headers: { get: () => null }, json: async () => ({ error: { status: "PERMISSION_DENIED", message: "Video editing is not available in your region." } }) };
+    throw new Error(`Beklenmeyen fetch: ${href}`);
+  };
+  try {
+    const response = await handleMessage({
+      id: 1,
+      method: "tools/call",
+      params: { name: "generate_omni_video_edit", arguments: { existingVideoUrl: "https://example.com/video.mp4", editPrompt: "fix", confirmed: true } }
+    });
+    assert.equal(response.result.isError, true);
+    const parsed = JSON.parse(response.result.content[0].text);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.code, "REGION_UNAVAILABLE");
+    assert.equal(parsed.httpStatus, 403);
+    assert.equal(parsed.model, "gemini-omni-1.1-flash");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// Bulunan aktarım hatası: get_omni_video_status önceki turda outputFileId'yi
+// kabul etmiyor/geri döndürmüyordu — bu, MCP istemcisinin (dashboard değil,
+// ChatGPT/Codex gibi bağlayıcılar) her sorguda gereksiz yere
+// GET /interactions/{id}'ye düşmesine yol açıyordu. Bu test tam döngüyü
+// (outputFileId ver -> yalnızca Files API çağrılsın -> PROCESSING'de
+// outputFileId korunsun) doğruluyor.
+test("get_omni_video_status: outputFileId verilirse yalnızca Files API'yi sorgular (GET /interactions/{id}'ye gitmez) ve PROCESSING'de outputFileId'yi yanıtta korur", async () => {
+  const originalFetch = global.fetch;
+  let requestedUrl = null;
+  global.fetch = async (url) => {
+    requestedUrl = String(url);
+    return { ok: true, json: async () => ({ name: "files/out789", state: "PROCESSING" }) };
+  };
+  try {
+    const text = await callTool("get_omni_video_status", { interactionId: "v1_xyz", outputFileId: "out789", model: "gemini-omni-1.1-flash" });
+    assert.equal(requestedUrl, "https://generativelanguage.googleapis.com/v1beta/files/out789");
+    const parsed = JSON.parse(text);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.status, "OUTPUT_PROCESSING");
+    assert.equal(parsed.outputFileId, "out789"); // korunmalı — aksi halde bir sonraki çağrı bunu kaybeder
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// BLOB_READ_WRITE_TOKEN gerektiren gerçek Blob upload akışı burada
+// KASITLI olarak test edilmiyor — bu depodaki hiçbir test @vercel/blob'un
+// put() fonksiyonunu mock'lamıyor (modül mock altyapısı yok); bir token
+// verip gerçek bir ağ isteği tetiklemek "gerçek ücretli/ağ çağrısı yapılmaz"
+// ilkesini ihlal ederdi. ACTIVE durumundaki dosyanın doğru URL'den doğru
+// şekilde indirildiği (downloadOmniVideo) zaten src/omni-video.js ve
+// api/omni-video.js testlerinde ayrı ayrı doğrulanıyor; burada yalnızca
+// MCP'ye özgü outputFileId aktarım hatası (asıl bulunan sorun) test edilir.
 test("tools/call: code'u olmayan (mevcut/genel) bir hata hâlâ düz \"Hata: ...\" metni döner (regresyon — davranış bozulmadı)", async () => {
   const response = await handleMessage({ id: 1, method: "tools/call", params: { name: "get_draft", arguments: {} } });
   assert.equal(response.result.isError, true);

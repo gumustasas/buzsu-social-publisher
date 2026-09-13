@@ -435,6 +435,79 @@ geçilmez**; kullanıcı `alternatives` listesinden yeni bir model seçip
 (`content[].text`, `isError:true` korunarak) ve dashboard/HTTP
 uçlarında (gerçek `HTTP 429` + aynı alanlar) aynı şekilde taşınır.
 
+## Google Gemini Omni 1.1 Flash — mevcut video düzenleme (generate_omni_video_edit / dashboard Reels)
+
+Omni, Veo'dan **tamamen ayrı** bir sağlayıcıdır. Google'ın modeli hem
+sıfırdan video üretebiliyor hem de mevcut videoları düzenleyebiliyor; **bu
+araç şu anda Omni'nin mevcut video düzenleme özelliğini kullanır — sıfırdan
+üretim bu arayüzde henüz etkin değildir.** Zaten üretilmiş/render edilmiş bir
+videoyu (örn. iyi çıkan bir aile sahnesi) alıp yalnızca belirtilen bölümü
+(örn. yanlış ürün) düzenler. Google Gemini Developer API'nin bir parçasıdır,
+aynı `GEMINI_API_KEY`'i kullanır — ayrı bir hesap/anahtar gerekmez.
+
+- **Model**: tek ve sabit — `gemini-omni-1.1-flash`. Başka bir model kabul
+  edilmez (Veo'daki tier seçimi kavramının burada karşılığı yoktur).
+- **Endpoint**: `POST https://generativelanguage.googleapis.com/v1beta/interactions`
+  (Google'ın "Interactions API"si). Mevcut video VE referans ürün görseli
+  (isteğe bağlı) önce Gemini **Files API** ile yüklenir (`upload/v1beta/files`,
+  resumable protokol) ve `ACTIVE` duruma gelmesi beklenir; `input` dizisine
+  dokümante edilen düz `{type:"video"|"image", uri, mime_type}` / `{type:"text",
+  text}` öğeleri olarak eklenir (inline base64 kullanılmaz). Çıktı isteği
+  `response_format: {type:"video", delivery:"uri", aspect_ratio, resolution}`
+  şeklinde bir NESNE olarak gönderilir — en net doğrulanan örnekte görülen
+  şekil budur.
+- **Çözünürlük**: `360p` (varsayılan, en ucuz — taslak/deneme için önerilir),
+  `720p`, `1080p`, `4k`.
+- **`confirmed:true` şart** — hem MCP aracında hem HTTP/dashboard katmanında;
+  verilmezse **hiçbir ağ isteği** atılmadan reddedilir.
+- **Bölgesel kısıt**: Google, yüklenen videoları düzenleme özelliğinin her
+  bölgede/hesapta desteklenmediğini belirtiyor (EEA/İsviçre/Birleşik Krallık
+  ve bazı ABD eyaletleri dokümante edilmiş kısıtlar — Türkiye için garanti
+  yoktur). Desteklenmiyorsa yanıt `RATE_LIMITED`'e benzer şekilde
+  yapılandırılmış bir hata döner:
+  ```jsonc
+  {
+    "ok": false,
+    "code": "REGION_UNAVAILABLE",
+    "httpStatus": 403,           // Google'ın döndüğü gerçek HTTP kodu
+    "model": "gemini-omni-1.1-flash",
+    "providerStatus": "PERMISSION_DENIED",
+    "details": { "message": "..." }
+  }
+  ```
+  **Hiçbir otomatik tekrar deneme yapılmaz** — bu, RATE_LIMITED (429) için de
+  aynı şekilde geçerlidir; ikisi de MCP yanıtında (`isError:true` korunarak,
+  `content[].text` geçerli JSON olarak) ve dashboard/HTTP uçlarında (gerçek
+  HTTP kodu + aynı alanlar) taşınır.
+- **Yanıt ayrıştırma**: tamamlanmış çıktı, Interactions API yanıtında
+  `steps[]` dizisindeki `type:"model_output"` adımının `content[]`'inde
+  (`type:"video"`) bulunur. Google, `delivery:"uri"` istenmiş olsa bile
+  **durum sorgusu (`GET /v1beta/interactions/{id}`) sırasında videoyu inline
+  base64 döndürebiliyor** — bu yüzden `submitOmniVideoEdit`/
+  `omniInteractionStatus` her ikisini de (`fileUri` veya `videoBase64`)
+  tanır, biri "her zaman doğru şekil" diye varsayılmaz. `model_output` adımı
+  var ama içinde video parçası yoksa (örn. metinle reddetme) bu **açık bir
+  hata** olarak fırlatılır — sessizce `IN_PROGRESS`'e düşülmez.
+- **Çıktı dosyası hazır olana kadar indirme yapılmaz**: `model_output`'ta bir
+  `uri` gelmesi videonun HEMEN indirilebilir olduğu anlamına gelmez — çıktı
+  da Files API'deki diğer dosyalar gibi `PROCESSING` → `ACTIVE`/`FAILED`
+  durumundan geçer. URI'den dosya kimliği güvenli şekilde ayrıştırılır
+  (Google'ın döndürdüğü tam URI metnine güvenmek yerine, indirme URL'i
+  bilinen `GET /v1beta/files/{id}:download?alt=media` şekliyle yeniden
+  kurulur); `ACTIVE` doğrulanana kadar iş `"OUTPUT_PROCESSING"` durumunda
+  kalır, `FAILED` olursa açık bir hata fırlatılır. Dosya zaten `outputFileId`
+  ile biliniyorsa sonraki durum sorguları `GET /v1beta/interactions/{id}`'ye
+  DEĞİL doğrudan Files API'ye gider.
+- **Bilinen sınırlama**: Interactions API çok yeni bir yüzey olduğu için
+  (27 Ağustos 2026 itibarıyla genel kullanıma açıldı) bu ortamda
+  `ai.google.dev`'e doğrudan ağ erişimi yok; şema, arama motoru üzerinden
+  erişilen doküman özetleriyle (birden fazla bağımsız sorguda tekrarlanan
+  sonuçlarla) çapraz doğrulanarak yazıldı — birebir sayfa okuması değildir.
+  `src/omni-video.js:submitOmniVideoEdit` içindeki tek istek gövdesi izole
+  tutulmuştur; gerçek şema küçük bir farklılık gösterirse düzeltme tek o
+  fonksiyonda yapılır. **İlk gerçek (ücretli, 360p) deneme öncesinde bu alan
+  adlarının resmi dokümandan teyit edilmesi önerilir.**
+
 ## Sonraki adım
 
 Dry-run doğru çalıştıktan sonra Meta API için ayrı gönderim scripti eklenir. O aşamada da önce test modu, sonra tek kayıtla kontrollü canlı paylaşım yapılmalıdır.
