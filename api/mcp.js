@@ -341,7 +341,7 @@ const TOOLS = [
   },
   {
     name: "generate_omni_video_edit",
-    description: `Google Gemini Omni 1.1 Flash (${OMNI_MODEL}) ile ZATEN VAR OLAN bir videoyu düzenler — sıfırdan video üretmez. İyi çıkmış bir sahneyi (örn. aile sahnesi) koruyup yalnızca hatalı/istenmeyen bir bölümü (örn. ürün) düzeltmek için kullanılır. Google, yüklenen videoları düzenleme özelliğinin her bölgede/hesapta desteklenmediğini belirtiyor (EEA/İsviçre/UK ve bazı ABD eyaletleri dokümante edilmiş kısıtlar — Türkiye için garanti yok); desteklenmiyorsa REGION_UNAVAILABLE hatası döner, ASLA otomatik tekrar denenmez. GERÇEK PARA HARCAR (360p en ucuz seçenektir). Video işlenmesi zaman alabilir; hemen fileUri gelmezse durumu get_omni_video_status ile sorgulayın. confirmed:true verilmezse hiçbir API çağrısı/harcama yapılmaz. Model ${OMNI_MODEL} ile sabittir, başka bir model kabul edilmez.`,
+    description: `Google Gemini Omni 1.1 Flash (${OMNI_MODEL}) ile ZATEN VAR OLAN bir videoyu düzenler. Not: Omni modeli sıfırdan video da üretebilir, ancak bu araç şu anda yalnızca mevcut video düzenleme özelliğini kullanır — sıfırdan üretim bu arayüzde henüz etkin değildir. İyi çıkmış bir sahneyi (örn. aile sahnesi) koruyup yalnızca hatalı/istenmeyen bir bölümü (örn. ürün) düzeltmek için kullanılır. Google, yüklenen videoları düzenleme özelliğinin her bölgede/hesapta desteklenmediğini belirtiyor (EEA/İsviçre/UK ve bazı ABD eyaletleri dokümante edilmiş kısıtlar — Türkiye için garanti yok); desteklenmiyorsa REGION_UNAVAILABLE hatası döner, ASLA otomatik tekrar denenmez. GERÇEK PARA HARCAR (360p en ucuz seçenektir). Video işlenmesi zaman alabilir; hemen fileUri gelmezse durumu get_omni_video_status ile sorgulayın. confirmed:true verilmezse hiçbir API çağrısı/harcama yapılmaz. Model ${OMNI_MODEL} ile sabittir, başka bir model kabul edilmez.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -667,11 +667,15 @@ export async function callTool(name, args) {
       if (!String(args.interactionId || "").trim()) throw new Error("interactionId gerekli.");
       const status = await omniInteractionStatus({ interactionId: args.interactionId, model: args.model || OMNI_MODEL }, process.env);
       if (status.status !== "COMPLETED") return JSON.stringify({ ok: true, status: status.status }, null, 2);
-      const videoBuffer = await downloadOmniVideo(status.fileUri, process.env);
+      // Google, delivery:"uri" istenmiş olsa bile GET /interactions/{id} ile
+      // durum sorgularken videoyu inline base64 döndürebiliyor (bkz.
+      // src/omni-video.js:extractOmniVideoOutput) — fileUri yoksa videoBase64
+      // kullanılır, biri "her zaman doğru şekil" diye varsayılmaz.
+      const videoBuffer = status.videoBase64 ? Buffer.from(status.videoBase64, "base64") : await downloadOmniVideo(status.fileUri, process.env);
       let videoUrl = null;
       if (process.env.BLOB_READ_WRITE_TOKEN) {
         const safeName = String(args.interactionId).replace(/[^a-zA-Z0-9_-]/g, "_").slice(-80);
-        const blob = await put(`ai-omni/${safeName}-${Date.now()}.mp4`, videoBuffer, { access: "public", contentType: "video/mp4" });
+        const blob = await put(`ai-omni/${safeName}-${Date.now()}.mp4`, videoBuffer, { access: "public", contentType: status.videoMimeType || "video/mp4" });
         videoUrl = blob.url;
       }
       return JSON.stringify({ ok: true, status: "COMPLETED", videoUrl }, null, 2);

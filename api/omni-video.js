@@ -21,11 +21,16 @@ export default async function handler(request, response) {
         confirmed: body.confirmed === true
       });
     }
-    if (job.status === "COMPLETED" && job.fileUri && !job.videoUrl) {
+    // Google, delivery:"uri" istenmiş olsa bile (özellikle GET
+    // /interactions/{id} ile durum sorgularken) videoyu inline base64
+    // döndürebiliyor (bkz. src/omni-video.js:extractOmniVideoOutput) — bu
+    // yüzden fileUri VE videoBase64 ayrı ayrı ele alınıyor, biri "her zaman
+    // doğru şekil" diye varsayılmıyor.
+    if (job.status === "COMPLETED" && (job.fileUri || job.videoBase64) && !job.videoUrl) {
       if (process.env.BLOB_READ_WRITE_TOKEN) {
-        const videoBuffer = await downloadOmniVideo(job.fileUri, process.env);
-        const blob = await put(`ai-omni/omni-${Date.now()}.mp4`, videoBuffer, { access: "public", contentType: "video/mp4" });
-        job = { ...job, videoUrl: blob.url };
+        const videoBuffer = job.videoBase64 ? Buffer.from(job.videoBase64, "base64") : await downloadOmniVideo(job.fileUri, process.env);
+        const blob = await put(`ai-omni/omni-${Date.now()}.mp4`, videoBuffer, { access: "public", contentType: job.videoMimeType || "video/mp4" });
+        job = { ...job, videoUrl: blob.url, videoBase64: undefined };
       } else {
         job = { ...job, downloadNote: "BLOB_READ_WRITE_TOKEN tanımlı olmadığı için video kalıcı bir bağlantı alamadı." };
       }

@@ -99,8 +99,11 @@ async function readOmniJson(response, { model } = {}) {
 
 // Gemini Files API — resumable upload protokolü: (1) start ile metadata
 // gönderip X-Goog-Upload-URL header'ını al, (2) o URL'e ham baytları
-// "upload, finalize" komutuyla PUT/POST et. Videolar Omni'de inline
-// base64 DEĞİL, Files API üzerinden referanslanıyor (dokümantasyon).
+// "upload, finalize" komutuyla PUT/POST et. Video VE referans görsel,
+// Interactions API'nin dokümante edilmiş girdi şekli ({type,uri} — bkz.
+// submitOmniVideoEdit) gereği ikisi de Files API üzerinden yükleniyor;
+// inline_data/base64 KULLANILMIYOR (önceki sürümde görsel için inline_data
+// kullanılıyordu — bu, resmi dokümanla doğrulanınca düzeltildi).
 export async function uploadOmniFile(buffer, mimeType, displayName, env = process.env) {
   if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY Vercel Production ortamında tanımlı değil.");
   const startResponse = await fetch(`${UPLOAD_BASE}/files`, {
@@ -147,11 +150,59 @@ export async function waitForOmniFileActive(fileName, env = process.env, { maxAt
   throw new Error("Omni dosyası zaman aşımına uğradı (state hâlâ ACTIVE değil).");
 }
 
+async function uploadPublicUrlToOmniFiles(url, label, env) {
+  const upstream = await fetch(url);
+  if (!upstream.ok) throw new Error(`${label} alınamadı.`);
+  const mimeType = upstream.headers.get("content-type") || "application/octet-stream";
+  const buffer = Buffer.from(await upstream.arrayBuffer());
+  const uploaded = await uploadOmniFile(buffer, mimeType, `omni-${Date.now()}`, env);
+  const active = await waitForOmniFileActive(uploaded.name, env);
+  return { uri: active.uri, mimeType: active.mimeType || mimeType };
+}
+
+// interactions/{id} URL'i oluştururken kullanılacak KISA/HAM id — Google'ın
+// bazı REST kaynaklarında (Veo'nun "operations/xyz" gibi) "name" alanı zaten
+// kaynak yolunun tam hâlini taşıyabiliyor. Eğer "name" (veya "id") baştan
+// "interactions/" öneki taşıyorsa bu önek burada bir kez temizlenir — aksi
+// halde GET isteği .../interactions/interactions/xyz gibi YANLIŞ, iki kat
+// önekli bir URL'e gidebilirdi.
+function normalizeInteractionId(raw) {
+  const value = String(raw || "");
+  return value.startsWith("interactions/") ? value.slice("interactions/".length) : value;
+}
+
+// Interactions API yanıtı, tamamlanmış çıktıyı outputs[]/output[] gibi
+// (önceki sürümde tahmini olarak kullanılan, doğrulanamamış) alanlarda
+// DEĞİL — resmi dokümanda tarif edilen `steps[]` dizisinde taşır: model'in
+// ürettiği son adım `type:"model_output"` olur, içindeki `content[]`
+// dizisinde `type:"video"` olan öğe ya bir `uri` (delivery:"uri" istendiyse)
+// ya da inline base64 `data` (+ `mime_type`) taşır. Google, GET
+// /interactions/{id} ile durum sorgulanırken delivery:"uri" istenmiş olsa
+// bile inline base64 DÖNDÜREBİLİYOR — bu yüzden ikisi de burada ayrıştırılır,
+// biri "varsayılan doğru şekil" diye seçilmez.
+//
+// model_output adımı VARSA ama içinde video parçası YOKSA (örn. metinle
+// reddetme/açıklama) bu bir "henüz bitmedi" durumu DEĞİLDİR — sessizce
+// IN_PROGRESS'e düşüp hayalî bir polling'e geçmek yerine `error: {thrown:
+// true, reason}` ile işaretlenir, çağıran taraf bunu açık bir hataya çevirir.
+function extractOmniVideoOutput(data) {
+  const steps = Array.isArray(data?.steps) ? data.steps : [];
+  const modelOutputStep = steps.find((step) => step?.type === "model_output");
+  if (!modelOutputStep) return { done: false };
+  const parts = Array.isArray(modelOutputStep.content) ? modelOutputStep.content : [];
+  const videoPart = parts.find((part) => part?.type === "video");
+  if (videoPart?.uri) return { done: true, uri: videoPart.uri, mimeType: videoPart.mime_type || null };
+  if (videoPart?.data) return { done: true, base64Data: videoPart.data, mimeType: videoPart.mime_type || "video/mp4" };
+  const textSummary = parts.find((part) => part?.type === "text")?.text;
+  return { done: true, error: textSummary || "Omni model_output adımında video bulunamadı." };
+}
+
 // existingVideoUrl: düzeltilecek, zaten üretilmiş/render edilmiş video
 // (örn. compose_product_video ya da Veo çıktısı) — herkese açık HTTPS URL.
-// referenceImageUrl: korunması istenen ürünün gerçek görseli (opsiyonel,
-// verilirse inline referans olarak eklenir — küçük bir dosya, Files API'ye
-// gerek yok).
+// referenceImageUrl: korunması istenen ürünün gerçek görseli (opsiyonel).
+// İkisi de Files API'ye yüklenip {type:"video"/"image", uri, mime_type}
+// olarak input dizisine eklenir (dokümante edilen çoklu-referans şekli:
+// video URI + image URI + text).
 //
 // confirmed !== true ise HİÇBİR ağ isteği atılmadan reddedilir — bu, ücretli
 // bir işlem olduğu için Veo/compose'daki "onay olmadan asla confirmed:true
@@ -166,76 +217,59 @@ export async function submitOmniVideoEdit(existingVideoUrl, env = process.env, {
   const allowedResolutions = new Set(["360p", "720p", "1080p", "4k"]);
   if (!allowedResolutions.has(resolution)) throw new Error(`Desteklenmeyen Omni çözünürlüğü: "${resolution}". Kullanılabilir: ${[...allowedResolutions].join(", ")}.`);
 
-  const videoUpstream = await fetch(existingVideoUrl);
-  if (!videoUpstream.ok) throw new Error("Düzenlenecek mevcut video alınamadı.");
-  const videoMimeType = videoUpstream.headers.get("content-type") || "video/mp4";
-  const videoBuffer = Buffer.from(await videoUpstream.arrayBuffer());
-  const uploadedFile = await uploadOmniFile(videoBuffer, videoMimeType, `omni-edit-source-${Date.now()}`, env);
-  const activeFile = await waitForOmniFileActive(uploadedFile.name, env);
-
-  const contentParts = [{ text: prompt }, { file_data: { file_uri: activeFile.uri, mime_type: activeFile.mimeType || videoMimeType } }];
+  const video = await uploadPublicUrlToOmniFiles(existingVideoUrl, "Düzenlenecek mevcut video", env);
+  const input = [{ type: "video", uri: video.uri, mime_type: video.mimeType }];
   if (typeof referenceImageUrl === "string" && /^https:\/\//i.test(referenceImageUrl)) {
-    const imageUpstream = await fetch(referenceImageUrl);
-    if (!imageUpstream.ok) throw new Error("Referans ürün görseli alınamadı.");
-    const imageMimeType = imageUpstream.headers.get("content-type") || "image/jpeg";
-    const imageBytes = Buffer.from(await imageUpstream.arrayBuffer()).toString("base64");
-    contentParts.push({ inline_data: { mime_type: imageMimeType, data: imageBytes } });
+    const image = await uploadPublicUrlToOmniFiles(referenceImageUrl, "Referans ürün görseli", env);
+    input.push({ type: "image", uri: image.uri, mime_type: image.mimeType });
   }
+  input.push({ type: "text", text: prompt });
 
-  // NOT: /v1beta/interactions çok yeni bir yüzey (27 Ağustos 2026) — burada
-  // kullanılan input/generation_config/response_format alan adları resmi
-  // dokümandan (arama sonuçları üzerinden) derlendi, ağ politikası nedeniyle
-  // ai.google.dev sayfası birebir doğrulanamadı. Gerçek şema küçük farklıysa
-  // düzeltme TEK bu istek gövdesinde yapılır.
+  // NOT: /v1beta/interactions çok yeni bir yüzey (27 Ağustos 2026 GA). Bu
+  // istek gövdesi resmi dokümanla (arama motoru üzerinden erişilen özet +
+  // kullanıcı tarafından ayrıca teyit edilen şema) karşılaştırılıp
+  // düzeltildi: input dizisi düz {type,uri,text} öğeleri (role/content/
+  // file_data/inline_data DEĞİL); response_format bir DİZİ ve
+  // aspect_ratio/resolution generation_config'te değil response_format
+  // öğesinin İÇİNDE. Yine de tek bir istek gövdesi burada izole tutuluyor —
+  // gerçek şema küçük bir noktada farklı çıkarsa düzeltme tek buradan.
   const response = await fetch(`${API_BASE}/interactions`, {
     method: "POST",
     headers: omniHeaders(env),
     body: JSON.stringify({
       model: OMNI_MODEL,
-      input: [{ role: "user", content: contentParts }],
-      generation_config: { aspect_ratio: aspectRatio, resolution },
-      response_format: { delivery: "uri" }
+      input,
+      response_format: [{ type: "video", delivery: "uri", aspect_ratio: aspectRatio, resolution }]
     })
   });
   const data = await readOmniJson(response, { model: OMNI_MODEL });
-  const interactionId = data.id || data.name;
+  const interactionId = normalizeInteractionId(data.id || data.name);
   if (!interactionId) throw new Error("Omni interaction id alınamadı.");
-  const outputVideo = extractOmniVideoUri(data);
+  const output = extractOmniVideoOutput(data);
+  if (output.error) throw new Error(`Omni video düzenleme tamamlandı ama video üretmedi: ${output.error}`);
   return {
     provider: "omni",
     model: OMNI_MODEL,
     interactionId,
-    status: outputVideo ? "COMPLETED" : "IN_PROGRESS",
-    fileUri: outputVideo,
+    status: output.done ? "COMPLETED" : "IN_PROGRESS",
+    fileUri: output.uri || null,
+    videoBase64: output.base64Data || null,
+    videoMimeType: output.mimeType || null,
     sourceVideoUrl: existingVideoUrl,
     editPrompt: prompt,
     createdAt: new Date().toISOString()
   };
 }
 
-// Google'ın yanıt şeklinin (senkron mu, tamamlanmış çıktı hemen mi gelir,
-// yoksa long-running mı) tam olarak nasıl olduğu doğrulanamadığı için
-// birden çok olası alan adı denenir — hiçbiri yoksa null döner (üst katman
-// bunu IN_PROGRESS olarak kabul eder, hata fırlatmaz).
-function extractOmniVideoUri(data) {
-  const output = data.outputs?.[0] || data.output?.[0] || data.response?.output?.[0];
-  const candidates = [
-    output?.content?.find?.((part) => part?.file_data)?.file_data?.file_uri,
-    output?.video?.uri,
-    data.output_video?.uri,
-    data.video?.uri
-  ];
-  return candidates.find((value) => typeof value === "string" && value) || null;
-}
-
 export async function omniInteractionStatus(job, env = process.env) {
   if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY Vercel Production ortamında tanımlı değil.");
   if (!job?.interactionId) throw new Error("Omni iş bilgisi eksik.");
-  const response = await fetch(`${API_BASE}/interactions/${job.interactionId}`, { headers: { "x-goog-api-key": env.GEMINI_API_KEY } });
+  const response = await fetch(`${API_BASE}/interactions/${normalizeInteractionId(job.interactionId)}`, { headers: { "x-goog-api-key": env.GEMINI_API_KEY } });
   const data = await readOmniJson(response, { model: job.model });
-  const outputVideo = extractOmniVideoUri(data);
-  if (!outputVideo) return { ...job, status: "IN_PROGRESS" };
-  return { ...job, status: "COMPLETED", fileUri: outputVideo };
+  const output = extractOmniVideoOutput(data);
+  if (!output.done) return { ...job, status: "IN_PROGRESS" };
+  if (output.error) throw new Error(`Omni video düzenleme tamamlandı ama video üretmedi: ${output.error}`);
+  return { ...job, status: "COMPLETED", fileUri: output.uri || null, videoBase64: output.base64Data || null, videoMimeType: output.mimeType || null };
 }
 
 export async function downloadOmniVideo(fileUri, env = process.env) {

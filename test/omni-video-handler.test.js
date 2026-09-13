@@ -27,7 +27,8 @@ function makeResponse() {
 
 // src/omni-video.js akışının ardışık isteklerine (video indir -> Files API
 // start -> upload/finalize -> dosya durumu -> /interactions POST) URL'e göre
-// yanıt üreten mock — gerçek ağ isteği atılmaz.
+// yanıt üreten mock — gerçek ağ isteği atılmaz. Tamamlanmış çıktı, resmi
+// şemaya göre steps[]/model_output içinde döner.
 function baseMockFetch({ onInteractions } = {}) {
   return async (url, options) => {
     const href = String(url);
@@ -45,7 +46,7 @@ function baseMockFetch({ onInteractions } = {}) {
     }
     if (href.endsWith("/v1beta/interactions")) {
       if (onInteractions) return onInteractions(url, options);
-      return { ok: true, json: async () => ({ id: "interactions/xyz", outputs: [] }) };
+      return { ok: true, json: async () => ({ id: "v1_xyz", steps: [] }) };
     }
     throw new Error(`Beklenmeyen fetch: ${href}`);
   };
@@ -71,9 +72,9 @@ test("omni-video handler: GET/DELETE gibi desteklenmeyen metotlar 405 döner", a
   assert.equal(res.statusCode, 405);
 });
 
-test("omni-video handler: başarılı düzenleme isteği (BLOB_READ_WRITE_TOKEN yokken) downloadNote ile COMPLETED döner", async () => {
+test("omni-video handler: model_output'ta uri varsa (BLOB_READ_WRITE_TOKEN yokken) downloadNote ile COMPLETED döner", async () => {
   const originalFetch = global.fetch;
-  global.fetch = baseMockFetch({ onInteractions: () => ({ ok: true, json: async () => ({ id: "interactions/xyz", outputs: [{ content: [{ file_data: { file_uri: "https://example.com/files/output.mp4" } }] }] }) }) });
+  global.fetch = baseMockFetch({ onInteractions: () => ({ ok: true, json: async () => ({ id: "v1_xyz", steps: [{ type: "model_output", content: [{ type: "video", uri: "https://example.com/files/output.mp4", mime_type: "video/mp4" }] }] }) }) });
   try {
     const req = makeRequest({ existingVideoUrl: "https://example.com/video.mp4", editPrompt: "fix", confirmed: true });
     const res = makeResponse();
@@ -88,11 +89,30 @@ test("omni-video handler: başarılı düzenleme isteği (BLOB_READ_WRITE_TOKEN 
   }
 });
 
+// Google, delivery:"uri" istenmiş olsa bile inline base64 döndürebiliyor —
+// handler bunu da (fileUri olmadan) COMPLETED olarak tanımalı, sonsuza
+// kadar IN_PROGRESS'te kalmamalı.
+test("omni-video handler: model_output'ta uri yerine inline base64 varsa da COMPLETED döner (downloadNote ile, BLOB_READ_WRITE_TOKEN yokken)", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = baseMockFetch({ onInteractions: () => ({ ok: true, json: async () => ({ id: "v1_xyz", steps: [{ type: "model_output", content: [{ type: "video", data: "AQIDBA==", mime_type: "video/mp4" }] }] }) }) });
+  try {
+    const req = makeRequest({ existingVideoUrl: "https://example.com/video.mp4", editPrompt: "fix", confirmed: true });
+    const res = makeResponse();
+    await handler(req, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.payload.omni.status, "COMPLETED");
+    assert.equal(res.payload.omni.fileUri, null);
+    assert.match(res.payload.omni.downloadNote, /BLOB_READ_WRITE_TOKEN/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("omni-video handler: durum sorgusu (action:status) HTTP 429 alırsa gerçek HTTP 429 + yapılandırılmış JSON döner (500'e düşmez)", async () => {
   const originalFetch = global.fetch;
   global.fetch = async () => ({ ok: false, status: 429, headers: { get: () => null }, json: async () => ({ error: { status: "RESOURCE_EXHAUSTED", message: "quota" } }) });
   try {
-    const req = makeRequest({ action: "status", job: { interactionId: "interactions/xyz", model: "gemini-omni-1.1-flash" } });
+    const req = makeRequest({ action: "status", job: { interactionId: "v1_xyz", model: "gemini-omni-1.1-flash" } });
     const res = makeResponse();
     await handler(req, res);
     assert.equal(res.statusCode, 429);
@@ -138,6 +158,22 @@ test("omni-video handler: 429/REGION_UNAVAILABLE dışındaki bir hata eskisi gi
     assert.equal(res.payload.ok, false);
     assert.equal(res.payload.code, undefined);
     assert.equal(res.payload.error, "boom");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("omni-video handler: model_output var ama video parçası yoksa (örn. metinle reddetme) 500 + açık hata döner, sessizce IN_PROGRESS'e düşmez", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = baseMockFetch({
+    onInteractions: () => ({ ok: true, json: async () => ({ id: "v1_xyz", steps: [{ type: "model_output", content: [{ type: "text", text: "Bu videoyu düzenleyemem." }] }] }) })
+  });
+  try {
+    const req = makeRequest({ existingVideoUrl: "https://example.com/video.mp4", editPrompt: "fix", confirmed: true });
+    const res = makeResponse();
+    await handler(req, res);
+    assert.equal(res.statusCode, 500);
+    assert.match(res.payload.error, /Bu videoyu düzenleyemem/);
   } finally {
     global.fetch = originalFetch;
   }
