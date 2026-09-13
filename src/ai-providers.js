@@ -25,8 +25,10 @@ async function request(url, options) {
 
 // OPENAI_API_KEY'in kredisi tükendi (bkz. src/scene-image.js'teki kredili
 // OPENAI_IMAGE_API_KEY ayrımı) — tüm OpenAI metin çağrıları da artık aynı
-// kredili anahtarı kullanır; ayrı bir metin anahtarına gerek yok.
-function openaiTextApiKey(env) {
+// kredili anahtarı kullanır; ayrı bir metin anahtarına gerek yok. export
+// edildi — src/creative-providers/openai.js (AI Reels V2 PR-B, model
+// discovery) AYNI anahtarı reuse eder, yeni bir env değişkeni icat etmez.
+export function openaiTextApiKey(env) {
   return env.OPENAI_IMAGE_API_KEY || env.OPENAI_API_KEY;
 }
 
