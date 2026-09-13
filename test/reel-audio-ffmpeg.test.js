@@ -56,6 +56,20 @@ test("buildReelAudioFfmpegArgs: voice+music applies ducking (sidechaincompress) 
   assert.match(filter, /alimiter/);
 });
 
+// Regresyon: gerçek ffmpeg'e karşı smoke test'te (bkz.
+// scripts/smoke-test-reel-audio.mjs) "Stream specifier 'voice' ... matches
+// no streams" hatasıyla yakalandı — sebep, aynı [voice] pad etiketinin HEM
+// sidechaincompress'e HEM amix'e doğrudan girdi olarak verilmesiydi (ffmpeg'de
+// bir pad etiketi yalnızca TEK bir filtreye girdi olabilir). Düzeltme:
+// voice sinyali asplit ile iki bağımsız kopyaya ayrılır.
+test("buildReelAudioFfmpegArgs: voice+music splits the voice signal (asplit) before feeding it to both sidechaincompress and amix — no pad label is consumed twice", () => {
+  const { args } = buildReelAudioFfmpegArgs({ videoPath: "in.mp4", voiceoverPath: "v.wav", musicPath: "m.mp3", videoDurationSeconds: 8, outputPath: "o.mp4" });
+  const filter = args[args.indexOf("-filter_complex") + 1];
+  assert.match(filter, /asplit=2\[voice1\]\[voice2\]/);
+  assert.match(filter, /\[musicvol\]\[voice1\]sidechaincompress/);
+  assert.match(filter, /\[voice2\]\[ducked\]amix/);
+});
+
 test("buildReelAudioFfmpegArgs: musicVolume 0 mutes the music track (gain factor 0)", () => {
   const zero = buildReelAudioFfmpegArgs({ videoPath: "in.mp4", musicPath: "m.mp3", musicVolume: 0, videoDurationSeconds: 5, outputPath: "o.mp4" });
   const filter = zero.args[zero.args.indexOf("-filter_complex") + 1];

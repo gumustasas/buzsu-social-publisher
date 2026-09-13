@@ -63,14 +63,22 @@ export function buildReelAudioFfmpegArgs({
   const fadeOutStart = Math.max(0, videoDurationSeconds - MUSIC_FADE_SECONDS);
 
   if (voiceoverPath && musicPath) {
-    filterParts.push(`[${inputIndexes.voice}:a]volume=${dbToLinear(VOICE_GAIN_DB)}[voice]`);
+    // KRİTİK: ffmpeg'de bir filtre pad/link etiketi ([voice] gibi) yalnızca
+    // TEK BİR filtreye girdi olarak kullanılabilir — aynı etiketi hem
+    // sidechaincompress'e (kontrol sinyali) hem amix'e (asıl mix) doğrudan
+    // vermek "Stream specifier 'voice' ... matches no streams" gibi
+    // (gerçek sebebi hiç açıklamayan) bir ffmpeg hatasıyla sonuçlanıyor —
+    // gerçek ffmpeg'e karşı smoke test'te (scripts/smoke-test-reel-audio.mjs)
+    // yakalandı. Çözüm: voice sinyali asplit ile İKİ bağımsız kopyaya
+    // ayrılıp her filtreye kendi kopyası veriliyor.
+    filterParts.push(`[${inputIndexes.voice}:a]volume=${dbToLinear(VOICE_GAIN_DB)},asplit=2[voice1][voice2]`);
     filterParts.push(
       `[${inputIndexes.music}:a]volume=${gain},afade=t=in:st=0:d=${MUSIC_FADE_SECONDS},afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${MUSIC_FADE_SECONDS}[musicvol]`
     );
     // sidechaincompress: voice konuştuğunda müzik otomatik kısılır ("ducking"),
     // voice susunca müzik kendi seviyesine geri döner.
-    filterParts.push("[musicvol][voice]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=1000[ducked]");
-    filterParts.push(`[voice][ducked]amix=inputs=2:duration=first:dropout_transition=2,${LIMITER}[aout]`);
+    filterParts.push("[musicvol][voice1]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=1000[ducked]");
+    filterParts.push(`[voice2][ducked]amix=inputs=2:duration=first:dropout_transition=2,${LIMITER}[aout]`);
   } else if (voiceoverPath) {
     filterParts.push(`[${inputIndexes.voice}:a]volume=${dbToLinear(VOICE_GAIN_DB)},${LIMITER}[aout]`);
   } else {
