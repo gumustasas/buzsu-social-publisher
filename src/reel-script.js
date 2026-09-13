@@ -92,7 +92,7 @@ export async function generateReelScript(input = {}, env = process.env, deps = {
   const promptText = buildReelScriptPrompt({ productContext, userBrief: input.userBrief, durationSeconds, objective: input.objective, aspectRatio });
   const generate = GENERATOR_BY_PROVIDER[resolvedProvider];
   const rawCandidate = await generate({ model: resolvedModel, promptText }, env, generationDeps);
-  const validated = validateReelScript(rawCandidate, { durationSeconds, productContext });
+  const validated = validateReelScript(rawCandidate, { durationSeconds, productContext, userBrief: input.userBrief });
 
   return {
     scriptId: randomUUIDImpl(),

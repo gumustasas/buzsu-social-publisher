@@ -16,6 +16,7 @@ test("AI Reels V2 client ayrı dosyada kalır ve eski dashboard JS global'lerine
 test("validate yanıtındaki normalize ReelScript client state'inin kaynağı olur", () => {
   assert.match(client, /state\.reelScript = data\.reelScript;/);
   assert.match(client, /autofillAudio\(state\.reelScript\);\s*renderScript\(\);/);
+  assert.match(client, /userBrief: state\.creativeSettings\.userBrief, reelScript: candidate/);
 });
 
 test("PR-D client yalnız options/product-context/generate/validate çağırır; medya üretim uçlarına dokunmaz", () => {

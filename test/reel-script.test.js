@@ -180,6 +180,23 @@ test("generateReelScript: doğrulanamayan bir claimsUsed kaydı TÜM üretimi re
   );
 });
 
+test("generateReelScript: gerçek input userBrief desteğini server validator'a taşır", async () => {
+  const generated = JSON.parse(validReelScriptJson());
+  generated.claimsUsed = [{ claim: "Paslanmaz çelik gövde", provenance: "user_provided" }];
+  generated.creativeDirection = "Paslanmaz çelik gövde yakın planda gösterilir.";
+  const deps = {
+    productContextDeps: baseProductContextDeps(),
+    discoveryDeps: discoveryDepsWithOpenAiModel("gpt-5.6"),
+    generationDeps: { fetchImpl: async () => ({ ok: true, json: async () => ({ output_text: JSON.stringify(generated) }) }) }
+  };
+  const result = await generateReelScript(
+    baseInput({ provider: "openai", modelTier: "balanced", userBrief: "Paslanmaz çelik gövde" }),
+    { OPENAI_API_KEY: "k", OPENAI_CREATIVE_BALANCED_MODEL: "gpt-5.6" },
+    deps
+  );
+  assert.deepEqual(result.claimsUsed, [{ claim: "Paslanmaz çelik gövde", provenance: "user_provided" }]);
+});
+
 test("generateReelScript: provider'ın döndürdüğü geçersiz JSON açık bir hata olarak yansır", async () => {
   const deps = {
     productContextDeps: baseProductContextDeps(),

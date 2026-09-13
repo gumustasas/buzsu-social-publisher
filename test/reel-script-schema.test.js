@@ -91,6 +91,8 @@ test("validateNarrationBudget: 8sn'lik videoya uzun bir paragraf yazılırsa NAR
 test("validateClaimsUsed: verifiedFacts'ten gelen, sourceUrl'ü doğru bir iddia kabul edilir", () => {
   const result = validateClaimsUsed([{ claim: "3 kademeli filtre sistemi", sourceUrl: "https://www.buzsu.com.tr/llms-full.txt" }], PRODUCT_CONTEXT);
   assert.equal(result.length, 1);
+  assert.equal(result[0].provenance, "verified");
+  assert.equal(result[0].sourceUrl, "https://www.buzsu.com.tr/llms-full.txt");
 });
 
 test("validateClaimsUsed: verifiedFacts'te KARŞILIĞI olmayan bir iddia UNVERIFIED_PRODUCT_CLAIM ile reddedilir", () => {
@@ -107,8 +109,11 @@ test("validateClaimsUsed: bilinmeyen bir sourceUrl reddedilir (uydurma kaynak)",
   );
 });
 
-test("validateClaimsUsed: claim veya sourceUrl eksikse reddedilir", () => {
-  assert.throws(() => validateClaimsUsed([{ claim: "bir şey" }], PRODUCT_CONTEXT), (e) => e.code === "UNVERIFIED_PRODUCT_CLAIM");
+test("validateClaimsUsed: yaratıcı reklam dili sourceUrl olmadan geçer ve claimsUsed'a alınmaz", () => {
+  assert.deepEqual(validateClaimsUsed([{ claim: "Modern yaşam için premium görsel atmosfer" }], PRODUCT_CONTEXT), []);
+});
+
+test("validateClaimsUsed: claim metni eksikse reddedilir", () => {
   assert.throws(() => validateClaimsUsed([{ sourceUrl: "https://www.buzsu.com.tr/llms-full.txt" }], PRODUCT_CONTEXT), (e) => e.code === "UNVERIFIED_PRODUCT_CLAIM");
 });
 
@@ -170,6 +175,57 @@ test("validateReelScript: geçersiz JSON şekli (nesne değil) STRUCTURED_JSON_I
 test("validateReelScript: doğrulanamayan bir claimsUsed kaydı TÜM isteği reddeder", () => {
   const candidate = buildCandidate({ claimsUsed: [{ claim: "TSE sertifikalıdır", sourceUrl: "https://www.buzsu.com.tr/llms-full.txt" }] });
   assert.throws(() => validateReelScript(candidate, { durationSeconds: 8, productContext: PRODUCT_CONTEXT }), (e) => e.code === "UNVERIFIED_PRODUCT_CLAIM");
+});
+
+test("validateReelScript: normal yaratıcı dil verifiedFacts eşleşmesi olmadan geçer", () => {
+  const candidate = buildCandidate({
+    title: "Modern yaşamın ferah ritmi",
+    concept: "Şık sunum ve premium görsel atmosfer",
+    hook: "Mutfağınızla uyumlu sinematik ürün tanıtımı",
+    claimsUsed: [{ claim: "Günlük kullanım deneyimini modern bir sahnede anlatır" }]
+  });
+  const result = validateReelScript(candidate, { durationSeconds: 8, productContext: PRODUCT_CONTEXT });
+  assert.deepEqual(result.claimsUsed, []);
+});
+
+test("validateReelScript: userBrief'te gerçekten verilen makul ürün bilgisi user_provided olarak geçer", () => {
+  const claim = "Paslanmaz çelik gövde";
+  const candidate = buildCandidate({ claimsUsed: [{ claim, provenance: "user_provided" }], creativeDirection: `${claim} yakın planda gösterilir.` });
+  const result = validateReelScript(candidate, { durationSeconds: 8, productContext: PRODUCT_CONTEXT, userBrief: claim });
+  assert.deepEqual(result.claimsUsed, [{ claim, provenance: "user_provided" }]);
+});
+
+test("validateReelScript: model sahte user_provided provenance yazsa da brief desteklemiyorsa reddedilir", () => {
+  const candidate = buildCandidate({ claimsUsed: [{ claim: "Paslanmaz çelik gövde", provenance: "user_provided" }] });
+  assert.throws(
+    () => validateReelScript(candidate, { durationSeconds: 8, productContext: PRODUCT_CONTEXT, userBrief: "Modern mutfak reklamı" }),
+    (e) => e.code === "UNVERIFIED_PRODUCT_CLAIM"
+  );
+});
+
+test("validateReelScript: userBrief sağlık/sertifika/garanti/ölçülebilir performans için güvenlik bypass'ı değildir", () => {
+  for (const claim of ["TSE sertifikalıdır", "5 yıl garantilidir", "300 GPD üretim kapasitesi vardır", "%40 su tasarrufu sağlar", "Sağlıklı ve güvenli içme suyu sağlar", "2 yılda bir filtre değişimi gerekir"]) {
+    const candidate = buildCandidate({ claimsUsed: [{ claim, provenance: "user_provided" }] });
+    assert.throws(
+      () => validateReelScript(candidate, { durationSeconds: 8, productContext: PRODUCT_CONTEXT, userBrief: claim }),
+      (e) => e.code === "UNVERIFIED_PRODUCT_CLAIM",
+      claim
+    );
+  }
+});
+
+test("validateReelScript: claimsUsed'a yazılmayan riskli sayısal claim de script yüzeylerinden yakalanır", () => {
+  const candidate = buildCandidate({ hook: "300 GPD üretim kapasitesi", claimsUsed: [] });
+  assert.throws(() => validateReelScript(candidate, { durationSeconds: 8, productContext: PRODUCT_CONTEXT }), (e) => e.code === "UNVERIFIED_PRODUCT_CLAIM");
+});
+
+test("validateReelScript: Naturalsnet birleşik cümlesinde riskli parçayı ayırır ve yaratıcı dili değil debi claim'ini reddeder", () => {
+  const claim = "Yüksek üretim debisi, dayanıklı kasa ve kolay filtre erişimi ön plandadır.";
+  const candidate = buildCandidate({ claimsUsed: [{ claim }] });
+  assert.throws(
+    () => validateReelScript(candidate, { durationSeconds: 8, productContext: PRODUCT_CONTEXT }),
+    (e) => e.code === "UNVERIFIED_PRODUCT_CLAIM" && e.details.claim === "Yüksek üretim debisi"
+  );
 });
 
 test("validateReelScript: çakışan sahneler TÜM isteği reddeder", () => {

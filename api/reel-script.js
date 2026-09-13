@@ -98,7 +98,7 @@ export function createReelScriptHandler({
           throw new ReelScriptError("ReelScript içindeki durationSeconds geçersiz.", { code: "INVALID_INPUT", details: { durationSeconds } });
         }
         const productContext = await getProductContextImpl(productReference(body));
-        const validated = validateReelScriptImpl(candidate, { durationSeconds, productContext });
+        const validated = validateReelScriptImpl(candidate, { durationSeconds, productContext, userBrief: body.userBrief });
         return response.status(200).json({
           ok: true,
           reelScript: {
