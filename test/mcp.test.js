@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { callTool } from "../api/mcp.js";
+import { callTool, handleMessage } from "../api/mcp.js";
+
+process.env.GEMINI_API_KEY = process.env.GEMINI_API_KEY || "test-gemini-key";
 
 const originalAirtableToken = process.env.AIRTABLE_TOKEN;
 
@@ -170,4 +172,47 @@ test("get_video_render_status requires jobId", async () => {
 test("compose_product_video validates mediaItems before any network/Blob access", async () => {
   await assert.rejects(() => callTool("compose_product_video", { mediaItems: [{ imageUrl: "https://example.com/a.jpg" }] }), /en az 2/);
   await assert.rejects(() => callTool("compose_product_video", { mediaItems: [] }), /en az 2/);
+});
+
+// generate_video_clip'in RATE_LIMITED (429) hatası, MCP JSON-RPC zarfında
+// isError:true KORUNARAK ama content[].text'in düz "Hata: ..." yerine
+// code/model/alternatives gibi alanları taşıyan geçerli bir JSON olmasını
+// gerektiriyor (bkz. src/veo-video.js:VeoApiError, api/mcp.js tools/call
+// catch bloğu). callTool değil handleMessage test ediliyor çünkü bu
+// zarflama (content/isError) tools/call seviyesinde, callTool'un DIŞINDA.
+test("tools/call: generate_video_clip'in RATE_LIMITED hatası isError:true ile birlikte geçerli JSON içeren bir content.text döner", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (url, options) => {
+    if (!options) return { ok: true, headers: { get: () => "image/jpeg" }, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer };
+    return {
+      ok: false,
+      status: 429,
+      headers: { get: (name) => (name.toLowerCase() === "retry-after" ? "7" : null) },
+      json: async () => ({ error: { message: "quota exceeded", status: "RESOURCE_EXHAUSTED", details: [] } })
+    };
+  };
+  try {
+    const response = await handleMessage({
+      id: 1,
+      method: "tools/call",
+      params: { name: "generate_video_clip", arguments: { imageUrl: "https://example.com/x.jpg", prompt: "p", confirmed: true, model: "fast" } }
+    });
+    assert.equal(response.result.isError, true);
+    const parsed = JSON.parse(response.result.content[0].text);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.code, "RATE_LIMITED");
+    assert.equal(parsed.httpStatus, 429);
+    assert.equal(parsed.model, "veo-3.1-fast-generate-preview");
+    assert.equal(parsed.retryAfter, 7);
+    assert.deepEqual(parsed.alternatives.map((a) => a.tier), ["economy", "quality"]);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("tools/call: code'u olmayan (mevcut/genel) bir hata hâlâ düz \"Hata: ...\" metni döner (regresyon — davranış bozulmadı)", async () => {
+  const response = await handleMessage({ id: 1, method: "tools/call", params: { name: "get_draft", arguments: {} } });
+  assert.equal(response.result.isError, true);
+  assert.match(response.result.content[0].text, /^Hata: /);
+  assert.throws(() => JSON.parse(response.result.content[0].text), "düz metin JSON olarak parse edilemez, bu beklenen davranış");
 });

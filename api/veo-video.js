@@ -21,6 +21,11 @@ export default async function handler(request, response) {
     return response.status(200).json({ ok: true, veo: job });
   } catch (error) {
     console.error(error);
+    // RATE_LIMITED (bkz. src/veo-video.js:VeoApiError) gerçek bir HTTP 429
+    // olarak ve code/model/alternatives gibi alanlarla birlikte dönüyor —
+    // dashboard bu sayede "kota doldu" durumunu 500'den ayırt edip
+    // alternatif modelleri gösterebilir. Diğer tüm hatalar eskisi gibi 500.
+    if (error.code === "RATE_LIMITED") return response.status(429).json({ ok: false, ...error.toJSON() });
     return response.status(500).json({ ok: false, error: error.message });
   }
 }

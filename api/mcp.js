@@ -261,7 +261,7 @@ const TOOLS = [
         aspectRatio: { type: "string", description: "En-boy oranı (varsayılan '9:16', Reels için)" },
         durationSeconds: { type: "number", description: "Video süresi, saniye (isteğe bağlı — verilmezse modelin varsayılanı kullanılır; Google'ın kabul ettiği değerler modele göre değişir, örn. 4/6/8)" },
         resolution: { type: "string", enum: ["720p", "1080p"], description: "Çözünürlük (isteğe bağlı, varsayılan model varsayılanı — genelde 720p). 1080p daha yüksek maliyetlidir." },
-        model: { type: "string", description: "Veo model adı (isteğe bağlı, varsayılan 'veo-3.1-fast-generate-preview'). Örn. tam kaliteli 'veo-3.1-generate-preview' — daha yavaş ve pahalı." },
+        model: { type: "string", description: "Veo model/tier seçimi (isteğe bağlı). Ya bir tier adı — 'economy' (Lite, en ucuz), 'fast' (varsayılan davranış, orta), 'quality' (veo-3.1-generate-preview, en pahalı/yavaş), 'auto' (VEO_DEFAULT_TIER'a, o da yoksa economy'ye düşer) — ya da doğrudan tam model adı (ör. 'veo-3.1-generate-preview', geriye dönük uyumluluk için hâlâ kabul edilir). Verilmezse VEO_VIDEO_MODEL/VEO_DEFAULT_TIER env değişkenlerine, onlar da yoksa economy'ye düşülür. Seçilen model 429 (kota) hatası verirse yanıttaki 'alternatives' alanında önerilen diğer tier'lar listelenir — bu tool onlara ASLA otomatik geçmez, açıkça yeni bir model ile confirmed:true göndermeniz gerekir." },
         title: { type: "string", description: "Görüntüleme amaçlı ürün/klip adı (isteğe bağlı)" },
         confirmed: { type: "boolean", description: "true olmadan hiçbir API çağrısı yapılmaz/ücret alınmaz — gerçek harcamayı bilerek onayladığınızı belirtir" }
       },
@@ -643,7 +643,11 @@ function jsonRpcError(id, code, message) {
   return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
-async function handleMessage(msg) {
+// export: test/mcp.test.js bunu doğrudan çağırıp tools/call'ın JSON-RPC
+// zarfını (isError:true, content[].text) MCP_API_KEY/HTTP katmanına hiç
+// girmeden test edebiliyor — handler() zaten aynı fonksiyonu kullanıyor,
+// davranış değişmedi.
+export async function handleMessage(msg) {
   const { id, method, params } = msg;
   switch (method) {
     case "initialize":
@@ -663,7 +667,15 @@ async function handleMessage(msg) {
         const text = await callTool(toolName, toolArgs);
         return jsonRpcResponse(id, { content: [{ type: "text", text }] });
       } catch (error) {
-        return jsonRpcResponse(id, { content: [{ type: "text", text: `Hata: ${error.message}` }], isError: true });
+        // Yapılandırılmış hatalar (şu an yalnızca VeoApiError/RATE_LIMITED,
+        // bkz. src/veo-video.js) code/model/alternatives gibi alanları
+        // kaybetmeden geçerli bir JSON metni olarak taşınıyor — isError:true
+        // yine de korunuyor. code'u olmayan (yani her zamanki) hatalar
+        // eskisi gibi düz "Hata: ..." metnine düşüyor, davranış değişmiyor.
+        const text = typeof error.code === "string"
+          ? JSON.stringify({ ok: false, ...(typeof error.toJSON === "function" ? error.toJSON() : { code: error.code, error: error.message }) })
+          : `Hata: ${error.message}`;
+        return jsonRpcResponse(id, { content: [{ type: "text", text }], isError: true });
       }
     }
     case "ping":
