@@ -382,6 +382,59 @@ edilebildi — gerçek görsel/zamanlama doğruluğu ancak GitHub Actions'ta
 çalışan gerçek bir render ile doğrulanabilir. İlk canlı denemede çıktı
 videoyu mutlaka izleyip kontrol edin.
 
+## Google Veo model seçimi (generate_video_clip / dashboard Reels)
+
+Google Veo 3.1 ailesinin üç modeli, ucuzdan pahalıya:
+
+| Tier | Model | Not |
+| --- | --- | --- |
+| `economy` | `veo-3.1-lite-generate-preview` | En ucuz — **varsayılan** |
+| `fast` | `veo-3.1-fast-generate-preview` | Orta hız/maliyet |
+| `quality` | `veo-3.1-generate-preview` | En yüksek kalite, en pahalı/yavaş |
+
+**Neden varsayılan `economy`?** Google'ın her modelin kendi günlük istek
+kotası (RPD) var; `fast` modelinin kotası tükendiğinde önceden hiçbir
+allowlist/fallback olmadığı için araç tamamen çalışmaz hale geliyordu.
+Model belirtilmeyen istekler artık otomatik olarak `economy`'ye düşüyor —
+bu **kota sorgulaması değil**, sabit bir varsayılan zinciridir (Google
+kalan kotayı üretim öncesi güvenilir şekilde bildirmiyor).
+
+**Model nasıl seçilir** (öncelik sırasıyla):
+1. Çağrı parametresi — MCP'de `generate_video_clip`'in `model` alanı, dashboard'da Reels/Video sekmesindeki "Veo model" seçici.
+2. `VEO_VIDEO_MODEL` ortam değişkeni — Vercel Production'da tanımlanabilir.
+3. `VEO_DEFAULT_TIER` ortam değişkeni.
+4. Hiçbiri yoksa (veya `"auto"` ise) → `economy`.
+
+Her katman ya bir tier adı (`economy`/`fast`/`quality`/`auto`) ya da
+doğrudan ham bir model adı (ör. `veo-3.1-generate-preview`, geriye dönük
+uyumluluk için) kabul eder. Tanınmayan bir değer, ilgili çağrı **hiçbir
+ağ isteği atmadan** hemen reddedilir.
+
+**429 (kota) hatası**: Google bir isteği reddettiğinde (`HTTP 429`) yanıt
+artık düz bir hata mesajı değil, yapılandırılmış bir hata:
+```jsonc
+{
+  "ok": false,
+  "code": "RATE_LIMITED",
+  "httpStatus": 429,
+  "model": "veo-3.1-fast-generate-preview",
+  "providerStatus": "RESOURCE_EXHAUSTED",   // Google'ın kendi durumu
+  "retryAfter": 36,                          // saniye, bilinmiyorsa null
+  "alternatives": [                          // maliyet sırasıyla, ASLA otomatik çağrılmaz
+    { "tier": "economy", "model": "veo-3.1-lite-generate-preview", "label": "Veo Lite (ekonomik)" },
+    { "tier": "quality", "model": "veo-3.1-generate-preview", "label": "Veo Generate (yüksek kalite)" }
+  ],
+  "details": { "quotaId": "...", "quotaMetric": "..." }  // yoksa {"quotaType":"unknown"}
+}
+```
+Bu, aşırı kesin bir "günlük kota doldu" iddiası **yapmaz** — dakikalık
+(RPM) veya günlük (RPD) kota ayrımı Google'ın yanıtından her zaman
+anlaşılamaz. **Hiçbir zaman otomatik olarak daha pahalı bir modele
+geçilmez**; kullanıcı `alternatives` listesinden yeni bir model seçip
+`confirmed:true` ile açıkça tekrar çağırmalıdır. Bu yapı MCP yanıtında
+(`content[].text`, `isError:true` korunarak) ve dashboard/HTTP
+uçlarında (gerçek `HTTP 429` + aynı alanlar) aynı şekilde taşınır.
+
 ## Sonraki adım
 
 Dry-run doğru çalıştıktan sonra Meta API için ayrı gönderim scripti eklenir. O aşamada da önce test modu, sonra tek kayıtla kontrollü canlı paylaşım yapılmalıdır.

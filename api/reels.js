@@ -104,13 +104,25 @@ export default async function handler(request, response) {
       const promptId = typeof body.promptId === "string" ? body.promptId : "";
       if (!finalizedPrompt || !promptId) return response.status(400).json({ error: "Önce \"Video promptunu önizle\" ile bir prompt oluşturun." });
       if (hashVideoPrompt(finalizedPrompt) !== promptId) return response.status(400).json({ error: "Prompt değişmiş görünüyor — lütfen tekrar önizleyin." });
-      const submit = body.provider === "fal" ? submitFalVideo : submitVeoVideo;
-      const job = await submit(product, process.env, { finalizedPrompt });
+      // Model/tier seçimi YALNIZCA Veo için anlamlı (fal.ai'de tier kavramı
+      // yok) — dashboard #veo-model-tier alanından body.model olarak
+      // gönderiyor; body.profile aynı alanın bir eşanlamlısı olarak da
+      // kabul edilir. Bu, prompt hash'ine (promptId) hiç dahil değil —
+      // model değişmesi promptun kendisini değiştirmiyor, o yüzden hash
+      // doğrulaması yukarıda değişmeden kalıyor.
+      const modelOverride = body.provider === "veo" ? (body.model || body.profile) : undefined;
+      const job = body.provider === "fal"
+        ? await submitFalVideo(product, process.env, { finalizedPrompt })
+        : await submitVeoVideo(product, process.env, { finalizedPrompt, model: modelOverride });
       console.log(JSON.stringify({ event: "video-prompt-sent", promptId, provider: body.provider, model: job.model, productId: body.productId, at: new Date().toISOString() }));
       return response.status(200).json({ ok: true, [body.provider]: job });
     }
 
     const reel = await generateReelPackage(body.provider, product);
     return response.status(200).json({ ok: true, reel });
-  } catch (error) { console.error(error); return response.status(500).json({ ok: false, error: error.message }); }
+  } catch (error) {
+    console.error(error);
+    if (error.code === "RATE_LIMITED") return response.status(429).json({ ok: false, ...error.toJSON() });
+    return response.status(500).json({ ok: false, error: error.message });
+  }
 }
