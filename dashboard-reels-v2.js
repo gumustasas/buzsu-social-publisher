@@ -36,6 +36,7 @@
   let initialized = false;
   let pendingPaidFingerprint = null;
   let pendingPaidTimer = null;
+  let scriptGenerating = false;
   let selectedProductId = "";
   let productCatalog = [];
   // Step 5 (PR-E): sahne bazlı Veo onayı — dashboard.html'deki mevcut
@@ -156,12 +157,30 @@
     state.creativeSettings.userBrief = byId("reels-v2-brief").value.trim();
     state.creativeSettings.model = byId("reels-v2-custom-toggle").checked ? (byId("reels-v2-custom-model").value || null) : null;
     if (invalidateConfirmation) resetPaidConfirmation();
+    renderTierOptions();
     renderCustomModels();
     renderResolution();
   }
 
   function availableModels(provider) {
     return options.models.filter((model) => model.available && (provider === "auto" || model.provider === provider));
+  }
+
+  function tierIsAvailable(provider, tier) {
+    const providers = provider === "auto" ? options.providers.filter((value) => value !== "auto") : [provider];
+    return providers.some((value) => availableModels(value).some((model) => model.tierCandidate === tier));
+  }
+
+  function renderTierOptions() {
+    const select = byId("reels-v2-tier");
+    const provider = byId("reels-v2-provider").value;
+    const selected = state.creativeSettings.modelTier;
+    select.innerHTML = options.tiers.map((tier) => {
+      const available = tierIsAvailable(provider, tier);
+      const label = `${tierLabels[tier] || tier}${available ? "" : " — Kullanılabilir model yok"}`;
+      return `<option value="${escapeHtml(tier)}"${available ? "" : " disabled"}>${escapeHtml(label)}</option>`;
+    }).join("");
+    select.value = selected;
   }
 
   function renderCustomModels() {
@@ -198,6 +217,7 @@
     byId("reels-v2-resolution").textContent = resolved
       ? `Onaylanacak seçim: ${providerLabels[resolved.provider] || resolved.provider} · ${resolved.model} · ${tierLabels[resolved.tier] || resolved.tier}`
       : "Bu seçim için erişilebilir/yapılandırılmış model bulunamadı. Başka sağlayıcı, tier veya keşfedilmiş özel model seçin.";
+    byId("reels-v2-generate").disabled = scriptGenerating || !resolved;
   }
 
   async function loadOptions() {
@@ -206,7 +226,7 @@
     if (!response.ok) throw new Error(data.error || "AI Reels seçenekleri yüklenemedi.");
     Object.assign(options, data);
     fillSelect(byId("reels-v2-provider"), options.providers, (value) => providerLabels[value] || value);
-    fillSelect(byId("reels-v2-tier"), options.tiers, (value) => tierLabels[value] || value);
+    renderTierOptions();
     fillSelect(byId("reels-v2-objective"), options.objectives, (value) => objectiveLabels[value] || value);
     fillSelect(byId("reels-v2-duration"), options.durations, (value) => `${value} saniye`);
     fillSelect(byId("reels-v2-aspect"), options.aspectRatios, (value) => value);
@@ -239,17 +259,15 @@
     refreshProductSelect();
   }
 
-  function listText(items) {
-    return (items || []).map((item) => typeof item === "string" ? item : (item.fact || item.label || item.category || JSON.stringify(item))).filter(Boolean);
-  }
-
   function renderProductContext(context) {
     const wrap = byId("reels-v2-product-context");
     const images = (context.productImageUrls || []).map((url) => safeUrl(url) ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener"><img src="${escapeHtml(url)}" alt="${escapeHtml(context.productName)}"></a>` : "").join("");
-    const facts = (context.verifiedFacts || []).map((fact) => `<li>${escapeHtml(fact.fact || fact)}${safeUrl(fact.sourceUrl) ? ` <a href="${escapeHtml(fact.sourceUrl)}" target="_blank" rel="noopener">kaynak ↗</a>` : ""}</li>`).join("");
-    const prohibited = listText(context.prohibitedClaims).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
-    const sources = (context.sourceUrls || []).filter(safeUrl).map((url) => `<li><a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(url)}</a></li>`).join("");
-    wrap.innerHTML = `<div class="reels-v2-context"><div><h4>${escapeHtml(context.productName)}</h4><p><a href="${escapeHtml(safeUrl(context.canonicalUrl))}" target="_blank" rel="noopener">${escapeHtml(context.canonicalUrl)}</a></p><strong>Doğrulanmış bilgiler</strong><ul class="reels-v2-facts">${facts || "<li>Doğrulanmış bilgi bulunamadı.</li>"}</ul><strong>Kaynaklar</strong><ul class="reels-v2-facts">${sources || "<li>Kaynak bulunamadı.</li>"}</ul></div><div><div class="reels-v2-images">${images || "Görsel bulunamadı."}</div><strong style="display:block;margin-top:10px">Kullanılmaması gereken iddialar</strong><ul class="reels-v2-facts">${prohibited || "<li>Ek kısıt bildirilmedi.</li>"}</ul></div></div>`;
+    const facts = (context.verifiedFacts || []).map((fact) => `<li>${escapeHtml(fact.fact || fact)}</li>`).join("");
+    const features = (context.technicalFeatures || []).map((fact) => `<li>${escapeHtml(fact.fact || fact)}</li>`).join("");
+    const sellingPoints = (context.sellingPoints || []).map((fact) => `<li>${escapeHtml(fact.fact || fact)}</li>`).join("");
+    const useCases = (context.useCases || []).map((fact) => `<li>${escapeHtml(fact.fact || fact)}</li>`).join("");
+    const canonicalUrl = safeUrl(context.canonicalUrl);
+    wrap.innerHTML = `<div class="reels-v2-context"><div><h4>${escapeHtml(context.productName)}</h4>${context.description ? `<p>${escapeHtml(context.description)}</p>` : ""}<strong>Doğrulanmış bilgiler</strong><ul class="reels-v2-facts">${facts || "<li>Doğrulanmış bilgi bulunamadı.</li>"}</ul>${features ? `<strong>Teknik özellikler</strong><ul class="reels-v2-facts">${features}</ul>` : ""}${sellingPoints ? `<strong>Satış noktaları</strong><ul class="reels-v2-facts">${sellingPoints}</ul>` : ""}${useCases ? `<strong>Kullanım alanları</strong><ul class="reels-v2-facts">${useCases}</ul>` : ""}${canonicalUrl ? `<p><a href="${escapeHtml(canonicalUrl)}" target="_blank" rel="noopener">Ürün sayfasını aç ↗</a></p>` : ""}</div><div><div class="reels-v2-images">${images || "Görsel bulunamadı."}</div></div></div>`;
     wrap.classList.remove("hidden");
   }
 
@@ -827,7 +845,8 @@
       return;
     }
     resetPaidConfirmation();
-    button.disabled = true;
+    scriptGenerating = true;
+    renderResolution();
     message.textContent = "Doğrulanmış ürün bilgileriyle AI senaryo hazırlanıyor...";
     try {
       const payload = {
@@ -865,7 +884,8 @@
     } catch (error) {
       message.textContent = error.message;
     } finally {
-      button.disabled = false;
+      scriptGenerating = false;
+      renderResolution();
     }
   }
 

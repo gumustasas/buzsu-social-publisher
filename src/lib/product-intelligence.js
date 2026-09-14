@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { resolveProductUrl, slugFromUrl } from "./buzsu-url.js";
-import { fetchProductContext, LLMS_FULL_URL } from "./product-context.js";
 import { listProducts } from "./products.js";
 import { catalogProductId } from "./product-catalog.js";
+import { FEED_URL, findFeedProductByCanonicalUrl, listFeedProducts } from "./feed-catalog.js";
 import { classifyInstallationContext, INSTALLATION_CONTEXT_LABELS } from "./product-installation-context.js";
 import { classifyProhibitedClaims } from "./product-claims.js";
 import { readProductContextCache, writeProductContextCache } from "./product-context-cache.js";
@@ -14,8 +14,8 @@ import { readProductContextCache, writeProductContextCache } from "./product-con
 // products.js/product-catalog.js/product-installation-context.js); bu
 // dosya onları BİRLEŞTİRİR, yeni bir fetch/ağ mimarisi icat etmez.
 //
-// KRİTİK TASARIM KARARI: verifiedFacts, kaynak metinden (llms-full.txt
-// penceresi veya destekleyici sayfa özeti) AI TARAFINDAN YENİDEN
+// KRİTİK TASARIM KARARI: verifiedFacts, exact XML feed kaydından ve yalnız
+// seçilen canonical ürün sayfasından AI TARAFINDAN YENİDEN
 // YAZILMADAN, birebir cümle alıntısı olarak çıkarılır. Bu, "AI ürün
 // özelliği uydurmasın" kuralını üretim (generation) değil ALINTI
 // (extraction) yaparak mimari olarak garanti eder.
@@ -83,6 +83,14 @@ function decodeHtmlEntities(value) {
     .replace(/&gt;/g, ">");
 }
 
+function stripMarkup(value) {
+  return decodeHtmlEntities(value)
+    .replace(/<br\s*\/?\s*>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function extractMetaDescription(html) {
   const match =
     String(html || "").match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']/i) ||
@@ -90,12 +98,50 @@ function extractMetaDescription(html) {
   return match ? decodeHtmlEntities(match[1]).trim() : "";
 }
 
-// Ürün sayfasının kendisinden meta description çeker — SADECE destekleyici
-// bir kaynaktır (llms-full.txt eşleşmesi yoksa devreye girer). Her
+function jsonLdObjects(value) {
+  if (Array.isArray(value)) return value.flatMap(jsonLdObjects);
+  if (!value || typeof value !== "object") return [];
+  const nested = Object.values(value).flatMap(jsonLdObjects);
+  return [value, ...nested];
+}
+
+function extractExactProductJsonLd(html, canonicalUrl) {
+  const scripts = String(html || "").matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
+  for (const match of scripts) {
+    try {
+      const parsed = JSON.parse(match[1].trim());
+      for (const item of jsonLdObjects(parsed)) {
+        const types = Array.isArray(item["@type"]) ? item["@type"] : [item["@type"]];
+        if (!types.some((type) => String(type).toLowerCase() === "product")) continue;
+        const urls = [item.url, item["@id"]].flat().filter(Boolean);
+        if (!urls.some((url) => {
+          try {
+            return resolveProductUrl(new URL(String(url), canonicalUrl).toString()) === canonicalUrl;
+          } catch {
+            return false;
+          }
+        })) continue;
+        return {
+          name: stripMarkup(item.name),
+          description: stripMarkup(item.description),
+          category: stripMarkup(item.category),
+          imageUrls: [item.image].flat().filter((url) => /^https:\/\//i.test(String(url)))
+        };
+      }
+    } catch {
+      // Bozuk JSON-LD diğer güvenilir sayfa alanlarının kullanılmasını
+      // engellemez.
+    }
+  }
+  return null;
+}
+
+// Ürün sayfasının kendisinden yalnız meta description ve canonical URL'si
+// seçilen ürünle birebir eşleşen Product JSON-LD kaydını çeker. Her
 // yönlendirme adımı resolveProductUrl'den GEÇMEDEN takip edilmez; hedef
 // buzsu.com.tr dışına çıkarsa (yönlendirme zinciri ele geçirilmiş/bozuk
 // olsa bile) hemen hata verir.
-async function fetchSupportiveMeta(canonicalUrl, { fetchImpl }) {
+async function fetchCanonicalProductPage(canonicalUrl, { fetchImpl }) {
   let currentUrl = canonicalUrl;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const response = await fetchImpl(currentUrl, { redirect: "manual" });
@@ -110,7 +156,11 @@ async function fetchSupportiveMeta(canonicalUrl, { fetchImpl }) {
     }
     if (!response.ok) throw new Error(`Ürün sayfası alınamadı (HTTP ${response.status}).`);
     const html = await response.text();
-    return extractMetaDescription(html);
+    const product = extractExactProductJsonLd(html, canonicalUrl);
+    return {
+      metaDescription: stripMarkup(extractMetaDescription(html)),
+      product
+    };
   }
   throw new Error("Çok fazla yönlendirme.");
 }
@@ -154,7 +204,7 @@ export async function getBuzsuProductContext(
   { productId, productUrl, refresh } = {},
   {
     listProductsImpl,
-    fetchProductContextImpl = fetchProductContext,
+    listFeedProductsImpl = listFeedProducts,
     fetchImpl = fetch,
     putImpl,
     listImpl,
@@ -173,48 +223,70 @@ export async function getBuzsuProductContext(
   }
 
   const warnings = [];
-  const grounding = await fetchProductContextImpl({ title: productName, url: canonicalUrl }).catch(() => "");
-  if (!grounding) warnings.push("llms-full.txt içinde bu ürüne ait eşleşen içerik bulunamadı.");
+  let feedProduct = null;
+  try {
+    feedProduct = await findFeedProductByCanonicalUrl(canonicalUrl, { listFeedProductsImpl });
+  } catch (error) {
+    warnings.push(`XML ürün feed'i alınamadı: ${error.message}`);
+  }
+  if (!feedProduct) warnings.push("XML ürün feed'inde canonical URL ile birebir eşleşen kayıt bulunamadı.");
 
-  // HTML/meta fallback yalnızca destekleyici bir kaynaktır — ana kaynak
-  // (llms-full.txt) bir eşleşme bulduysa devreye hiç girmez.
-  let supportiveText = "";
-  if (!grounding) {
-    try {
-      supportiveText = await fetchSupportiveMeta(canonicalUrl, { fetchImpl });
-    } catch (error) {
-      warnings.push(`Destekleyici ürün sayfası içeriği alınamadı: ${error.message}`);
-    }
+  let page = null;
+  try {
+    page = await fetchCanonicalProductPage(canonicalUrl, { fetchImpl });
+  } catch (error) {
+    warnings.push(`Canonical ürün sayfası içeriği alınamadı: ${error.message}`);
   }
 
-  const primaryText = grounding || supportiveText;
-  const primarySourceUrl = grounding ? LLMS_FULL_URL : canonicalUrl;
-  const sentences = splitSentences(primaryText);
-  const verifiedFacts = sentences.map((fact) => ({ fact, sourceUrl: primarySourceUrl }));
-  const buckets = classifySentences(sentences, primarySourceUrl);
+  const exactSources = [
+    feedProduct?.description && { text: feedProduct.description, sourceUrl: FEED_URL },
+    page?.metaDescription && { text: page.metaDescription, sourceUrl: canonicalUrl },
+    page?.product?.description && { text: page.product.description, sourceUrl: canonicalUrl }
+  ].filter(Boolean);
+  const seenFacts = new Set();
+  const verifiedFacts = [];
+  for (const source of exactSources) {
+    for (const fact of splitSentences(source.text)) {
+      const key = fact.toLocaleLowerCase("tr-TR");
+      if (seenFacts.has(key)) continue;
+      seenFacts.add(key);
+      verifiedFacts.push({ fact, sourceUrl: source.sourceUrl });
+    }
+  }
+  const buckets = { technicalFeatures: [], sellingPoints: [], useCases: [], targetAudience: [] };
+  for (const sourceUrl of [...new Set(verifiedFacts.map((fact) => fact.sourceUrl))]) {
+    const classified = classifySentences(verifiedFacts.filter((fact) => fact.sourceUrl === sourceUrl).map((fact) => fact.fact), sourceUrl);
+    for (const key of Object.keys(buckets)) buckets[key].push(...classified[key]);
+  }
 
-  const classification = classifyInstallationContext({ title: productName }, grounding);
+  const exactText = exactSources.map((source) => source.text).join("\n");
+  const classification = classifyInstallationContext({ title: productName }, exactText);
   const category = classification.confident ? INSTALLATION_CONTEXT_LABELS[classification.context] || "" : "";
   if (!classification.confident) {
     warnings.push("Ürün kategorisi/kullanım bağlamı net belirlenemedi (belirsiz sinyaller) — category alanı boş bırakıldı.");
   }
 
-  const combinedText = [grounding, supportiveText].filter(Boolean).join("\n");
+  const combinedText = exactText;
   const prohibitedClaims = classifyProhibitedClaims(combinedText);
-  const sourceUrls = [...new Set([grounding && LLMS_FULL_URL, supportiveText && canonicalUrl].filter(Boolean))];
+  const sourceUrls = [...new Set(exactSources.map((source) => source.sourceUrl))];
+  const exactImageUrls = feedProduct?.imageUrls?.length
+    ? feedProduct.imageUrls
+    : page?.product?.imageUrls?.length
+      ? page.product.imageUrls
+      : productImageUrls;
 
   const record = {
     productId: productId || catalogProductId(canonicalUrl),
     productName,
     canonicalUrl,
     category,
-    description: primaryText ? truncate(primaryText, MAX_DESCRIPTION_LENGTH) : "",
+    description: combinedText ? truncate(combinedText, MAX_DESCRIPTION_LENGTH) : "",
     verifiedFacts,
     technicalFeatures: buckets.technicalFeatures,
     sellingPoints: buckets.sellingPoints,
     useCases: buckets.useCases,
     targetAudience: buckets.targetAudience,
-    productImageUrls,
+    productImageUrls: exactImageUrls,
     prohibitedClaims,
     sourceUrls,
     fetchedAt: new Date(now()).toISOString(),

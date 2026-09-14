@@ -13,6 +13,29 @@ test("AI Reels V2 client ayrı dosyada kalır ve eski dashboard JS global'lerine
   assert.doesNotMatch(client, /\bproducts\./);
 });
 
+test("Product Intelligence kartı fact-level/Kaynaklar/prohibitedClaims UI render etmez; tek canonical ürün linki gösterir", () => {
+  const fn = client.match(/function renderProductContext\(context\) \{[\s\S]*?\n  \}/)[0];
+  assert.match(fn, /Ürün sayfasını aç ↗/);
+  assert.doesNotMatch(fn, />kaynak ↗</i);
+  assert.doesNotMatch(fn, /<strong>Kaynaklar<\/strong>/i);
+  assert.doesNotMatch(fn, /Kullanılmaması gereken iddialar/i);
+  assert.doesNotMatch(fn, /prohibitedClaims/);
+});
+
+test("provider/tier availability seçimden önce gösterilir ve resolve edilemeyen seçim Generate'i disabled tutar", () => {
+  assert.match(client, /function tierIsAvailable\(provider, tier\)/);
+  assert.match(client, /Kullanılabilir model yok/);
+  assert.match(client, /<option value=.*disabled/);
+  assert.match(client, /byId\("reels-v2-generate"\)\.disabled = scriptGenerating \|\| !resolved/);
+});
+
+test("available discovered Google tier exact tierCandidate ile resolve edilir; unavailable tier için silent fallback yoktur", () => {
+  const fn = client.match(/function resolveSelection\(\) \{[\s\S]*?\n  \}/)[0];
+  assert.match(fn, /availableModels\(provider\)\.find\(\(item\) => item\.tierCandidate === settings\.modelTier\)/);
+  assert.match(fn, /return null;/);
+  assert.doesNotMatch(fn, /fallback|economy.*balanced|balanced.*quality/i);
+});
+
 test("validate yanıtındaki normalize ReelScript client state'inin kaynağı olur", () => {
   assert.match(client, /state\.reelScript = data\.reelScript;/);
   assert.match(client, /autofillAudio\(state\.reelScript\);\s*renderScript\(\);/);

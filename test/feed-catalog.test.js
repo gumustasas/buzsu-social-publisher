@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractFeedCatalog } from "../src/lib/feed-catalog.js";
+import { extractFeedCatalog, findFeedProductByCanonicalUrl } from "../src/lib/feed-catalog.js";
 
 // Google Merchant/Shopping ürün feed'inin standart RSS 2.0 + "g:" ad alanı
 // şeması (https://support.google.com/merchants/answer/7052112). Gerçek
@@ -23,6 +23,8 @@ const SAMPLE_FEED = `<?xml version="1.0" encoding="UTF-8"?>
   <g:price>13.749,00 TRY</g:price>
   <g:gtin>0644100878376</g:gtin>
   <g:brand>Buzsu</g:brand>
+  <g:product_type>Su Arıtma &amp; Tezgah Altı</g:product_type>
+  <g:google_product_category>Home &amp; Garden</g:google_product_category>
 </item>
 <item>
   <g:id>681</g:id>
@@ -63,6 +65,11 @@ test("extractFeedCatalog parses title, link and image gallery (main + additional
     "https://www.buzsu.com.tr/upload/big/code-kirmizi-2025.png",
     "https://www.buzsu.com.tr/upload/big/codeolculerimusluk.png"
   ]);
+  assert.equal(code.feedId, "319");
+  assert.equal(code.description, "Buzsu Code su arıtma cihazı");
+  assert.equal(code.productType, "Su Arıtma & Tezgah Altı");
+  assert.equal(code.googleProductCategory, "Home & Garden");
+  assert.equal(code.brand, "Buzsu");
 });
 
 test("extractFeedCatalog handles a single-image item (imageUrls has exactly one entry)", () => {
@@ -104,4 +111,16 @@ test("extractFeedCatalog tolerates a missing g: namespace prefix on tags", () =>
   const catalog = extractFeedCatalog(noNamespace);
   assert.equal(catalog.length, 1);
   assert.equal(catalog[0].imageUrl, "https://www.buzsu.com.tr/gorsel.png");
+});
+
+test("findFeedProductByCanonicalUrl yalnız exact canonical URL eşleşmesini döndürür", async () => {
+  const catalog = extractFeedCatalog(SAMPLE_FEED);
+  const exact = await findFeedProductByCanonicalUrl("https://buzsu.com.tr/code-su-aritma-cihazi/", {
+    listFeedProductsImpl: async () => catalog
+  });
+  assert.equal(exact.feedId, "319");
+  const miss = await findFeedProductByCanonicalUrl("https://www.buzsu.com.tr/code-su-aritma/", {
+    listFeedProductsImpl: async () => catalog
+  });
+  assert.equal(miss, null);
 });

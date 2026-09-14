@@ -6,7 +6,10 @@ import { put, list } from "@vercel/blob";
 // URL'inden oku), farklı bir prefix ile. TTL kontrolü BURADA yapılmaz —
 // bu modül yalnızca ham okuma/yazmadır, "taze mi" kararını çağıran taraf
 // (fetchedAt'e bakarak) verir.
-const CACHE_PREFIX = "product-context-cache/";
+// v2: exact XML feed record + canonical product page strategy. Prefix bump
+// intentionally makes the older llms-full window records unreachable.
+export const PRODUCT_CONTEXT_CACHE_VERSION = "v2";
+const CACHE_PREFIX = `product-context-cache/${PRODUCT_CONTEXT_CACHE_VERSION}/`;
 
 export function productContextCachePath(canonicalUrl) {
   return `${CACHE_PREFIX}${encodeURIComponent(canonicalUrl)}.json`;

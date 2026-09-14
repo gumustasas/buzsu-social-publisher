@@ -361,16 +361,22 @@ test("generate_reel_script: confirmed:false ile hiçbir ağ isteği atmadan (pro
   );
 });
 
-test("get_buzsu_product_context: gerçek uçtan uca akış — buzsu.com.tr/llms-full.txt'ten verifiedFacts + sourceUrl üretir, hiçbir AI/paid API'ye gitmez", async () => {
+test("get_buzsu_product_context: exact XML feed + canonical sayfadan verifiedFacts üretir, hiçbir AI/paid API'ye gitmez", async () => {
   const originalFetch = global.fetch;
-  const LLMS_TEXT = `#### ⭐ Ana Ürün: Code Su Arıtma Cihazı
-**URL:** https://www.buzsu.com.tr/code-su-aritma-cihazi/
-Code Su Arıtma Cihazı 3 kademeli filtre sistemi ile mutfağınıza kurulur. Kolay bakım gerektirir.`;
+  const FEED_XML = `<rss xmlns:g="http://base.google.com/ns/1.0"><channel><item>
+    <g:id>319</g:id><title>Code Su Arıtma Cihazı</title>
+    <description>Code Su Arıtma Cihazı 3 kademeli filtre sistemi içerir.</description>
+    <link>https://www.buzsu.com.tr/code-su-aritma-cihazi/</link>
+    <g:image_link>https://www.buzsu.com.tr/code.png</g:image_link>
+  </item></channel></rss>`;
   global.fetch = async (url) => {
     const href = String(url);
     if (href.includes("api.airtable.com")) return { ok: true, json: async () => ({ records: [] }) };
-    if (href.includes("llms-full.txt")) return { ok: true, text: async () => LLMS_TEXT };
-    if (href.includes("feed.xml")) return { ok: true, text: async () => "<rss><channel></channel></rss>" };
+    if (href.includes("llms-full.txt")) return { ok: true, text: async () => "" };
+    if (href.includes("feed.xml")) return { ok: true, text: async () => FEED_XML };
+    if (href === "https://www.buzsu.com.tr/code-su-aritma-cihazi/") {
+      return { ok: true, status: 200, headers: { get: () => null }, text: async () => '<meta name="description" content="Code canonical ürün sayfası açıklamasıdır.">' };
+    }
     throw new Error(`Beklenmeyen (ücretli/AI olmayan bir kaynak dışı) fetch: ${href}`);
   };
   try {
@@ -378,8 +384,9 @@ Code Su Arıtma Cihazı 3 kademeli filtre sistemi ile mutfağınıza kurulur. Ko
     assert.equal(result.ok, true);
     assert.equal(result.canonicalUrl, "https://www.buzsu.com.tr/code-su-aritma-cihazi/");
     assert.ok(result.verifiedFacts.length > 0);
-    assert.equal(result.verifiedFacts[0].sourceUrl, "https://www.buzsu.com.tr/llms-full.txt");
-    assert.ok(result.sourceUrls.includes("https://www.buzsu.com.tr/llms-full.txt"));
+    assert.equal(result.verifiedFacts[0].sourceUrl, "https://www.buzsu.com.tr/feed.xml");
+    assert.ok(result.sourceUrls.includes("https://www.buzsu.com.tr/feed.xml"));
+    assert.ok(result.sourceUrls.includes("https://www.buzsu.com.tr/code-su-aritma-cihazi/"));
     assert.equal(result.fromCache, false);
     assert.ok(Array.isArray(result.prohibitedClaims));
   } finally {
