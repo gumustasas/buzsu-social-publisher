@@ -15,7 +15,9 @@ test("AI Reels V2 voice gender change persists the selected value before rerende
 });
 
 test("TTS request uses the persisted narration gender", () => {
-  const fn = client.match(/async function generateNarrationVoiceover\(\) \{[\s\S]*?\n\s*\}/);
-  assert.ok(fn, "generateNarrationVoiceover bulunamadı");
-  assert.match(fn[0], /gender:\s*state\.narration\.gender/);
+  const start = client.indexOf("async function generateNarrationVoiceover()");
+  const end = client.indexOf("async function pollMusic()", start);
+  assert.ok(start >= 0 && end > start, "generateNarrationVoiceover fonksiyon aralığı bulunamadı");
+  const source = client.slice(start, end);
+  assert.match(source, /gender:\s*state\.narration\.gender/);
 });
