@@ -2,18 +2,6 @@
 // üzerinden) senaryoya uygun, sözsüz (instrumental) müzik üretir. Aynı
 // steps[]/model_output ayrıştırma + RATE_LIMITED disiplini src/omni-video.js
 // ve src/turkish-tts.js ile birebir aynı — bağımsız bir kopya olarak tutulur.
-//
-// NOT — doğrulama sınırı: model kimlikleri (lyria-3-clip-preview,
-// lyria-3-pro-preview) Google'ın kendi doküman sayfa URL'lerinden
-// (ai.google.dev/gemini-api/docs/models/lyria-3-clip-preview ve
-// .../lyria-3-pro-preview) doğrudan alındı — yüksek güvenilirlikte. Ancak
-// response_format içindeki süre/enstrümantal kontrolü alan adları bu
-// ortamda ai.google.dev'e doğrudan erişim olmadan derlendi — bu yüzden
-// "instrumental, no vocals" talimatı hem response_format'a HEM prompt
-// metnine (çift güvence) eklenir. Gerçek ücretli ilk denemeden önce
-// teyit edilmesi önerilir (bkz. README). Not: arama sonuçlarında Google'ın
-// daha yeni bir "Lyria 3.5" modelinden de bahsedildi — bu PR, kullanıcının
-// açıkça istediği Lyria 3 Clip/Pro'yu uygular; 3.5'e geçiş ayrı bir karar.
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
 export const LYRIA_MODELS = { clip: "lyria-3-clip-preview", pro: "lyria-3-pro-preview" };
@@ -77,8 +65,6 @@ async function readLyriaJson(response, { model } = {}) {
   return data;
 }
 
-// bkz. src/omni-video.js:extractOmniVideoOutput — aynı steps[]/model_output
-// deseni, "video" yerine "audio" için.
 function extractLyriaOutput(data) {
   const steps = Array.isArray(data?.steps) ? data.steps : [];
   const modelOutputStep = steps.find((step) => step?.type === "model_output");
@@ -91,11 +77,6 @@ function extractLyriaOutput(data) {
   return { done: true, error: textSummary || "Lyria model_output adımında ses bulunamadı." };
 }
 
-// Kullanıcıdan ayrıca bir müzik promptu İSTEMEZ — scenario + musicBrief'ten
-// (bkz. src/video-narration.js çıktısı) otomatik, İngilizce bir Lyria
-// promptu türetir. instrumentalOnly HER ZAMAN metne de eklenir (Lyria'nın
-// response_format'ı bunu görmezden gelse bile prompt metni yine de bunu
-// talep eder — çift güvence).
 export function buildLyriaPrompt(scenario, musicBrief = {}) {
   const description = String(musicBrief.description || "").trim();
   if (description) {
@@ -109,10 +90,6 @@ export function buildLyriaPrompt(scenario, musicBrief = {}) {
   return `Premium modern commercial soundtrack for this scene: "${scenarioText}".${hints ? ` (${hints})` : ""} Clean and elegant atmosphere, optimistic progression, refined instrumentation designed to sit underneath spoken narration. Instrumental only. No vocals.`;
 }
 
-// scenario zorunlu (musicPrompt otomatik türetimi için). musicBrief
-// verilirse (generate_video_narration çıktısı) prompt ondan türetilir,
-// verilmezse scenario'nun kendisinden. confirmed !== true ise hiçbir ağ
-// isteği atılmadan reddedilir — GERÇEK PARA HARCAR.
 export async function generateLyriaMusic({ scenario, musicBrief, musicPrompt, durationSeconds, tier = "clip", confirmed } = {}, env = process.env) {
   if (confirmed !== true) throw new Error("Lyria müzik üretimi onay (confirmed:true) gerektirir — ücretli bir işlemdir.");
   if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY Vercel Production ortamında tanımlı değil.");
@@ -121,17 +98,18 @@ export async function generateLyriaMusic({ scenario, musicBrief, musicPrompt, du
   const explicitPrompt = String(musicPrompt || "").trim();
   if (!scenarioText && !explicitPrompt) throw new Error("scenario veya musicPrompt gerekli.");
   const model = LYRIA_MODELS[tier];
-  const finalPrompt = explicitPrompt
+  let finalPrompt = explicitPrompt
     ? (/instrumental/i.test(explicitPrompt) ? explicitPrompt : `${explicitPrompt} Instrumental only. No vocals.`)
     : buildLyriaPrompt(scenarioText, musicBrief || {});
 
-  const responseFormat = { type: "audio", instrumental: true };
-  if (typeof durationSeconds === "number" && durationSeconds > 0) responseFormat.duration_seconds = durationSeconds;
+  if (Number.isFinite(Number(durationSeconds)) && Number(durationSeconds) > 0) {
+    finalPrompt = `${finalPrompt} Target duration: approximately ${Math.round(Number(durationSeconds))} seconds.`;
+  }
 
   const response = await fetch(`${API_BASE}/interactions`, {
     method: "POST",
     headers: lyriaHeaders(env),
-    body: JSON.stringify({ model, input: [{ type: "text", text: finalPrompt }], response_format: responseFormat })
+    body: JSON.stringify({ model, input: [{ type: "text", text: finalPrompt }], response_format: { type: "audio" } })
   });
   const data = await readLyriaJson(response, { model });
   const output = extractLyriaOutput(data);

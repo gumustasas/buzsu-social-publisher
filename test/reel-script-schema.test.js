@@ -6,6 +6,7 @@ import {
   validateNarrationBudget,
   validateClaimsUsed,
   ReelScriptError,
+  VEO_SCENE_DURATIONS,
   VEO_SILENT_CONSTRAINT,
   PRODUCT_IDENTITY_LOCK
 } from "../src/lib/reel-script-schema.js";
@@ -72,6 +73,38 @@ test("validateSceneTimings: endSeconds startSeconds'tan büyük olmalı", () => 
 
 test("validateSceneTimings: toplam süre durationSeconds'ı aşarsa reddedilir", () => {
   assert.throws(() => validateSceneTimings([{ sceneId: "s1", startSeconds: 0, endSeconds: 10 }], 8), (e) => e.details.issue === "exceeds_duration");
+});
+
+test("validateSceneTimings normalizes short/non-Veo scene lengths into 4/6/8s clips while preserving reel timing closely", () => {
+  const normalized = validateSceneTimings([
+    { sceneId: "s1", startSeconds: 0, endSeconds: 3 },
+    { sceneId: "s2", startSeconds: 3, endSeconds: 8 }
+  ], 8);
+  assert.deepEqual(normalized.map(({ startSeconds, endSeconds }) => [startSeconds, endSeconds]), [[0, 4], [4, 8]]);
+  assert.ok(normalized.every((scene) => VEO_SCENE_DURATIONS.includes(scene.endSeconds - scene.startSeconds)));
+});
+
+test("validateSceneTimings accepts the nearest representable timing for a 15s reel", () => {
+  const normalized = validateSceneTimings([
+    { sceneId: "s1", startSeconds: 0, endSeconds: 3 },
+    { sceneId: "s2", startSeconds: 3, endSeconds: 8 },
+    { sceneId: "s3", startSeconds: 8, endSeconds: 15 }
+  ], 15);
+  assert.equal(normalized.at(-1).endSeconds, 14);
+  assert.ok(normalized.every((scene) => VEO_SCENE_DURATIONS.includes(scene.endSeconds - scene.startSeconds)));
+});
+
+test("validateSceneTimings permits the documented one-second 15s overshoot", () => {
+  const normalized = validateSceneTimings([
+    { sceneId: "s1", startSeconds: 0, endSeconds: 4 },
+    { sceneId: "s2", startSeconds: 4, endSeconds: 10 },
+    { sceneId: "s3", startSeconds: 10, endSeconds: 16 }
+  ], 15);
+  assert.equal(normalized.at(-1).endSeconds, 16);
+});
+
+test("validateSceneTimings rejects a scene count that cannot approximate the requested reel duration", () => {
+  assert.throws(() => validateSceneTimings([{ sceneId: "s1", startSeconds: 0, endSeconds: 15 }], 15), (error) => error.details.issue === "veo_duration_unrepresentable");
 });
 
 // --- validateNarrationBudget -------------------------------------------

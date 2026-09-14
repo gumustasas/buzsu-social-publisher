@@ -4,21 +4,10 @@
 // sınıflandırması, confirmed:true zorunluluğu) BİREBİR aynı disiplin
 // uygulanır — o dosyaya dokunulmaz, burada bağımsız bir kopyası tutulur.
 //
-// NOT — doğrulama sınırı: model kimliği (gemini-3.1-flash-tts-preview)
-// Google'ın kendi doküman sayfası URL'sinden (ai.google.dev/gemini-api/docs/
-// models/gemini-3.1-flash-tts-preview) doğrudan alındı ve Türkçe'nin bu
-// modele Nisan 2026'da 16 yeni dil arasında eklendiği Google Workspace
-// duyurusuyla teyit edildi — ikisi de yüksek güvenilirlikte. Ancak
-// response_format İÇİNDEKİ ses/dil alan adları (voice_name, language_code)
-// bu ortamda ai.google.dev'e doğrudan erişim olmadan arama sonuçlarından
-// derlendi — gerçek ücretli ilk denemeden önce teyit edilmesi önerilir
-// (bkz. README). AYRICA: src/omni-video.js'te video çıktısının Files
-// API'de PROCESSING->ACTIVE beklemesi gerektiği öğrenildi (bkz. o dosyanın
-// yorumları) — burada bir `uri` gelirse AYNI bekleme uygulanmıyor, doğrudan
-// indiriliyor. Bunun güvenli olduğu varsayımı, ses dosyalarının video'dan
-// çok daha küçük olması ve response_format'ta "delivery" hiç istenmediği
-// için Google'ın küçük ses çıktılarını muhtemelen inline base64 döndürmesi
-// beklentisine dayanıyor — DOĞRULANMADI, ilk gerçek denemede izlenmeli.
+// Google'ın güncel Interactions API şemasında ses çıktısı `response_format`
+// ile yalnızca { type: "audio" } olarak istenir; ses seçimi ise
+// generation_config.speech_config altında yapılır. Dil için ayrı bir
+// `language_code` alanı gönderilmez; Türkçe metin doğrudan modele verilir.
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
 export const TTS_MODEL = "gemini-3.1-flash-tts-preview";
@@ -71,10 +60,6 @@ function parseRetryAfter(response, data) {
   return null;
 }
 
-// Google'ın "bu dil bu modelde desteklenmiyor" hatasını KESİN bir status
-// koduyla vermeyeceği varsayılıyor (dokümantasyonda örnek yok) — bu yüzden
-// hem status hem mesaj metnine bakılıyor (bkz. src/omni-video.js:
-// isRegionUnavailable — aynı savunmacı yaklaşım).
 function isLanguageUnavailable(data, httpStatus) {
   const status = String(data?.error?.status || "");
   const message = String(data?.error?.message || "").toLowerCase();
@@ -111,8 +96,6 @@ async function readTtsJson(response, { model } = {}) {
   return data;
 }
 
-// bkz. src/omni-video.js:extractOmniVideoOutput — aynı steps[]/model_output
-// deseni, "video" yerine "audio" için.
 function extractTtsOutput(data) {
   const steps = Array.isArray(data?.steps) ? data.steps : [];
   const modelOutputStep = steps.find((step) => step?.type === "model_output");
@@ -125,11 +108,52 @@ function extractTtsOutput(data) {
   return { done: true, error: textSummary || "TTS model_output adımında ses bulunamadı." };
 }
 
-// WAV (RIFF/fmt/data) başlığından örnekleme hızı/kanal/bit derinliğini okuyup
-// gerçek süreyi HESAPLAR — ffmpeg/ffprobe GEREKMEZ (Vercel serverless'ta
-// ikisi de yok). Ham (container'sız) L16 PCM için mime_type'taki "rate="
-// parametresi kullanılır. Tanınmayan bir format (örn. sıkıştırılmış mp3)
-// için süre ölçülemez — tahmin ETMEK yerine açık bir hata fırlatılır.
+function wavHeader({ dataSize, sampleRate, channels = 1, bitsPerSample = 16 }) {
+  const header = Buffer.alloc(44);
+  const blockAlign = channels * (bitsPerSample / 8);
+  const byteRate = sampleRate * blockAlign;
+  header.write("RIFF", 0, "ascii");
+  header.writeUInt32LE(36 + dataSize, 4);
+  header.write("WAVE", 8, "ascii");
+  header.write("fmt ", 12, "ascii");
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write("data", 36, "ascii");
+  header.writeUInt32LE(dataSize, 40);
+  return header;
+}
+
+export function ensurePlayableWav(buffer, mimeType) {
+  const mime = String(mimeType || "").toLowerCase();
+  if (buffer.length >= 12 && buffer.toString("ascii", 0, 4) === "RIFF" && buffer.toString("ascii", 8, 12) === "WAVE") {
+    return { audioBuffer: buffer, mimeType: "audio/wav" };
+  }
+
+  const isL16 = mime.includes("l16");
+  const isPcm = mime.includes("pcm");
+  if (!isL16 && !isPcm) return { audioBuffer: buffer, mimeType };
+
+  const rateMatch = mime.match(/rate=(\d+)/);
+  const channelsMatch = mime.match(/channels=(\d+)/);
+  const sampleRate = rateMatch ? Number(rateMatch[1]) : 24000;
+  const channels = channelsMatch ? Number(channelsMatch[1]) : 1;
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0 || !Number.isInteger(channels) || channels <= 0) {
+    throw new Error(`Ham PCM ses parametreleri geçersiz (mime_type: "${mimeType}").`);
+  }
+  if (buffer.length % 2 !== 0) throw new Error("Ham 16-bit PCM ses verisinin byte uzunluğu çift olmalıdır.");
+
+  // Gemini TTS ham PCM çıktısını 16-bit signed little-endian olarak verir.
+  // Byte sırasını değiştirmeden yalnızca WAV container başlığı eklenir.
+  const pcm = Buffer.from(buffer);
+  const header = wavHeader({ dataSize: pcm.length, sampleRate, channels, bitsPerSample: 16 });
+  return { audioBuffer: Buffer.concat([header, pcm]), mimeType: "audio/wav" };
+}
+
 export function measureAudioDurationSeconds(buffer, mimeType) {
   const mime = String(mimeType || "").toLowerCase();
   if (buffer.length >= 44 && buffer.toString("ascii", 0, 4) === "RIFF" && buffer.toString("ascii", 8, 12) === "WAVE") {
@@ -154,16 +178,22 @@ export function measureAudioDurationSeconds(buffer, mimeType) {
   const rateMatch = mime.match(/rate=(\d+)/);
   if (rateMatch && (mime.includes("l16") || mime.includes("pcm"))) {
     const sampleRate = Number(rateMatch[1]);
-    return buffer.length / (sampleRate * 2); // L16 = 16-bit mono varsayımı
+    const channelsMatch = mime.match(/channels=(\d+)/);
+    const channels = channelsMatch ? Number(channelsMatch[1]) : 1;
+    return buffer.length / (sampleRate * channels * 2);
   }
   throw new Error(`Ses süresi ölçülemedi — tanınmayan format (mime_type: "${mimeType}"). WAV veya ham L16 PCM bekleniyor.`);
 }
 
-// text zorunlu. targetDurationSeconds verilirse (generate_video_narration'ın
-// estimatedDurationSeconds'ı), gerçek ölçülen süre bunu aşarsa
-// VOICEOVER_TOO_LONG hatası fırlatılır — kullanıcı isterse metni AI ile
-// kısaltıp tekrar denemelidir (bkz. api/mcp.js açıklaması, madde 7).
-// confirmed !== true ise HİÇBİR ağ isteği atılmadan reddedilir.
+function normalizeCompletedAudio(audioBuffer, mimeType) {
+  const normalized = ensurePlayableWav(audioBuffer, mimeType);
+  return {
+    audioBuffer: normalized.audioBuffer,
+    mimeType: normalized.mimeType,
+    durationSeconds: measureAudioDurationSeconds(normalized.audioBuffer, normalized.mimeType)
+  };
+}
+
 export async function generateTurkishVoiceover({ text, style, gender = "auto", targetDurationSeconds, voice, confirmed } = {}, env = process.env) {
   if (confirmed !== true) throw new Error("Türkçe seslendirme onay (confirmed:true) gerektirir — ücretli bir işlemdir.");
   if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY Vercel Production ortamında tanımlı değil.");
@@ -176,8 +206,9 @@ export async function generateTurkishVoiceover({ text, style, gender = "auto", t
     headers: ttsHeaders(env),
     body: JSON.stringify({
       model: TTS_MODEL,
-      input: [{ type: "text", text: narrationText }],
-      response_format: { type: "audio", voice_name: resolvedVoice, language_code: TTS_LANGUAGE_CODE }
+      input: narrationText,
+      response_format: { type: "audio" },
+      generation_config: { speech_config: [{ voice: resolvedVoice }] }
     })
   });
   const data = await readTtsJson(response, { model: TTS_MODEL });
@@ -197,7 +228,10 @@ export async function generateTurkishVoiceover({ text, style, gender = "auto", t
     audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
     mimeType = output.mimeType || "audio/wav";
   }
-  const durationSeconds = measureAudioDurationSeconds(audioBuffer, mimeType);
+  const normalized = normalizeCompletedAudio(audioBuffer, mimeType);
+  audioBuffer = normalized.audioBuffer;
+  mimeType = normalized.mimeType;
+  const durationSeconds = normalized.durationSeconds;
   if (typeof targetDurationSeconds === "number" && targetDurationSeconds > 0 && durationSeconds > targetDurationSeconds * 1.15) {
     const error = new Error(`Seslendirme (${durationSeconds.toFixed(1)}sn) hedef video süresinden (${targetDurationSeconds}sn) çok daha uzun çıktı.`);
     error.code = "VOICEOVER_TOO_LONG";
@@ -226,5 +260,6 @@ export async function turkishVoiceoverStatus(job, env = process.env) {
     audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
     mimeType = output.mimeType || "audio/wav";
   }
-  return { ...job, status: "COMPLETED", audioBuffer, mimeType, durationSeconds: measureAudioDurationSeconds(audioBuffer, mimeType) };
+  const normalized = normalizeCompletedAudio(audioBuffer, mimeType);
+  return { ...job, status: "COMPLETED", ...normalized };
 }

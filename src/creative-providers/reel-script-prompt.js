@@ -78,7 +78,7 @@ HEDEF: ${objectiveLabel}.
 1. Ürün hakkında konuşurken MÜMKÜN OLDUĞUNCA yukarıdaki "DOĞRULANMIŞ GERÇEK BİLGİ" bloğuna dayan; teknik özellikleri gereksiz yere kendin uydurma. Normal yaratıcı reklam dili serbesttir ve verifiedFacts cümlelerini birebir tekrar etmek zorunda değildir.
 2. claimsUsed'e senaryoda kullandığın factual ürün iddialarını yaz; doğrulanmış bilgiden geliyorsa ilgili sourceUrl'ü de ekle. Genel reklam sloganları/yaratıcı ifadeler claimsUsed'e GİRMEZ. Bu liste bilgilendirmedir: kaynak eşleşmesi server tarafında işaretlenir, senaryo bu yüzden reddedilmez.
 3. fullNarrationText ve her sahnenin narrationText'i TÜRKÇE olmalı. Toplam metin, ${durationSeconds} saniyelik bir seslendirmeye SIĞACAK kadar kısa olmalı (~${Math.round(durationSeconds * 2.5)} kelimeyi aşmasın) — 8sn'lik bir videoya uzun bir paragraf yazma.
-4. Sahneler (scenes) 0. saniyeden başlamalı, birbiriyle ÇAKIŞMAMALI, toplam süre ${durationSeconds} saniyeyi AŞMAMALI.
+4. Sahneler (scenes) 0. saniyeden başlamalı, aralarında BOŞLUK veya ÇAKIŞMA olmamalı ve son sahne TAM OLARAK ${durationSeconds}. saniyede bitmeli. HER sahnenin kendi süresi (endSeconds - startSeconds) Google Veo sınırı nedeniyle yalnızca 4, 6 veya 8 saniye olmalı. Örnek: 8 saniye için 0–4 + 4–8; 15 saniye için 0–4 + 4–10 + 10–16 (toplamı hedefe en fazla 1 saniye yaklaştır). 0–3, 3–6, 0–5 gibi geçersiz Veo süreleri KESİNLİKLE üretme.
 5. Her sahnenin veoPrompt'u İNGİLİZCE ve yalnızca GÖRSELİ tarif etsin (konuşma/müzik/altyazı isteme — bunlar ayrı adımlarda eklenecek, sen yalnızca görseli yaz).
 6. Ürün referans görseli gereken (referenceImageRequired:true) sahnelerde ürünün gerçek fiziksel görünümünü koruyacak şekilde yaz; ürünü yeniden tasarlama, parça/logo uydurma.
 7. musicBrief.lyriaPrompt İNGİLİZCE, sözsüz (instrumental) bir müzik promptu olsun.
@@ -87,11 +87,66 @@ Yanıtı YALNIZCA şu JSON şemasına göre ver, başka açıklama ekleme:
 ${REEL_SCRIPT_SCHEMA_HINT}`;
 }
 
-export function parseReelScriptJson(raw) {
-  const cleaned = String(raw || "").trim().replace(/^```json\s*/i, "").replace(/```$/i, "").trim();
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    throw new Error("AI yanıtı geçerli JSON değil.");
+function extractFirstJsonObject(text) {
+  const input = String(text || "");
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const char = input[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      if (depth === 0) start = i;
+      depth++;
+      continue;
+    }
+
+    if (char === "}" && depth > 0) {
+      depth--;
+      if (depth === 0 && start >= 0) return input.slice(start, i + 1);
+    }
   }
+
+  return null;
+}
+
+export function parseReelScriptJson(raw) {
+  const text = String(raw || "").trim();
+  const withoutFence = text
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```\s*$/i, "")
+    .trim();
+
+  const candidates = [withoutFence];
+  const extracted = extractFirstJsonObject(withoutFence);
+  if (extracted && extracted !== withoutFence) candidates.push(extracted);
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch {
+      // Bir sonraki güvenli aday denenir. JSON onarımı yapılmaz.
+    }
+  }
+
+  throw new Error("AI yanıtı geçerli JSON değil.");
 }

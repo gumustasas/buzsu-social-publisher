@@ -49,6 +49,26 @@ test("parseReelScriptJson: ```json çevrelenmiş yanıtı temizleyip parse eder"
   assert.deepEqual(parsed, { title: "x" });
 });
 
+test("parseReelScriptJson: açıklama metni içindeki ilk dengeli JSON nesnesini çıkarır", () => {
+  const parsed = parseReelScriptJson('Elbette, işte senaryo:\n{"title":"x","concept":"içinde { süslü } parantez ve \\"alıntı\\" var"}\nUmarım yardımcı olur.');
+  assert.equal(parsed.title, "x");
+  assert.match(parsed.concept, /süslü/);
+});
+
+test("parseReelScriptJson: json etiketi olmayan markdown fence içinden nesneyi çıkarır", () => {
+  const parsed = parseReelScriptJson('```\n{"title":"x","scenes":[]}\n```');
+  assert.deepEqual(parsed, { title: "x", scenes: [] });
+});
+
+test("parseReelScriptJson: JSON sonrası ek metni yok sayar", () => {
+  const parsed = parseReelScriptJson('{"title":"x","warnings":[]}\nNot: tamamlandı.');
+  assert.deepEqual(parsed, { title: "x", warnings: [] });
+});
+
+test("parseReelScriptJson: gerçek malformed JSON'u onarmaya çalışmaz", () => {
+  assert.throws(() => parseReelScriptJson('Ön bilgi {"title":"x",} son bilgi'), /geçerli JSON değil/);
+});
+
 test("parseReelScriptJson: geçersiz JSON için açık bir hata fırlatır", () => {
   assert.throws(() => parseReelScriptJson("bu json değil"), /geçerli JSON değil/);
 });

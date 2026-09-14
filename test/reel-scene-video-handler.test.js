@@ -123,6 +123,24 @@ test("reel-scene-video handler: onaylı+confirmed istek TEK bir submitVeoVideo �
   }
 });
 
+test("reel-scene-video handler: Veo'ya yalnızca 4/6/8 saniyelik durationSeconds gönderir", async () => {
+  const originalFetch = global.fetch;
+  let parameters;
+  global.fetch = async (url, options) => {
+    if (!options) return { ok: true, headers: { get: () => "image/jpeg" }, arrayBuffer: async () => new ArrayBuffer(4) };
+    parameters = JSON.parse(options.body).parameters;
+    return { ok: true, json: async () => ({ name: "operations/duration" }) };
+  };
+  try {
+    const res = makeResponse();
+    await handler(makeRequest({ ...VALID_BODY, durationSeconds: 5 }), res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(parameters.durationSeconds, 4);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("reel-scene-video handler: Veo'ya gönderilen prompt her zaman VEO_SILENT_CONSTRAINT içerir", async () => {
   const originalFetch = global.fetch;
   let sentPrompt = null;
