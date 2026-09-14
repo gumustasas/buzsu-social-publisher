@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { getSession } from "../src/auth.js";
 import { submitVeoVideo } from "../src/veo-video.js";
-import { normalizeVeoPrompt, REEL_ASPECT_RATIOS } from "../src/lib/reel-script-schema.js";
+import { normalizeVeoPrompt, normalizeVeoDurationSeconds, REEL_ASPECT_RATIOS } from "../src/lib/reel-script-schema.js";
 
 // AI Reels V2 PR-E — PR-D'nin sahne onay ekranını (dashboard-reels-v2.js,
 // Step 5) MEVCUT Veo altyapısına (submitVeoVideo, bkz. src/veo-video.js;
@@ -49,7 +49,7 @@ export default async function handler(request, response) {
     const finalizedPrompt = normalizeVeoPrompt(rawPrompt, referenceImageRequired);
 
     const aspectRatio = REEL_ASPECT_RATIOS.includes(body.aspectRatio) ? body.aspectRatio : "9:16";
-    // Veo sahne klipleri yalnızca 4–8 saniye kabul ediyor. Model senaryoda
+    // Veo sahne klipleri yalnızca 4, 6 veya 8 saniye kabul ediyor. Model senaryoda
     // 3 saniyelik bir sahne üretse bile ücretli provider çağrısını geçersiz
     // duration ile boşa harcamamak için sınırı sunucu tarafında deterministik
     // uygula. Prompt/validator katmanı da gelecekteki senaryoları 4–8 saniyeye
@@ -59,7 +59,7 @@ export default async function handler(request, response) {
       : undefined;
     const durationSeconds = requestedDurationSeconds === undefined
       ? undefined
-      : Math.min(8, Math.max(4, requestedDurationSeconds));
+      : normalizeVeoDurationSeconds(requestedDurationSeconds);
     const resolution = ["720p", "1080p"].includes(body.resolution) ? body.resolution : undefined;
 
     const job = await submitVeoVideo(

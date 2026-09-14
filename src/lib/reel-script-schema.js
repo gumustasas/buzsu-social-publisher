@@ -18,6 +18,7 @@ const MAX_CLAIMS_USED = 20;
 // turkish-tts.js'teki VOICEOVER_TOO_LONG ile AYNI tolerans (%15) — otomatik
 // kısaltma YAPILMAZ, sadece reddedilir (bkz. validateNarrationBudget).
 const NARRATION_TOLERANCE = 1.15;
+export const VEO_SCENE_DURATIONS = [4, 6, 8];
 
 // Veo/fal'ın Türkçe NO_AUDIO_CONSTRAINT'iyle (bkz. src/lib/video-prompt.js)
 // AYNI amaç, ama generate_reel_script'in veoPrompt alanı İngilizce
@@ -100,9 +101,52 @@ function coerceScene(raw, index) {
   };
 }
 
+export function normalizeVeoDurationSeconds(value) {
+  const requested = Number(value);
+  if (!Number.isFinite(requested) || requested <= 0) return undefined;
+  return VEO_SCENE_DURATIONS.reduce((closest, duration) =>
+    Math.abs(duration - requested) < Math.abs(closest - requested) ? duration : closest,
+  VEO_SCENE_DURATIONS[0]);
+}
+
+function normalizeSceneDurations(scenes, durationSeconds) {
+  const combinations = new Map([[0, { durations: [], deviation: 0 }]]);
+  for (const scene of scenes) {
+    const originalDuration = scene.endSeconds - scene.startSeconds;
+    const next = new Map();
+    for (const [total, state] of combinations) {
+      for (const duration of VEO_SCENE_DURATIONS) {
+        const candidate = { durations: [...state.durations, duration], deviation: state.deviation + Math.abs(duration - originalDuration) };
+        const existing = next.get(total + duration);
+        if (!existing || candidate.deviation < existing.deviation) next.set(total + duration, candidate);
+      }
+    }
+    combinations.clear();
+    for (const [total, state] of next) combinations.set(total, state);
+  }
+  const best = [...combinations.entries()].sort((a, b) =>
+    Math.abs(a[0] - durationSeconds) - Math.abs(b[0] - durationSeconds) || a[1].deviation - b[1].deviation
+  )[0]?.[1];
+  const total = best?.durations.reduce((sum, value) => sum + value, 0);
+  if (!best || Math.abs(total - durationSeconds) > 1) {
+    throw new ReelScriptError(`Sahne sayısı (${scenes.length}) Veo'nun 4/6/8 saniyelik klipleriyle ${durationSeconds} saniyeye yeterince yaklaştırılamıyor.`, {
+      code: "INVALID_SCENE_TIMING",
+      details: { issue: "veo_duration_unrepresentable", durationSeconds, sceneCount: scenes.length }
+    });
+  }
+  let startSeconds = 0;
+  return scenes.map((scene, index) => {
+    const endSeconds = startSeconds + best.durations[index];
+    const normalized = { ...scene, startSeconds, endSeconds };
+    startSeconds = endSeconds;
+    return normalized;
+  });
+}
+
 // Sahne zamanlamaları: 0'dan başlamalı, çakışmamalı, negatif olmamalı,
-// toplam süre durationSeconds'ı aşmamalı. Sessizce "düzeltilmez" — ilk
-// ihlalde açık bir ReelScriptError fırlatılır (bkz. kullanıcı isteği).
+// toplam süre hedefe yakın olmalı. Veo yalnızca 4/6/8 saniyelik klipler
+// ürettiğinden, en yakın temsil için en fazla 1 saniyelik fark tolere edilir;
+// sessiz normalizasyonun mümkün olmadığı yapılar açıkça reddedilir.
 export function validateSceneTimings(scenes, durationSeconds) {
   if (!Array.isArray(scenes) || !scenes.length) {
     throw new ReelScriptError("En az bir sahne (scenes) gerekli.", { code: "INVALID_SCENE_TIMING" });
@@ -126,9 +170,10 @@ export function validateSceneTimings(scenes, durationSeconds) {
     }
     previousEnd = scene.endSeconds;
   });
-  if (previousEnd > durationSeconds) {
+  if (previousEnd > durationSeconds + 1) {
     throw new ReelScriptError(`Sahnelerin toplam süresi (${previousEnd}s) videonun süresini (${durationSeconds}s) aşıyor.`, { code: "INVALID_SCENE_TIMING", details: { issue: "exceeds_duration", totalSeconds: previousEnd, durationSeconds } });
   }
+  return normalizeSceneDurations(scenes, durationSeconds);
 }
 
 // 8sn'lik bir videoya uzun bir paragraf yazılmasını engeller — otomatik
@@ -247,8 +292,8 @@ export function validateReelScript(candidate, { durationSeconds, productContext 
   }
   const creativeDirection = coerceString(candidate.creativeDirection, { maxLength: 500 });
 
-  const scenes = Array.isArray(candidate.scenes) ? candidate.scenes.map((scene, index) => coerceScene(scene, index)) : [];
-  validateSceneTimings(scenes, durationSeconds);
+  let scenes = Array.isArray(candidate.scenes) ? candidate.scenes.map((scene, index) => coerceScene(scene, index)) : [];
+  scenes = validateSceneTimings(scenes, durationSeconds);
 
   const fullNarrationText = coerceString(candidate.fullNarrationText, { maxLength: 2000 });
   if (!fullNarrationText) throw new ReelScriptError('"fullNarrationText" boş olamaz.', { code: "STRUCTURED_JSON_INVALID" });
