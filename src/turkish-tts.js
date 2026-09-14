@@ -229,7 +229,10 @@ export async function generateTurkishVoiceover({ text, style, gender = "auto", t
     audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
     mimeType = output.mimeType || "audio/wav";
   }
-  ({ audioBuffer, mimeType, durationSeconds: var durationSeconds } = normalizeCompletedAudio(audioBuffer, mimeType));
+  const normalized = normalizeCompletedAudio(audioBuffer, mimeType);
+  audioBuffer = normalized.audioBuffer;
+  mimeType = normalized.mimeType;
+  const durationSeconds = normalized.durationSeconds;
   if (typeof targetDurationSeconds === "number" && targetDurationSeconds > 0 && durationSeconds > targetDurationSeconds * 1.15) {
     const error = new Error(`Seslendirme (${durationSeconds.toFixed(1)}sn) hedef video süresinden (${targetDurationSeconds}sn) çok daha uzun çıktı.`);
     error.code = "VOICEOVER_TOO_LONG";
