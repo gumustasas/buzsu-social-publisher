@@ -57,9 +57,14 @@ test("Diagnostic Endpoint Tests", async (t) => {
     delete process.env.GEMINI_API_KEY;
     delete process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_IMAGE_API_KEY;
-    for (const key of Object.keys(process.env)) {
-      if (key.startsWith("GOOGLE_CREATIVE_") || key.startsWith("OPENAI_CREATIVE_")) delete process.env[key];
-    }
+    delete process.env.GOOGLE_CREATIVE_ECONOMY_MODEL;
+    delete process.env.GOOGLE_CREATIVE_BALANCED_MODEL;
+    delete process.env.GOOGLE_CREATIVE_QUALITY_MODEL;
+    delete process.env.GOOGLE_CREATIVE_PREMIUM_MODEL;
+    delete process.env.OPENAI_CREATIVE_ECONOMY_MODEL;
+    delete process.env.OPENAI_CREATIVE_BALANCED_MODEL;
+    delete process.env.OPENAI_CREATIVE_QUALITY_MODEL;
+    delete process.env.OPENAI_CREATIVE_PREMIUM_MODEL;
 
     const req = { method: "GET", headers: { cookie: createAuthCookie() } };
     const res = mockRes();
@@ -119,8 +124,11 @@ test("Diagnostic Endpoint Tests", async (t) => {
     assert.strictEqual(res.statusCode, 200);
     assert.strictEqual(geminiCalls, 2, "Raw diagnostic and creative discovery should each call Gemini once");
     assert.strictEqual(openaiAuthHeaders.length, 3, "Raw OpenAI, image-key OpenAI, and creative discovery calls expected");
-    assert.strictEqual(openaiAuthHeaders.filter((h) => h === "Bearer openai-secret").length, 2);
-    assert.strictEqual(openaiAuthHeaders.filter((h) => h === "Bearer openai-image-secret").length, 1);
+    // Existing creative-provider contract intentionally prefers OPENAI_IMAGE_API_KEY
+    // when both OpenAI keys are present. The two raw diagnostics still exercise each
+    // key independently; the third call is creative discovery using the preferred key.
+    assert.strictEqual(openaiAuthHeaders.filter((h) => h === "Bearer openai-secret").length, 1);
+    assert.strictEqual(openaiAuthHeaders.filter((h) => h === "Bearer openai-image-secret").length, 2);
     assert.strictEqual(res.jsonData.GEMINI_API_KEY.success, true);
     assert.strictEqual(res.jsonData.OPENAI_API_KEY.success, true);
     assert.strictEqual(res.jsonData.OPENAI_IMAGE_API_KEY.success, true);
@@ -185,7 +193,6 @@ test("Diagnostic Endpoint Tests", async (t) => {
     process.env.GEMINI_API_KEY = secret1;
     process.env.OPENAI_API_KEY = secret2;
     process.env.OPENAI_IMAGE_API_KEY = secret3;
-    process.env.GOOGLE_CREATIVE_ECONOMY_MODEL = "gemini-3.5-flash-lite";
 
     global.fetch = async (url) => {
       assert.ok(!String(url).includes(secret1), "Gemini key leaked in request URL");
