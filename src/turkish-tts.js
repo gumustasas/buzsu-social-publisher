@@ -147,10 +147,9 @@ export function ensurePlayableWav(buffer, mimeType) {
   }
   if (buffer.length % 2 !== 0) throw new Error("Ham 16-bit PCM ses verisinin byte uzunluğu çift olmalıdır.");
 
-  // RFC 2586 audio/L16 örnekleri big-endian'dır; WAV PCM little-endian bekler.
-  // "pcm" olarak işaretlenen sağlayıcı çıktısını ise little-endian kabul ederiz.
+  // Gemini TTS ham PCM çıktısını 16-bit signed little-endian olarak verir.
+  // Byte sırasını değiştirmeden yalnızca WAV container başlığı eklenir.
   const pcm = Buffer.from(buffer);
-  if (isL16) pcm.swap16();
   const header = wavHeader({ dataSize: pcm.length, sampleRate, channels, bitsPerSample: 16 });
   return { audioBuffer: Buffer.concat([header, pcm]), mimeType: "audio/wav" };
 }
