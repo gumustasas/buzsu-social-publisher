@@ -49,9 +49,17 @@ export default async function handler(request, response) {
     const finalizedPrompt = normalizeVeoPrompt(rawPrompt, referenceImageRequired);
 
     const aspectRatio = REEL_ASPECT_RATIOS.includes(body.aspectRatio) ? body.aspectRatio : "9:16";
-    const durationSeconds = Number.isFinite(Number(body.durationSeconds)) && Number(body.durationSeconds) > 0
+    // Veo sahne klipleri yalnızca 4–8 saniye kabul ediyor. Model senaryoda
+    // 3 saniyelik bir sahne üretse bile ücretli provider çağrısını geçersiz
+    // duration ile boşa harcamamak için sınırı sunucu tarafında deterministik
+    // uygula. Prompt/validator katmanı da gelecekteki senaryoları 4–8 saniyeye
+    // yönlendirir; bu clamp son savunma katmanıdır.
+    const requestedDurationSeconds = Number.isFinite(Number(body.durationSeconds)) && Number(body.durationSeconds) > 0
       ? Math.round(Number(body.durationSeconds))
       : undefined;
+    const durationSeconds = requestedDurationSeconds === undefined
+      ? undefined
+      : Math.min(8, Math.max(4, requestedDurationSeconds));
     const resolution = ["720p", "1080p"].includes(body.resolution) ? body.resolution : undefined;
 
     const job = await submitVeoVideo(
