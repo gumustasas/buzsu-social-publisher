@@ -1,13 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { productContextCachePath, writeProductContextCache, readProductContextCache } from "../src/lib/product-context-cache.js";
+import { PRODUCT_CONTEXT_CACHE_VERSION, productContextCachePath, writeProductContextCache, readProductContextCache } from "../src/lib/product-context-cache.js";
 
 const URL_A = "https://www.buzsu.com.tr/code-su-aritma-cihazi/";
 
 test("productContextCachePath is deterministic and URL-encodes the canonical URL", () => {
   const path = productContextCachePath(URL_A);
-  assert.equal(path, `product-context-cache/${encodeURIComponent(URL_A)}.json`);
+  assert.equal(path, `product-context-cache/${PRODUCT_CONTEXT_CACHE_VERSION}/${encodeURIComponent(URL_A)}.json`);
   assert.equal(path, productContextCachePath(URL_A));
+});
+
+test("v2 source strategy eski version'sız llms-window cache yolunu okumaz", () => {
+  const oldPath = `product-context-cache/${encodeURIComponent(URL_A)}.json`;
+  assert.notEqual(productContextCachePath(URL_A), oldPath);
+  assert.match(productContextCachePath(URL_A), /product-context-cache\/v2\//);
 });
 
 test("writeProductContextCache writes to the deterministic path with addRandomSuffix:false and allowOverwrite:true", async () => {

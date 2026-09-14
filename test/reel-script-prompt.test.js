@@ -20,9 +20,10 @@ test("buildReelScriptPrompt: userBrief'i VERİ bloğu olarak (talimat değil) ç
   assert.doesNotMatch(prompt, /ignore all previous instructions/i);
 });
 
-test("buildReelScriptPrompt: prohibitedClaims kategorilerini 'uydurma' uyarısı olarak listeler", () => {
+test("buildReelScriptPrompt: prohibitedClaims generation prompt'una prohibition olarak taşınmaz", () => {
   const prompt = buildReelScriptPrompt({ productContext: PRODUCT_CONTEXT, userBrief: "", durationSeconds: 8, objective: "sales", aspectRatio: "9:16" });
-  assert.match(prompt, /Sağlık\/tedavi\/kesinlik iddiası/);
+  assert.doesNotMatch(prompt, /Sağlık\/tedavi\/kesinlik iddiası/);
+  assert.doesNotMatch(prompt, /prohibitedClaims/i);
 });
 
 test("buildReelScriptPrompt: kullanıcı boş bırakırsa VERİ bloğunda açık bir yer tutucu olur, hata vermez", () => {

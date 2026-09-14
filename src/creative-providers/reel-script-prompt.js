@@ -58,9 +58,6 @@ export function buildReelScriptPrompt({ productContext, userBrief, durationSecon
   const verifiedFactsBlock = (productContext.verifiedFacts || [])
     .map((fact, index) => `${index + 1}. "${fact.fact}" (sourceUrl: ${fact.sourceUrl})`)
     .join("\n") || "(bu ürün için doğrulanmış bir kaynak metni bulunamadı)";
-  const prohibitedBlock = (productContext.prohibitedClaims || [])
-    .map((item) => `- ${item.label}`)
-    .join("\n") || "(yok)";
   const objectiveLabel = OBJECTIVE_LABELS[objective] || OBJECTIVE_LABELS.sales;
 
   return `Buzsu için "${productContext.productName}" ürününün ${durationSeconds} saniyelik, ${aspectRatio} en-boy oranlı bir Reels reklam senaryosunu yapılandırılmış JSON olarak yaz.
@@ -80,13 +77,11 @@ HEDEF: ${objectiveLabel}.
 ÇOK ÖNEMLİ KURALLAR:
 1. Ürün hakkında konuşurken MÜMKÜN OLDUĞUNCA yukarıdaki "DOĞRULANMIŞ GERÇEK BİLGİ" bloğuna dayan; teknik özellikleri gereksiz yere kendin uydurma. Normal yaratıcı reklam dili serbesttir ve verifiedFacts cümlelerini birebir tekrar etmek zorunda değildir.
 2. claimsUsed'e senaryoda kullandığın factual ürün iddialarını yaz; doğrulanmış bilgiden geliyorsa ilgili sourceUrl'ü de ekle. Genel reklam sloganları/yaratıcı ifadeler claimsUsed'e GİRMEZ. Bu liste bilgilendirmedir: kaynak eşleşmesi server tarafında işaretlenir, senaryo bu yüzden reddedilmez.
-3. Şu kategorilerde mümkünse kaynaklı konuş, gereksiz iddia üretme:
-${prohibitedBlock}
-4. fullNarrationText ve her sahnenin narrationText'i TÜRKÇE olmalı. Toplam metin, ${durationSeconds} saniyelik bir seslendirmeye SIĞACAK kadar kısa olmalı (~${Math.round(durationSeconds * 2.5)} kelimeyi aşmasın) — 8sn'lik bir videoya uzun bir paragraf yazma.
-5. Sahneler (scenes) 0. saniyeden başlamalı, birbiriyle ÇAKIŞMAMALI, toplam süre ${durationSeconds} saniyeyi AŞMAMALI.
-6. Her sahnenin veoPrompt'u İNGİLİZCE ve yalnızca GÖRSELİ tarif etsin (konuşma/müzik/altyazı isteme — bunlar ayrı adımlarda eklenecek, sen yalnızca görseli yaz).
-7. Ürün referans görseli gereken (referenceImageRequired:true) sahnelerde ürünün gerçek fiziksel görünümünü koruyacak şekilde yaz; ürünü yeniden tasarlama, parça/logo uydurma.
-8. musicBrief.lyriaPrompt İNGİLİZCE, sözsüz (instrumental) bir müzik promptu olsun.
+3. fullNarrationText ve her sahnenin narrationText'i TÜRKÇE olmalı. Toplam metin, ${durationSeconds} saniyelik bir seslendirmeye SIĞACAK kadar kısa olmalı (~${Math.round(durationSeconds * 2.5)} kelimeyi aşmasın) — 8sn'lik bir videoya uzun bir paragraf yazma.
+4. Sahneler (scenes) 0. saniyeden başlamalı, birbiriyle ÇAKIŞMAMALI, toplam süre ${durationSeconds} saniyeyi AŞMAMALI.
+5. Her sahnenin veoPrompt'u İNGİLİZCE ve yalnızca GÖRSELİ tarif etsin (konuşma/müzik/altyazı isteme — bunlar ayrı adımlarda eklenecek, sen yalnızca görseli yaz).
+6. Ürün referans görseli gereken (referenceImageRequired:true) sahnelerde ürünün gerçek fiziksel görünümünü koruyacak şekilde yaz; ürünü yeniden tasarlama, parça/logo uydurma.
+7. musicBrief.lyriaPrompt İNGİLİZCE, sözsüz (instrumental) bir müzik promptu olsun.
 
 Yanıtı YALNIZCA şu JSON şemasına göre ver, başka açıklama ekleme:
 ${REEL_SCRIPT_SCHEMA_HINT}`;

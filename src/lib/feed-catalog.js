@@ -15,7 +15,7 @@
 // product-catalog.js'teki listCatalogProducts()).
 import { resolveProductUrl } from "./buzsu-url.js";
 
-const FEED_URL = "https://www.buzsu.com.tr/feed.xml";
+export const FEED_URL = "https://www.buzsu.com.tr/feed.xml";
 // llms-full.txt'in 30 dakikalık önbelleğinden kasıtlı olarak daha uzun: feed
 // çok daha büyük (~300KB, ~200 ürün) ve ürün görselleri gün içinde sık
 // değişmiyor; gereksiz yere sık çekmenin bir faydası yok.
@@ -50,6 +50,14 @@ function extractAllTags(block, tagName) {
   return results;
 }
 
+function stripMarkup(value) {
+  return decodeXmlEntities(value)
+    .replace(/<br\s*\/?\s*>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // Saf, ağdan bağımsız ayrıştırıcı — test edilebilir olması için ayrı
 // tutuldu. Görseli olmayan bir <item> bu kataloğun amacına hizmet etmediği
 // için (asıl değeri gerçek görsel galerisi sağlaması) atlanır; o ürün
@@ -70,7 +78,17 @@ export function extractFeedCatalog(xml) {
     const mainImage = /^https:\/\//i.test(imageLink) ? imageLink : additionalImages[0];
     if (!mainImage) continue;
     seen.add(url);
-    catalog.push({ title, url, imageUrl: mainImage, imageUrls: [mainImage, ...additionalImages.filter((value) => value !== mainImage)] });
+    catalog.push({
+      feedId: extractTag(block, "id") || null,
+      title,
+      url,
+      description: stripMarkup(extractTag(block, "description")),
+      productType: stripMarkup(extractTag(block, "product_type")),
+      googleProductCategory: stripMarkup(extractTag(block, "google_product_category")),
+      brand: stripMarkup(extractTag(block, "brand")),
+      imageUrl: mainImage,
+      imageUrls: [mainImage, ...additionalImages.filter((value) => value !== mainImage)]
+    });
   }
   return catalog;
 }
@@ -94,4 +112,13 @@ export async function listFeedProducts() {
   } catch {
     return [];
   }
+}
+
+// Product Intelligence yalnız canonical URL'nin birebir eşleşmesini kabul
+// eder. Başlık substring/fuzzy eşleştirmesi burada özellikle yoktur.
+export async function findFeedProductByCanonicalUrl(canonicalUrl, { listFeedProductsImpl = listFeedProducts } = {}) {
+  const target = resolveProductUrl(canonicalUrl);
+  if (!target) return null;
+  const products = await listFeedProductsImpl();
+  return products.find((product) => resolveProductUrl(product.url) === target) || null;
 }
