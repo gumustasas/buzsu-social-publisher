@@ -4,21 +4,10 @@
 // sınıflandırması, confirmed:true zorunluluğu) BİREBİR aynı disiplin
 // uygulanır — o dosyaya dokunulmaz, burada bağımsız bir kopyası tutulur.
 //
-// NOT — doğrulama sınırı: model kimliği (gemini-3.1-flash-tts-preview)
-// Google'ın kendi doküman sayfası URL'sinden (ai.google.dev/gemini-api/docs/
-// models/gemini-3.1-flash-tts-preview) doğrudan alındı ve Türkçe'nin bu
-// modele Nisan 2026'da 16 yeni dil arasında eklendiği Google Workspace
-// duyurusuyla teyit edildi — ikisi de yüksek güvenilirlikte. Ancak
-// response_format İÇİNDEKİ ses/dil alan adları (voice_name, language_code)
-// bu ortamda ai.google.dev'e doğrudan erişim olmadan arama sonuçlarından
-// derlendi — gerçek ücretli ilk denemeden önce teyit edilmesi önerilir
-// (bkz. README). AYRICA: src/omni-video.js'te video çıktısının Files
-// API'de PROCESSING->ACTIVE beklemesi gerektiği öğrenildi (bkz. o dosyanın
-// yorumları) — burada bir `uri` gelirse AYNI bekleme uygulanmıyor, doğrudan
-// indiriliyor. Bunun güvenli olduğu varsayımı, ses dosyalarının video'dan
-// çok daha küçük olması ve response_format'ta "delivery" hiç istenmediği
-// için Google'ın küçük ses çıktılarını muhtemelen inline base64 döndürmesi
-// beklentisine dayanıyor — DOĞRULANMADI, ilk gerçek denemede izlenmeli.
+// Google'ın güncel Interactions API şemasında ses çıktısı `response_format`
+// ile yalnızca { type: "audio" } olarak istenir; ses seçimi ise
+// generation_config.speech_config altında yapılır. Dil için ayrı bir
+// `language_code` alanı gönderilmez; Türkçe metin doğrudan modele verilir.
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
 export const TTS_MODEL = "gemini-3.1-flash-tts-preview";
@@ -71,10 +60,6 @@ function parseRetryAfter(response, data) {
   return null;
 }
 
-// Google'ın "bu dil bu modelde desteklenmiyor" hatasını KESİN bir status
-// koduyla vermeyeceği varsayılıyor (dokümantasyonda örnek yok) — bu yüzden
-// hem status hem mesaj metnine bakılıyor (bkz. src/omni-video.js:
-// isRegionUnavailable — aynı savunmacı yaklaşım).
 function isLanguageUnavailable(data, httpStatus) {
   const status = String(data?.error?.status || "");
   const message = String(data?.error?.message || "").toLowerCase();
@@ -111,8 +96,6 @@ async function readTtsJson(response, { model } = {}) {
   return data;
 }
 
-// bkz. src/omni-video.js:extractOmniVideoOutput — aynı steps[]/model_output
-// deseni, "video" yerine "audio" için.
 function extractTtsOutput(data) {
   const steps = Array.isArray(data?.steps) ? data.steps : [];
   const modelOutputStep = steps.find((step) => step?.type === "model_output");
@@ -125,11 +108,6 @@ function extractTtsOutput(data) {
   return { done: true, error: textSummary || "TTS model_output adımında ses bulunamadı." };
 }
 
-// WAV (RIFF/fmt/data) başlığından örnekleme hızı/kanal/bit derinliğini okuyup
-// gerçek süreyi HESAPLAR — ffmpeg/ffprobe GEREKMEZ (Vercel serverless'ta
-// ikisi de yok). Ham (container'sız) L16 PCM için mime_type'taki "rate="
-// parametresi kullanılır. Tanınmayan bir format (örn. sıkıştırılmış mp3)
-// için süre ölçülemez — tahmin ETMEK yerine açık bir hata fırlatılır.
 export function measureAudioDurationSeconds(buffer, mimeType) {
   const mime = String(mimeType || "").toLowerCase();
   if (buffer.length >= 44 && buffer.toString("ascii", 0, 4) === "RIFF" && buffer.toString("ascii", 8, 12) === "WAVE") {
@@ -154,16 +132,11 @@ export function measureAudioDurationSeconds(buffer, mimeType) {
   const rateMatch = mime.match(/rate=(\d+)/);
   if (rateMatch && (mime.includes("l16") || mime.includes("pcm"))) {
     const sampleRate = Number(rateMatch[1]);
-    return buffer.length / (sampleRate * 2); // L16 = 16-bit mono varsayımı
+    return buffer.length / (sampleRate * 2);
   }
   throw new Error(`Ses süresi ölçülemedi — tanınmayan format (mime_type: "${mimeType}"). WAV veya ham L16 PCM bekleniyor.`);
 }
 
-// text zorunlu. targetDurationSeconds verilirse (generate_video_narration'ın
-// estimatedDurationSeconds'ı), gerçek ölçülen süre bunu aşarsa
-// VOICEOVER_TOO_LONG hatası fırlatılır — kullanıcı isterse metni AI ile
-// kısaltıp tekrar denemelidir (bkz. api/mcp.js açıklaması, madde 7).
-// confirmed !== true ise HİÇBİR ağ isteği atılmadan reddedilir.
 export async function generateTurkishVoiceover({ text, style, gender = "auto", targetDurationSeconds, voice, confirmed } = {}, env = process.env) {
   if (confirmed !== true) throw new Error("Türkçe seslendirme onay (confirmed:true) gerektirir — ücretli bir işlemdir.");
   if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY Vercel Production ortamında tanımlı değil.");
@@ -176,8 +149,9 @@ export async function generateTurkishVoiceover({ text, style, gender = "auto", t
     headers: ttsHeaders(env),
     body: JSON.stringify({
       model: TTS_MODEL,
-      input: [{ type: "text", text: narrationText }],
-      response_format: { type: "audio", voice_name: resolvedVoice, language_code: TTS_LANGUAGE_CODE }
+      input: narrationText,
+      response_format: { type: "audio" },
+      generation_config: { speech_config: [{ voice: resolvedVoice }] }
     })
   });
   const data = await readTtsJson(response, { model: TTS_MODEL });
