@@ -78,7 +78,7 @@ HEDEF: ${objectiveLabel}.
 1. Ürün hakkında konuşurken MÜMKÜN OLDUĞUNCA yukarıdaki "DOĞRULANMIŞ GERÇEK BİLGİ" bloğuna dayan; teknik özellikleri gereksiz yere kendin uydurma. Normal yaratıcı reklam dili serbesttir ve verifiedFacts cümlelerini birebir tekrar etmek zorunda değildir.
 2. claimsUsed'e senaryoda kullandığın factual ürün iddialarını yaz; doğrulanmış bilgiden geliyorsa ilgili sourceUrl'ü de ekle. Genel reklam sloganları/yaratıcı ifadeler claimsUsed'e GİRMEZ. Bu liste bilgilendirmedir: kaynak eşleşmesi server tarafında işaretlenir, senaryo bu yüzden reddedilmez.
 3. fullNarrationText ve her sahnenin narrationText'i TÜRKÇE olmalı. Toplam metin, ${durationSeconds} saniyelik bir seslendirmeye SIĞACAK kadar kısa olmalı (~${Math.round(durationSeconds * 2.5)} kelimeyi aşmasın) — 8sn'lik bir videoya uzun bir paragraf yazma.
-4. Sahneler (scenes) 0. saniyeden başlamalı, birbiriyle ÇAKIŞMAMALI, toplam süre ${durationSeconds} saniyeyi AŞMAMALI.
+4. Sahneler (scenes) 0. saniyeden başlamalı, aralarında BOŞLUK veya ÇAKIŞMA olmamalı ve son sahne TAM OLARAK ${durationSeconds}. saniyede bitmeli. HER sahnenin kendi süresi (endSeconds - startSeconds) Google Veo sınırı nedeniyle EN AZ 4, EN FAZLA 8 saniye olmalı. Örnek: 8 saniye için 0–4 + 4–8; 15 saniye için 0–5 + 5–10 + 10–15. 0–3, 3–6 gibi 4 saniyeden kısa sahneler KESİNLİKLE üretme.
 5. Her sahnenin veoPrompt'u İNGİLİZCE ve yalnızca GÖRSELİ tarif etsin (konuşma/müzik/altyazı isteme — bunlar ayrı adımlarda eklenecek, sen yalnızca görseli yaz).
 6. Ürün referans görseli gereken (referenceImageRequired:true) sahnelerde ürünün gerçek fiziksel görünümünü koruyacak şekilde yaz; ürünü yeniden tasarlama, parça/logo uydurma.
 7. musicBrief.lyriaPrompt İNGİLİZCE, sözsüz (instrumental) bir müzik promptu olsun.
