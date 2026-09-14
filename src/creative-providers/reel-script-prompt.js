@@ -87,11 +87,66 @@ Yanıtı YALNIZCA şu JSON şemasına göre ver, başka açıklama ekleme:
 ${REEL_SCRIPT_SCHEMA_HINT}`;
 }
 
-export function parseReelScriptJson(raw) {
-  const cleaned = String(raw || "").trim().replace(/^```json\s*/i, "").replace(/```$/i, "").trim();
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    throw new Error("AI yanıtı geçerli JSON değil.");
+function extractFirstJsonObject(text) {
+  const input = String(text || "");
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const char = input[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      if (depth === 0) start = i;
+      depth++;
+      continue;
+    }
+
+    if (char === "}" && depth > 0) {
+      depth--;
+      if (depth === 0 && start >= 0) return input.slice(start, i + 1);
+    }
   }
+
+  return null;
+}
+
+export function parseReelScriptJson(raw) {
+  const text = String(raw || "").trim();
+  const withoutFence = text
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```\s*$/i, "")
+    .trim();
+
+  const candidates = [withoutFence];
+  const extracted = extractFirstJsonObject(withoutFence);
+  if (extracted && extracted !== withoutFence) candidates.push(extracted);
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch {
+      // Bir sonraki güvenli aday denenir. JSON onarımı yapılmaz.
+    }
+  }
+
+  throw new Error("AI yanıtı geçerli JSON değil.");
 }
