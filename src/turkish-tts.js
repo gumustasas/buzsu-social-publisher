@@ -108,6 +108,53 @@ function extractTtsOutput(data) {
   return { done: true, error: textSummary || "TTS model_output adımında ses bulunamadı." };
 }
 
+function wavHeader({ dataSize, sampleRate, channels = 1, bitsPerSample = 16 }) {
+  const header = Buffer.alloc(44);
+  const blockAlign = channels * (bitsPerSample / 8);
+  const byteRate = sampleRate * blockAlign;
+  header.write("RIFF", 0, "ascii");
+  header.writeUInt32LE(36 + dataSize, 4);
+  header.write("WAVE", 8, "ascii");
+  header.write("fmt ", 12, "ascii");
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write("data", 36, "ascii");
+  header.writeUInt32LE(dataSize, 40);
+  return header;
+}
+
+export function ensurePlayableWav(buffer, mimeType) {
+  const mime = String(mimeType || "").toLowerCase();
+  if (buffer.length >= 12 && buffer.toString("ascii", 0, 4) === "RIFF" && buffer.toString("ascii", 8, 12) === "WAVE") {
+    return { audioBuffer: buffer, mimeType: "audio/wav" };
+  }
+
+  const isL16 = mime.includes("l16");
+  const isPcm = mime.includes("pcm");
+  if (!isL16 && !isPcm) return { audioBuffer: buffer, mimeType };
+
+  const rateMatch = mime.match(/rate=(\d+)/);
+  const channelsMatch = mime.match(/channels=(\d+)/);
+  const sampleRate = rateMatch ? Number(rateMatch[1]) : 24000;
+  const channels = channelsMatch ? Number(channelsMatch[1]) : 1;
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0 || !Number.isInteger(channels) || channels <= 0) {
+    throw new Error(`Ham PCM ses parametreleri geçersiz (mime_type: "${mimeType}").`);
+  }
+  if (buffer.length % 2 !== 0) throw new Error("Ham 16-bit PCM ses verisinin byte uzunluğu çift olmalıdır.");
+
+  // RFC 2586 audio/L16 örnekleri big-endian'dır; WAV PCM little-endian bekler.
+  // "pcm" olarak işaretlenen sağlayıcı çıktısını ise little-endian kabul ederiz.
+  const pcm = Buffer.from(buffer);
+  if (isL16) pcm.swap16();
+  const header = wavHeader({ dataSize: pcm.length, sampleRate, channels, bitsPerSample: 16 });
+  return { audioBuffer: Buffer.concat([header, pcm]), mimeType: "audio/wav" };
+}
+
 export function measureAudioDurationSeconds(buffer, mimeType) {
   const mime = String(mimeType || "").toLowerCase();
   if (buffer.length >= 44 && buffer.toString("ascii", 0, 4) === "RIFF" && buffer.toString("ascii", 8, 12) === "WAVE") {
@@ -132,9 +179,20 @@ export function measureAudioDurationSeconds(buffer, mimeType) {
   const rateMatch = mime.match(/rate=(\d+)/);
   if (rateMatch && (mime.includes("l16") || mime.includes("pcm"))) {
     const sampleRate = Number(rateMatch[1]);
-    return buffer.length / (sampleRate * 2);
+    const channelsMatch = mime.match(/channels=(\d+)/);
+    const channels = channelsMatch ? Number(channelsMatch[1]) : 1;
+    return buffer.length / (sampleRate * channels * 2);
   }
   throw new Error(`Ses süresi ölçülemedi — tanınmayan format (mime_type: "${mimeType}"). WAV veya ham L16 PCM bekleniyor.`);
+}
+
+function normalizeCompletedAudio(audioBuffer, mimeType) {
+  const normalized = ensurePlayableWav(audioBuffer, mimeType);
+  return {
+    audioBuffer: normalized.audioBuffer,
+    mimeType: normalized.mimeType,
+    durationSeconds: measureAudioDurationSeconds(normalized.audioBuffer, normalized.mimeType)
+  };
 }
 
 export async function generateTurkishVoiceover({ text, style, gender = "auto", targetDurationSeconds, voice, confirmed } = {}, env = process.env) {
@@ -171,7 +229,7 @@ export async function generateTurkishVoiceover({ text, style, gender = "auto", t
     audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
     mimeType = output.mimeType || "audio/wav";
   }
-  const durationSeconds = measureAudioDurationSeconds(audioBuffer, mimeType);
+  ({ audioBuffer, mimeType, durationSeconds: var durationSeconds } = normalizeCompletedAudio(audioBuffer, mimeType));
   if (typeof targetDurationSeconds === "number" && targetDurationSeconds > 0 && durationSeconds > targetDurationSeconds * 1.15) {
     const error = new Error(`Seslendirme (${durationSeconds.toFixed(1)}sn) hedef video süresinden (${targetDurationSeconds}sn) çok daha uzun çıktı.`);
     error.code = "VOICEOVER_TOO_LONG";
@@ -200,5 +258,6 @@ export async function turkishVoiceoverStatus(job, env = process.env) {
     audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
     mimeType = output.mimeType || "audio/wav";
   }
-  return { ...job, status: "COMPLETED", audioBuffer, mimeType, durationSeconds: measureAudioDurationSeconds(audioBuffer, mimeType) };
+  const normalized = normalizeCompletedAudio(audioBuffer, mimeType);
+  return { ...job, status: "COMPLETED", ...normalized };
 }
