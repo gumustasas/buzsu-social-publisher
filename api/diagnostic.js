@@ -15,7 +15,9 @@ function buildResult({
 async function testGemini(key) {
   if (!key) return buildResult({ envPresent: false });
   try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+    const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models", {
+      headers: { "x-goog-api-key": key }
+    });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       return buildResult({
@@ -26,7 +28,7 @@ async function testGemini(key) {
         errorCode: data.error?.code || res.status
       });
     }
-    const models = (data.models || []).map(m => m.name);
+    const models = (data.models || []).map((model) => model.name).filter(Boolean);
     return buildResult({
       envPresent: true,
       httpStatus: res.status,
@@ -34,12 +36,12 @@ async function testGemini(key) {
       modelCount: models.length,
       models
     });
-  } catch (e) {
+  } catch (error) {
     return buildResult({
       envPresent: true,
       success: false,
       errorType: "NetworkError",
-      errorCode: e.name || "FetchFailed"
+      errorCode: error?.name || "FetchFailed"
     });
   }
 }
@@ -60,7 +62,7 @@ async function testOpenAI(key) {
         errorCode: data.error?.code || res.status
       });
     }
-    const models = (data.data || []).map(m => m.id);
+    const models = (data.data || []).map((model) => model.id).filter(Boolean);
     return buildResult({
       envPresent: true,
       httpStatus: res.status,
@@ -68,27 +70,41 @@ async function testOpenAI(key) {
       modelCount: models.length,
       models
     });
-  } catch (e) {
+  } catch (error) {
     return buildResult({
       envPresent: true,
       success: false,
       errorType: "NetworkError",
-      errorCode: e.name || "FetchFailed"
+      errorCode: error?.name || "FetchFailed"
     });
   }
 }
 
 export default async function handler(req, res) {
+  res.setHeader?.("Cache-Control", "no-store, max-age=0");
+
+  if (req.method && req.method !== "GET") {
+    res.setHeader?.("Allow", "GET");
+    return res.status(405).json({ error: "Method Not Allowed" });
+  }
+
   const session = getSession(req);
   if (!session) {
     return res.status(401).json({ error: "Unauthorized" });
   }
+  if (session.role !== "Admin") {
+    return res.status(403).json({ error: "Forbidden" });
+  }
 
-  const results = {
-    GEMINI_API_KEY: await testGemini(process.env.GEMINI_API_KEY),
-    OPENAI_API_KEY: await testOpenAI(process.env.OPENAI_API_KEY),
-    OPENAI_IMAGE_API_KEY: await testOpenAI(process.env.OPENAI_IMAGE_API_KEY)
-  };
+  const [gemini, openai, openaiImage] = await Promise.all([
+    testGemini(process.env.GEMINI_API_KEY),
+    testOpenAI(process.env.OPENAI_API_KEY),
+    testOpenAI(process.env.OPENAI_IMAGE_API_KEY)
+  ]);
 
-  res.status(200).json(results);
+  return res.status(200).json({
+    GEMINI_API_KEY: gemini,
+    OPENAI_API_KEY: openai,
+    OPENAI_IMAGE_API_KEY: openaiImage
+  });
 }
