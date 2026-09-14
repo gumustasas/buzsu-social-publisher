@@ -121,10 +121,6 @@
     renderSteps();
   }
 
-  // Step 6/7 (PR-F/G): yeni bir senaryo üretildiğinde veya senaryo tamamen
-  // sıfırlandığında (ürün değişikliği vb.) eski narration/music/finalVideo
-  // sonuçları da geçersiz olur — Step 5'in generatedSceneVideos/sceneReferenceImages
-  // sıfırlamasıyla AYNI ilke. Bekleyen (onaylanmamış) TTS/Lyria onayları da temizlenir.
   function resetAudioAndFinalState() {
     state.narration = { text: "", gender: "auto", status: "idle", job: null, audioUrl: null, error: null, pending: false };
     state.music = { prompt: "", tier: "clip", status: "idle", job: null, musicUrl: null, error: null, pending: false };
@@ -133,10 +129,6 @@
     resetMusicConfirm();
   }
 
-  // Adım 6'nın varsayılan metinleri — YALNIZCA yeni bir senaryo üretildiğinde
-  // set edilir (bkz. çağrı yeri: generateScript). validateEdits/scene
-  // düzenlemelerinde TEKRAR ÇAĞRILMAZ — aksi halde kullanıcının narration/
-  // music metnindeki elle yaptığı değişiklikler her sahne onayında silinirdi.
   function initAudioDefaults(script) {
     state.narration.text = script.fullNarrationText || "";
     state.music.prompt = script.musicBrief?.lyriaPrompt || "";
@@ -324,9 +316,6 @@
   function renderScript() {
     const script = state.reelScript;
     const summary = byId("reels-v2-script-summary");
-    // claim'ler BLOKLANMAZ (ürün kararı) — burada yalnız kaynak eşleşmesi
-    // gösterilir, böylece onaylayan kişi neyin doğrulanmış bilgiye dayandığını
-    // görerek karar verir.
     const claims = (script.claimsUsed || []).map((claim) => {
       const verified = claim.provenance === "verified" && safeUrl(claim.sourceUrl);
       const badge = verified
@@ -378,20 +367,6 @@
     return Boolean(state.reelScript?.scenes?.length) && state.reelScript.scenes.every((scene) => state.approvedScenes[scene.sceneId] === true);
   }
 
-  // AI Reels V2 PR-E — Step 5 (Video Üretimi). YENİ bir Veo sistemi YAZILMAZ;
-  // burada yalnızca PR-D'nin zaten onayladığı scene.veoPrompt, /api/reel-scene-video
-  // (mevcut submitVeoVideo'yu saran TEK yeni endpoint) ve /api/veo-video
-  // (mevcut, DEĞİŞTİRİLMEMİŞ durum sorgulama endpoint'i) üzerinden çağrılır.
-  //
-  // dashboard.html'deki #generate-reel VEYA #veo-model-tier'a HİÇ dokunulmaz
-  // — bu, o akıştan tamamen AYRI, izole bir sahne bazlı akıştır.
-
-  // RATE_LIMITED (bkz. src/veo-video.js:VeoApiError) — dashboard.html'deki
-  // veoErrorMessage ile AYNI mantık, ama bu dosya izole kalması gerektiği için
-  // (bkz. test/dashboard-reels-v2.test.js) kendi kopyası. Adı "veo" olsa da
-  // code/alternatives şekli TtsApiError/LyriaApiError ile de uyumlu olduğundan
-  // Step 6/7 (PR-F/G) hata mesajları için de reuse edilir — genel bir
-  // "provider hata mesajı" yardımcısıdır.
   function veoErrorMessage(data, fallback) {
     const base = (data && data.error) || fallback || "Video üretimi başarısız";
     if (!data || data.code !== "RATE_LIMITED") return base;
@@ -399,9 +374,6 @@
     return `${base}${alts ? ` Alternatif modeller: ${alts}.` : ""}`;
   }
 
-  // Gerçek backend durumları (IN_PROGRESS/COMPLETED, ya da bir hata) burada
-  // spesifikasyonun istediği sabit UI durum kümesine normalize edilir:
-  // idle | awaiting_confirmation | generating | completed | failed.
   function sceneVideoUiStatus(sceneId) {
     const entry = state.generatedSceneVideos[sceneId];
     if (entry?.pending) return "generating";
@@ -447,8 +419,6 @@
       const data = await response.json();
       if (!response.ok) throw new Error(veoErrorMessage(data));
       const job = data.veo;
-      // Polling ASLA yeni bir iş başlatmaz/mevcut işi yeniden tetiklemez —
-      // yalnızca aynı operationName'in durumunu okur (bkz. api/veo-video.js).
       if (job.status !== "COMPLETED") {
         setTimeout(() => pollSceneVideo(sceneId), 5000);
         return;
@@ -468,9 +438,6 @@
       renderSteps();
       renderFinalStage();
     } catch (error) {
-      // §9: hata durumunda ASLA başka bir provider/model'e otomatik geçilmez,
-      // otomatik ikinci bir üretim BAŞLATILMAZ. Önceki (varsa) tamamlanmış
-      // sonuç KORUNUR — yalnızca yeni deneme başarısız işaretlenir.
       const current = state.generatedSceneVideos[sceneId] || entry;
       state.generatedSceneVideos[sceneId] = { ...current, pending: false, status: current.videoUrl ? "completed" : "failed", error: error.message };
       renderVideoScenes();
@@ -481,14 +448,12 @@
     const message = byId("reels-v2-video-message");
     const scene = state.reelScript?.scenes?.find((item) => item.sceneId === sceneId);
     if (!scene) return;
-    // §2: onaylanmamış sahne için üretim ASLA tetiklenmez.
     if (state.approvedScenes[sceneId] !== true) { message.textContent = "Bu sahne henüz onaylanmadı — önce Adım 4'te doğrulayıp onaylayın."; return; }
     const referenceImageUrl = state.sceneReferenceImages[sceneId];
     if (!referenceImageUrl) { message.textContent = "Önce bu sahne için bir referans ürün görseli seçin."; return; }
     const modelTier = state.videoSettings.modelTier;
     const resolution = state.videoSettings.resolution;
     const confirmKey = `${sceneId}:${referenceImageUrl}:${modelTier}:${resolution}`;
-    // §8: İLK TIKLAMA ASLA ücretli çağrı tetiklemez — yalnızca özet/onay gösterir.
     if (pendingSceneConfirm[sceneId] !== confirmKey) {
       pendingSceneConfirm[sceneId] = confirmKey;
       clearTimeout(pendingSceneConfirmTimers[sceneId]);
@@ -500,13 +465,7 @@
     resetSceneConfirm(sceneId);
     const durationSeconds = Math.max(1, Math.round(Number(scene.endSeconds) - Number(scene.startSeconds)));
     const previous = state.generatedSceneVideos[sceneId] || { status: "idle", jobId: null, model: null, provider: null, createdAt: null, videoUrl: null, error: null };
-    // §12: eski (varsa tamamlanmış) sonuç, yeni üretim BAŞARILI olana kadar
-    // ASLA silinmez — videoUrl burada korunur, yalnızca pending:true eklenir.
     state.generatedSceneVideos[sceneId] = { ...previous, pending: true, error: null };
-    // §13 (PR-F/G): bu sahne zaten bir Final Reel'e dahil edilmişse (yeniden
-    // üretim), mevcut final video artık GÜNCELLİĞİNİ KAYBETMİŞTİR — otomatik
-    // silinmez, yalnızca "stale" işaretlenir; kullanıcı yeniden compose etmeyi
-    // kendi seçmelidir.
     markFinalStale();
     renderVideoScenes();
     renderFinalStage();
@@ -548,14 +507,6 @@
     }
   }
 
-  // AI Reels V2 PR-F/G — Step 6 (Ses & Müzik). YENİ bir TTS/Lyria client
-  // YAZILMAZ; burada yalnızca PR-D'nin ürettiği reelScript.fullNarrationText /
-  // musicBrief.lyriaPrompt varsayılan olarak kullanılır ve MEVCUT
-  // /api/turkish-tts, /api/lyria-music uçları (aynen dashboard.html'deki
-  // #reel-audio panelinin kullandığı uçlar) çağrılır. O panele HİÇ dokunulmaz
-  // — burası sihirbaz-yerel, izole bir kopyadır (kendi state.narration/
-  // state.music'ini tutar, ayrı DOM id'leri kullanır).
-
   function resetNarrationConfirm() {
     pendingNarrationConfirm = null;
     clearTimeout(pendingNarrationConfirmTimer);
@@ -585,10 +536,6 @@
   function renderAudioStage() {
     const narrationField = byId("reels-v2-narration-text");
     const musicField = byId("reels-v2-music-prompt");
-    // Kullanıcı yazarken imleç/odak kaybolmasın diye textarea'lar yalnızca
-    // state ile GERÇEKTEN farklıysa güncellenir (bkz. Step 4'teki scene-field
-    // input handler'ının AYNI ilkesi — orada da renderScript() re-render'ı
-    // her tuş vuruşunda değil, yalnız gerekli anlarda çağrılıyor).
     if (narrationField.value !== state.narration.text) narrationField.value = state.narration.text;
     if (musicField.value !== state.music.prompt) musicField.value = state.music.prompt;
     byId("reels-v2-voice-gender").value = state.narration.gender;
@@ -620,15 +567,11 @@
       const data = await response.json();
       if (!response.ok) throw new Error(veoErrorMessage(data, "Türkçe seslendirme durumu okunamadı"));
       const tts = data.tts;
-      // Polling ASLA yeni bir TTS işi başlatmaz — yalnızca aynı interactionId'nin
-      // durumunu okur (bkz. src/turkish-tts.js:turkishVoiceoverStatus).
       if (tts.status !== "COMPLETED") { setTimeout(pollNarrationVoiceover, 5000); return; }
       state.narration = { ...state.narration, status: "completed", audioUrl: tts.audioUrl || state.narration.audioUrl, pending: false, error: tts.audioUrl ? null : (tts.downloadNote || "Ses hazır ama kalıcı bağlantı alınamadı.") };
       renderAudioStage();
       renderSteps();
     } catch (error) {
-      // §14: TTS başarısız olursa otomatik başka bir provider'a/tekrar denemeye
-      // GEÇİLMEZ — önceki (varsa) tamamlanmış ses korunur, yalnız hata gösterilir.
       state.narration = { ...state.narration, pending: false, status: state.narration.audioUrl ? "completed" : "failed", error: error.message };
       renderAudioStage();
     }
@@ -638,7 +581,6 @@
     const scriptDuration = Number(state.reelScript?.durationSeconds) || undefined;
     state.narration.gender = byId("reels-v2-voice-gender").value;
     const confirmKey = `${state.narration.text}:${state.narration.gender}`;
-    // §14: İLK TIKLAMA ücretli çağrı YAPMAZ — yalnız onay bekler.
     if (pendingNarrationConfirm !== confirmKey) {
       pendingNarrationConfirm = confirmKey;
       clearTimeout(pendingNarrationConfirmTimer);
@@ -734,14 +676,6 @@
     }
   }
 
-  // AI Reels V2 PR-F/G — Step 7 (Final Reel). YENİ bir medya motoru YAZILMAZ.
-  // src/reel-audio-compose.js (compose_reel_audio) yalnız TEK bir mevcut
-  // videoya ses mix'i yapıyor, sahne birleştirme (concat) YAPMIYOR — bu
-  // yüzden en küçük ek olarak /api/reel-final (src/reel-final-assembly.js)
-  // eklendi: sahne videolarını sırayla birleştirip AYNI, DEĞİŞTİRİLMEMİŞ
-  // ses-mix FFmpeg katmanını (buildReelAudioFfmpegArgs) reuse ediyor. Bu
-  // fonksiyon Veo/TTS/Lyria'yı OTOMATİK TETİKLEMEZ — yalnızca zaten
-  // tamamlanmış generatedSceneVideos/narration/music sonuçlarını kullanır.
   function markFinalStale() {
     if (state.finalVideo.videoUrl) state.finalVideo.stale = true;
   }
@@ -776,8 +710,6 @@
       const response = await v2Api(`/api/reel-final?jobId=${encodeURIComponent(state.finalVideo.jobId)}`);
       const data = await response.json();
       if (!response.ok) throw new Error(veoErrorMessage(data, "Final Reel durumu okunamadı"));
-      // Polling ASLA yeni bir compose işi başlatmaz — yalnızca aynı jobId'nin
-      // durumunu okur (bkz. src/reel-audio-compose.js:getReelAudioStatus, reuse edildi).
       if (data.status === "queued" || data.status === "rendering") { setTimeout(pollFinalReel, 5000); return; }
       if (data.status === "completed" && data.videoUrl) {
         state.finalVideo = { status: "completed", jobId: state.finalVideo.jobId, videoUrl: data.videoUrl, createdAt: state.finalVideo.createdAt, pending: false, error: null, stale: false };
@@ -787,9 +719,6 @@
       }
       throw new Error(data.error || "Final Reel oluşturma başarısız.");
     } catch (error) {
-      // §14: compose başarısız olursa otomatik yeni bir generation (Veo/TTS/
-      // Lyria/tekrar compose) TETİKLENMEZ — eski (varsa) tamamlanmış final
-      // video korunur, yalnız hata gösterilir.
       state.finalVideo = { ...state.finalVideo, pending: false, status: state.finalVideo.videoUrl ? "completed" : "failed", error: error.message };
       renderFinalStage();
     }
@@ -800,8 +729,6 @@
     if (!readiness.ready) { renderFinalStage(); return; }
     const sceneVideoUrls = state.reelScript.scenes.map((scene) => state.generatedSceneVideos[scene.sceneId].videoUrl);
     const previous = state.finalVideo;
-    // §14: FFmpeg mix/concat ÜCRETSİZDİR (compose_reel_audio ile AYNI kural)
-    // — bir ücretli onay bayrağı GEREKMEZ.
     state.finalVideo = { ...previous, pending: true, error: null };
     renderFinalStage();
     try {
@@ -819,8 +746,6 @@
       renderFinalStage();
       pollFinalReel();
     } catch (error) {
-      // §13: eski (varsa tamamlanmış) final video, yeni compose BAŞARILI
-      // olana kadar ASLA silinmez.
       state.finalVideo = { ...previous, pending: false, status: previous.videoUrl ? "completed" : "failed", error: error.message };
       renderFinalStage();
     }
@@ -853,8 +778,6 @@
         productId: selectedProductId,
         provider: resolved.provider,
         modelTier: resolved.custom ? undefined : resolved.tier,
-        // Kullanıcının onayladığı gerçek modeli kilitle; generateReelScript selectable
-        // discovery doğrulamasını yine server tarafında uygular.
         model: resolved.model,
         objective: state.creativeSettings.objective,
         durationSeconds: state.creativeSettings.durationSeconds,
@@ -923,7 +846,6 @@
     button.disabled = true;
     validateEdits({ approveSceneId: sceneId }).catch((error) => { byId("reels-v2-approval-message").textContent = error.message; }).finally(() => { button.disabled = false; });
   });
-  // Adım 5 (Video Üretimi) — referans görsel seçimi ve sahne bazlı Veo üretimi.
   byId("reels-v2-video-tier").addEventListener("change", () => {
     state.videoSettings.modelTier = byId("reels-v2-video-tier").value;
     Object.keys(pendingSceneConfirm).forEach(resetSceneConfirm);
@@ -947,9 +869,6 @@
     if (!generateButton) return;
     generateSceneVideo(generateButton.dataset.sceneId);
   });
-  // Adım 6 (Ses & Müzik) — narration/music metni kullanıcı tarafından
-  // düzenlenebilir; düzenleme bekleyen onayı iptal eder (metin değiştiyse
-  // confirmKey de değişir, ama görünür geri bildirim için açıkça de sıfırlanır).
   byId("reels-v2-narration-text").addEventListener("input", (event) => {
     state.narration.text = event.target.value;
     resetNarrationConfirm();
@@ -960,11 +879,14 @@
     resetMusicConfirm();
     byId("reels-v2-lyria-generate").disabled = !state.music.prompt.trim();
   });
-  byId("reels-v2-voice-gender").addEventListener("change", () => { resetNarrationConfirm(); renderAudioStage(); });
+  byId("reels-v2-voice-gender").addEventListener("change", (event) => {
+    state.narration.gender = event.target.value;
+    resetNarrationConfirm();
+    renderAudioStage();
+  });
   byId("reels-v2-lyria-tier").addEventListener("change", () => { resetMusicConfirm(); renderAudioStage(); });
   byId("reels-v2-tts-generate").addEventListener("click", generateNarrationVoiceover);
   byId("reels-v2-lyria-generate").addEventListener("click", generateMusic);
-  // Adım 7 (Final Reel).
   byId("reels-v2-final-generate").addEventListener("click", composeFinalReel);
   document.querySelectorAll('.brand-rail [data-tab="reels"]').forEach((button) => button.addEventListener("click", initialize));
   const workspace = byId("workspace");
