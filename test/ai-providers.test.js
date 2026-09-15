@@ -335,13 +335,15 @@ test("generateSeoArticle uses the working OPENAI_IMAGE_API_KEY over the depleted
   let capturedAuth = null;
   global.fetch = async (url, options) => {
     capturedAuth = options.headers.Authorization;
-    return { ok: true, json: async () => ({ output_text: '{"title":"Manyetik Kireç Önleyici Nedir?","body":"Manyetik kireç önleyici, su hattındaki kireci manyetik alanla azaltan bir cihazdır."}' }) };
+    return { ok: true, json: async () => ({ output_text: '{"title":"Manyetik Kireç Önleyici Nedir?","metaDescription":"Kısa özet.","intro":"Manyetik kireç önleyici, su hattındaki kireci manyetik alanla azaltan bir cihazdır.","sections":[],"faq":[],"ctaSentence":"Detaylar için buzsu.com.tr."}' }) };
   };
   try {
     const article = await generateSeoArticle("openai", { title: "UltraMag" }, "manyetik kireç önleyici", { OPENAI_API_KEY: "depleted-key", OPENAI_IMAGE_API_KEY: "credited-key" });
     assert.equal(capturedAuth, "Bearer credited-key");
     assert.equal(article.title, "Manyetik Kireç Önleyici Nedir?");
+    assert.equal(article.metaDescription, "Kısa özet.");
     assert.match(article.body, /manyetik alanla/);
+    assert.deepEqual(article.warnings, []);
   } finally {
     global.fetch = originalFetch;
   }
@@ -349,7 +351,7 @@ test("generateSeoArticle uses the working OPENAI_IMAGE_API_KEY over the depleted
 
 test("generateSeoArticle throws when the AI response has no title or body", async () => {
   const originalFetch = global.fetch;
-  global.fetch = async () => ({ ok: true, json: async () => ({ output_text: '{"title":"","body":""}' }) });
+  global.fetch = async () => ({ ok: true, json: async () => ({ output_text: '{"title":"","metaDescription":"","intro":"","sections":[],"faq":[],"ctaSentence":""}' }) });
   try {
     await assert.rejects(
       () => generateSeoArticle("openai", { title: "UltraMag" }, "", { OPENAI_API_KEY: "key" }),
@@ -362,10 +364,42 @@ test("generateSeoArticle throws when the AI response has no title or body", asyn
 
 test("generateSeoArticle treats provider 'openai-low'/'composite' the same as 'openai'/'gemini' instead of rejecting them", async () => {
   const originalFetch = global.fetch;
-  global.fetch = async () => ({ ok: true, json: async () => ({ output_text: '{"title":"t","body":"b"}' }) });
+  global.fetch = async () => ({ ok: true, json: async () => ({ output_text: '{"title":"t","metaDescription":"m","intro":"b","sections":[],"faq":[],"ctaSentence":""}' }) });
   try {
     const article = await generateSeoArticle("openai-low", { title: "UltraMag" }, "", { OPENAI_API_KEY: "key" });
     assert.equal(article.title, "t");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateSeoArticle sends a strict OpenAI json_schema so the response shape can't drift, and flags risky claims the model still produced", async () => {
+  const originalFetch = global.fetch;
+  let capturedBody = null;
+  global.fetch = async (url, options) => {
+    capturedBody = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ output_text: '{"title":"En İyi Kireç Önleyici","metaDescription":"m","intro":"Bu cihaz garanti eder ki kireç %100 azalır.","sections":[],"faq":[],"ctaSentence":""}' }) };
+  };
+  try {
+    const article = await generateSeoArticle("openai", { title: "UltraMag" }, "", { OPENAI_API_KEY: "key" });
+    assert.equal(capturedBody.text.format.type, "json_schema");
+    assert.equal(capturedBody.text.format.strict, true);
+    assert.ok(article.warnings.length >= 2);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateSeoArticle includes the real product URL in the prompt so the CTA links to the actual page", async () => {
+  const originalFetch = global.fetch;
+  let capturedBody = null;
+  global.fetch = async (url, options) => {
+    capturedBody = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ output_text: '{"title":"t","metaDescription":"m","intro":"b","sections":[],"faq":[],"ctaSentence":""}' }) };
+  };
+  try {
+    await generateSeoArticle("openai", { title: "UltraMag", url: "https://www.buzsu.com.tr/urunler/ultramag" }, "", { OPENAI_API_KEY: "key" });
+    assert.match(capturedBody.input, /https:\/\/www\.buzsu\.com\.tr\/urunler\/ultramag/);
   } finally {
     global.fetch = originalFetch;
   }
