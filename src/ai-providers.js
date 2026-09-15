@@ -190,25 +190,96 @@ export async function generateCaption(provider, product, env = process.env) {
   return { instagramText, facebookText, hashtags: String(parsed.hashtags || "#Buzsu").trim() };
 }
 
+// OpenAI'da strict json_schema zorlaması kullanılır — model alan/adları
+// uyduramaz, JSON parse hatası riski ortadan kalkar (bkz. buzsu-growth-os
+// content-studio'daki aynı desen). Gemini'nin json_schema desteği bu kadar
+// güvenilir olmadığından o tarafta şema yine prompt içinde tarif edilir —
+// bu, önceki davranışla aynı güvenilirlik seviyesidir, gerileme yok.
+const SEO_ARTICLE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    title: { type: "string" },
+    metaDescription: { type: "string" },
+    intro: { type: "string" },
+    sections: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: { heading: { type: "string" }, body: { type: "string" } },
+        required: ["heading", "body"],
+      },
+    },
+    faq: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: { question: { type: "string" }, answer: { type: "string" } },
+        required: ["question", "answer"],
+      },
+    },
+    ctaSentence: { type: "string" },
+  },
+  required: ["title", "metaDescription", "intro", "sections", "faq", "ctaSentence"],
+};
+
 function seoArticlePrompt(product, topic, context) {
   const grounding = context
     ? `Ürün hakkında buzsu.com.tr'den alınan gerçek bilgi:\n"""\n${context}\n"""\n\nYazıyı bu gerçek bilgiye dayandır, uydurma teknik özellik/iddia ekleme.`
     : `Ürün hakkında ek bilgi bulunamadı; yalnızca ürün adına ve genel bilgiye dayanarak yaz, uydurma teknik özellik ekleme.`;
   const focusTopic = String(topic || "").trim() || product.title;
+  const productUrl = String(product.url || "").trim();
+  const linkInstruction = productUrl
+    ? `"ctaSentence" buzsu.com.tr'ye kısa bir yönlendirme yapsın ve mutlaka şu tam ürün bağlantısını düz metin olarak içersin (LinkedIn/Facebook gibi platformlar düz metindeki linki yapıştırınca otomatik tıklanabilir hale getirir): ${productUrl}`
+    : `"ctaSentence" kısa bir çağrıyla buzsu.com.tr'ye yönlendirsin (link ekleme, sadece cümle).`;
   return `Buzsu (buzsu.com.tr, su arıtma ürünleri) için "${focusTopic}" konulu bir SEO/GEO makalesi yaz. Konu, "${product.title}" ürünüyle ilgili.
 
 ${grounding}
 
 Bu yazı hem geleneksel Google aramasında hem de ChatGPT, Gemini, Perplexity gibi yapay zeka arama/cevap motorlarında (GEO/AEO) doğru anlaşılıp alıntılanmalı. Şu kurallara uy:
-- İlk paragraf, konunun DOĞRUDAN ve net cevabını/tanımını versin — AI'ların tek başına alıntılayabileceği kısa, öz bir açılış cümlesiyle başla.
-- Ardından 2-4 kısa alt başlık altında konuyu açıkla (nasıl çalıştığı, kimin için uygun olduğu, dikkat edilmesi gerekenler gibi). Alt başlıkları "## " ile işaretle.
-- Yazının sonunda "## Sıkça Sorulan Sorular" başlığı altında 2-3 soru-cevap olsun; her cevap 1-2 cümle, net ve doğrudan olsun (AI cevap motorlarının kolayca alıntılayabileceği formatta). Soruları "**Soru?**" şeklinde kalın yaz.
-- Ne çok uzun (blog makalesi gibi) ne çok kısa (birkaç cümle) olsun; toplam 250-400 kelime arası, sade ve net Türkçe cümleler kullan.
+- "intro" alanı, konunun DOĞRUDAN ve net cevabını/tanımını versin — AI'ların tek başına alıntılayabileceği kısa, öz bir açılış paragrafı olsun.
+- "sections" alanında 2-4 kısa bölüm olsun (nasıl çalıştığı, kimin için uygun olduğu, dikkat edilmesi gerekenler gibi); her bölümün kısa bir "heading"i ve 1-2 paragraflık "body"si olsun.
+- "faq" alanında 2-3 soru-cevap olsun; her cevap 1-2 cümle, net ve doğrudan olsun (AI cevap motorlarının kolayca alıntılayabileceği formatta).
+- "metaDescription" 150-160 karakter civarında, arama sonucunda gösterilecek özet bir cümle olsun.
+- Toplam metin (intro+sections+faq) ne çok uzun (blog makalesi gibi) ne çok kısa (birkaç cümle) olsun; 250-400 kelime arası, sade ve net Türkçe cümleler kullan.
 - Sağlık, tedavi, kesin sonuç, garanti gibi kanıtsız iddialar veya "en iyi" gibi abartılı üstünlük ifadeleri kullanma.
 - Doğal biçimde anahtar kelime kullan ama kelime tekrarına/doldurmaya (keyword stuffing) kaçma.
-- Yazının sonuna kısa bir çağrı cümlesiyle buzsu.com.tr'ye yönlendirme yap (link ekleme, sadece cümle).
+- ${linkInstruction}
 
-Çıktıyı yalnızca şu JSON şemasına göre ver: {"title":"SEO başlığı (60 karakter civarı)","body":"tam yazı metni (paragraflar/başlıklar arasında çift satır boşluğu ile)"}`;
+Çıktıyı yalnızca istenen JSON şemasına göre ver.`;
+}
+
+// Prompt tek başına güvenlik değildir; model kurala rağmen yasaklı bir iddia
+// üretebilir. Bu ucuz anahtar kelime taraması ikinci bir güvenlik ağıdır —
+// içeriği ENGELLEMEZ, sadece panelde uyarı olarak işaretler (son kontrol
+// kopyala-yapıştır öncesi insanda kalır).
+const SEO_RISK_PATTERNS = [
+  /en iyi/i,
+  /kesin (sonuç|çözüm)/i,
+  /garanti (eder|ediyor|veriyoruz)/i,
+  /%\s?100/,
+  /tedavi eder/i,
+  /hastalığ\w*\s+(iyileştir|tedavi|geçir)/i,
+  /bilimsel olarak kanıtlanmış/i,
+];
+
+function scanSeoArticleWarnings(text) {
+  const hits = new Set();
+  for (const pattern of SEO_RISK_PATTERNS) {
+    const match = text.match(pattern);
+    if (match) hits.add(match[0]);
+  }
+  return [...hits];
+}
+
+function composeSeoBody({ intro, sections, faq, ctaSentence }) {
+  const sectionsText = (sections || []).map((s) => `## ${s.heading}\n\n${s.body}`).join("\n\n");
+  const faqText = (faq || []).length
+    ? `## Sıkça Sorulan Sorular\n\n${faq.map((f) => `**${f.question}**\n\n${f.answer}`).join("\n\n")}`
+    : "";
+  return [intro, sectionsText, faqText, ctaSentence].filter(Boolean).join("\n\n");
 }
 
 // LinkedIn, Medium, Reddit gibi platformlara ve Facebook'a kopyala-yapıştır
@@ -221,7 +292,7 @@ export async function generateSeoArticle(provider, product, topic, env = process
   const input = seoArticlePrompt(product, topic, context);
   let raw;
   if (provider === "openai") {
-    const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${openaiTextApiKey(env)}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: env.OPENAI_SEO_MODEL || "gpt-5.6", input, store: false }) });
+    const data = await request("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${openaiTextApiKey(env)}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: env.OPENAI_SEO_MODEL || "gpt-5.6", input, store: false, text: { format: { type: "json_schema", name: "buzsu_seo_article", strict: true, schema: SEO_ARTICLE_SCHEMA } } }) });
     raw = textFromOpenAI(data);
   } else {
     const model = env.GEMINI_REEL_MODEL || "gemini-3.5-flash";
@@ -230,9 +301,11 @@ export async function generateSeoArticle(provider, product, topic, env = process
   }
   const parsed = parseJson(raw);
   const title = String(parsed.title || "").trim();
-  const body = String(parsed.body || "").trim();
+  const metaDescription = String(parsed.metaDescription || "").trim();
+  const body = composeSeoBody(parsed);
   if (!title || !body) throw new Error("AI yazı içeriği boş döndü.");
-  return { title, body, provider, product: product.title, generatedAt: new Date().toISOString() };
+  const warnings = scanSeoArticleWarnings(`${title}\n${metaDescription}\n${body}`);
+  return { title, metaDescription, body, provider, product: product.title, generatedAt: new Date().toISOString(), warnings };
 }
 
 // Composer'da kullanıcı serbest metin yazdığında (bkz. dashboard.html
