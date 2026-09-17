@@ -4,7 +4,7 @@ import { availableProviders, generateScenePlan, generateCaption, generateMotionP
 import { INSTALLATION_CONTEXTS } from "../src/lib/product-installation-context.js";
 
 test("AI provider availability is derived from configured keys", () => {
-  assert.deepEqual(availableProviders({ OPENAI_API_KEY: "x", ANTHROPIC_API_KEY: "", GEMINI_API_KEY: "y" }), ["openai", "gemini", "veo"]);
+  assert.deepEqual(availableProviders({ OPENAI_API_KEY: "x", ANTHROPIC_API_KEY: "", GEMINI_API_KEY: "y" }), ["openai", "gemini", "veo", "omni"]);
   assert.deepEqual(availableProviders({ FAL_KEY: "fal-test" }), ["fal"]);
 });
 

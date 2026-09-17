@@ -4,6 +4,7 @@ import { availableProviders, generateReelPackage, generateMotionPlan } from "../
 import { availableSceneProviders } from "../src/scene-image.js";
 import { submitFalVideo, MAX_FAL_PROMPT_LENGTH } from "../src/fal-video.js";
 import { submitVeoVideo } from "../src/veo-video.js";
+import { submitOmniVideoGeneration } from "../src/omni-video.js";
 import { baseProductTitle } from "../src/lib/product-title.js";
 import { buildVideoPromptSections, renderVideoPrompt, hashVideoPrompt } from "../src/lib/video-prompt.js";
 import { findCatalogProduct, isCatalogProductId } from "../src/lib/product-catalog.js";
@@ -42,7 +43,7 @@ export default async function handler(request, response) {
     // promptun birebir aynı olmasını garanti eden bir snapshot (promptId)
     // üretir. Provider'dan bağımsızdır — ikisi de aynı promptu kullanır.
     if (body.action === "preview") {
-      if (body.provider !== "fal" && body.provider !== "veo") return response.status(400).json({ error: "Önizleme yalnızca fal.ai veya Veo için kullanılabilir." });
+      if (body.provider !== "fal" && body.provider !== "veo" && body.provider !== "omni") return response.status(400).json({ error: "Önizleme yalnızca fal.ai, Veo veya Omni için kullanılabilir." });
       const previewProduct = await resolveProduct(body.productId);
       if (!previewProduct) return response.status(400).json({ error: "Ürün bulunamadı." });
       const title = previewProduct.title;
@@ -95,25 +96,34 @@ export default async function handler(request, response) {
     if (!imageUrl) return response.status(400).json({ error: "Ürün görseli eksik — önce üstte bir AI sahne görseli üretip \"Sahneyi baz alarak video üret\" kutusunu işaretleyin." });
     const product = { title: resolvedProduct.title, url: resolvedProduct.url, imageUrl };
 
-    if (body.provider === "fal" || body.provider === "veo") {
+    if (body.provider === "fal" || body.provider === "veo" || body.provider === "omni") {
       // Video üretimi her zaman önce "preview" ile kurulmuş bir snapshot
       // gerektirir; prompt burada YENİDEN KURULMAZ, sadece hash doğrulanıp
-      // olduğu gibi provider'a gönderilir — provider değişse (fal↔veo) bile
-      // aynı finalizedPrompt kullanılır, AI ile yeniden üretilmez.
+      // olduğu gibi provider'a gönderilir — provider değişse (fal↔veo↔omni)
+      // bile aynı finalizedPrompt kullanılır, AI ile yeniden üretilmez.
       const finalizedPrompt = typeof body.finalizedPrompt === "string" ? body.finalizedPrompt.trim() : "";
       const promptId = typeof body.promptId === "string" ? body.promptId : "";
       if (!finalizedPrompt || !promptId) return response.status(400).json({ error: "Önce \"Video promptunu önizle\" ile bir prompt oluşturun." });
       if (hashVideoPrompt(finalizedPrompt) !== promptId) return response.status(400).json({ error: "Prompt değişmiş görünüyor — lütfen tekrar önizleyin." });
-      // Model/tier seçimi YALNIZCA Veo için anlamlı (fal.ai'de tier kavramı
-      // yok) — dashboard #veo-model-tier alanından body.model olarak
+      // Model/tier seçimi YALNIZCA Veo için anlamlı (fal.ai'de/Omni'de tier
+      // kavramı yok) — dashboard #veo-model-tier alanından body.model olarak
       // gönderiyor; body.profile aynı alanın bir eşanlamlısı olarak da
       // kabul edilir. Bu, prompt hash'ine (promptId) hiç dahil değil —
       // model değişmesi promptun kendisini değiştirmiyor, o yüzden hash
-      // doğrulaması yukarıda değişmeden kalıyor.
+      // doğrulaması yukarıda değişmeden kalıyor. Provider seçildiyse ASLA
+      // başka bir provider'a sessizce geçilmez (fal/veo/omni birbirinden
+      // tamamen ayrı çağrılır) — bu if/else zinciri buna göre yazıldı.
       const modelOverride = body.provider === "veo" ? (body.model || body.profile) : undefined;
+      // Omni'nin confirmed:true zorunluluğu (bkz. src/omni-video.js) burada
+      // sabit true'dur — bu satıra ulaşılması, kullanıcının dashboard'daki
+      // iki tıklamalı "Emin misin?" onayını (fal/veo ile AYNI UX) zaten
+      // geçtiği anlamına gelir; MCP tarafında ise generate_gemini_video
+      // kendi confirmed kontrolünü çağırandan (args.confirmed) okur.
       const job = body.provider === "fal"
         ? await submitFalVideo(product, process.env, { finalizedPrompt })
-        : await submitVeoVideo(product, process.env, { finalizedPrompt, model: modelOverride });
+        : body.provider === "veo"
+          ? await submitVeoVideo(product, process.env, { finalizedPrompt, model: modelOverride })
+          : await submitOmniVideoGeneration(finalizedPrompt, process.env, { referenceImageUrl: imageUrl, confirmed: true });
       console.log(JSON.stringify({ event: "video-prompt-sent", promptId, provider: body.provider, model: job.model, productId: body.productId, at: new Date().toISOString() }));
       return response.status(200).json({ ok: true, [body.provider]: job });
     }

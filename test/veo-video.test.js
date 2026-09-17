@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { veoModel, resolveVeoModel, submitVeoVideo, veoVideoStatus, VeoApiError, VEO_MODEL_TIERS } from "../src/veo-video.js";
+import { veoModel, resolveVeoModel, submitVeoVideo, veoVideoStatus, VeoApiError, VEO_MODEL_TIERS, VEO_TIER_ALIASES } from "../src/veo-video.js";
 import { MAX_FAL_PROMPT_LENGTH } from "../src/fal-video.js";
 
 test("resolveVeoModel with no input and no env config defaults to economy (Lite) — NOT fast, since Fast's daily quota is the reported problem", () => {
@@ -42,6 +42,24 @@ test("resolveVeoModel: an explicit \"auto\" at any layer defers to the next laye
 
 test("resolveVeoModel rejects an unknown tier/model name, listing the valid options", () => {
   assert.throws(() => resolveVeoModel("bogus-model", {}), /auto, economy, fast, quality/);
+});
+
+// HEDEF 2/3: kullanıcı dostu, açık model adları ("veo-lite"/"veo-fast"/
+// "veo-generate") tier adlarının BİREBİR eşanlamlısı olmalı — mevcut tier
+// adları/ham model ID'leri KIRILMADAN, sadece ek bir yol olarak.
+test("resolveVeoModel accepts the clean 'veo-lite'/'veo-fast'/'veo-generate' aliases as exact synonyms of economy/fast/quality", () => {
+  assert.equal(resolveVeoModel("veo-lite", {}), VEO_MODEL_TIERS.economy);
+  assert.equal(resolveVeoModel("veo-fast", {}), VEO_MODEL_TIERS.fast);
+  assert.equal(resolveVeoModel("veo-generate", {}), VEO_MODEL_TIERS.quality);
+  assert.deepEqual(VEO_TIER_ALIASES, { "veo-lite": "economy", "veo-fast": "fast", "veo-generate": "quality" });
+});
+
+// Sessiz fallback YOK: seçilen model/tier geçersizse (ör. bir yazım hatası
+// veya erişimi olmayan bir model) HEMEN hata fırlatılır — asla başka bir
+// tier'a (örn. economy) sessizce düşülmez.
+test("resolveVeoModel never silently falls back to another tier when an invalid model/tier is explicitly given", () => {
+  assert.throws(() => resolveVeoModel("veo-3-generate", {}), /Desteklenmeyen Veo/);
+  assert.throws(() => resolveVeoModel("Veo-Fast", {}), /Desteklenmeyen Veo/);
 });
 
 test("resolveVeoModel rejects an unknown VEO_VIDEO_MODEL env value the same way", () => {

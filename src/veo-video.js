@@ -26,6 +26,17 @@ function tierForModel(model) {
   return VEO_TIER_ORDER.find((tier) => VEO_MODEL_TIERS[tier] === model) || null;
 }
 
+// Temiz/açık isimler — "economy"/"fast"/"quality" tier adlarının BİREBİR
+// eşanlamlısı, dashboard/MCP çağıranların "veo-lite"/"veo-fast"/
+// "veo-generate" gibi model adına daha yakın bir isim kullanmak istemesi
+// için (bkz. resolveVeoModel). Yalnızca EKLEME — mevcut tier adları/ham
+// model ID'leri hâlâ birebir aynı şekilde çalışır, hiçbiri kaldırılmadı.
+export const VEO_TIER_ALIASES = {
+  "veo-lite": "economy",
+  "veo-fast": "fast",
+  "veo-generate": "quality"
+};
+
 // 429 sonrası önerilecek diğer modeller — başarısız olan HARİÇ, ucuzdan
 // pahalıya. Hiçbir zaman otomatik olarak bu modellerden biri çağrılmaz;
 // yalnızca bilgi amaçlıdır (bkz. VeoApiError.alternatives) — kullanıcı
@@ -168,9 +179,10 @@ export function resolveVeoModel(modelOrProfile, env = process.env) {
   for (const candidate of chain) {
     if (!candidate) continue;
     if (candidate === "auto") continue;
+    if (VEO_TIER_ALIASES[candidate]) return VEO_MODEL_TIERS[VEO_TIER_ALIASES[candidate]];
     if (VEO_MODEL_TIERS[candidate]) return VEO_MODEL_TIERS[candidate];
     if (VEO_ALLOWED_MODELS.has(candidate)) return candidate;
-    throw new Error(`Desteklenmeyen Veo modeli/tier'ı: "${candidate}". Kullanılabilir: auto, economy, fast, quality, ${[...VEO_ALLOWED_MODELS].join(", ")}.`);
+    throw new Error(`Desteklenmeyen Veo modeli/tier'ı: "${candidate}". Kullanılabilir: auto, economy, fast, quality, ${Object.keys(VEO_TIER_ALIASES).join(", ")}, ${[...VEO_ALLOWED_MODELS].join(", ")}.`);
   }
   return VEO_MODEL_TIERS.economy;
 }

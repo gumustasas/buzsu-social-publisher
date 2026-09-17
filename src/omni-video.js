@@ -305,6 +305,58 @@ export async function submitOmniVideoEdit(existingVideoUrl, env = process.env, {
   };
 }
 
+// prompt (+ isteğe bağlı referenceImageUrl): mevcut bir video GEREKMEDEN,
+// sıfırdan (zero-shot) yeni bir video üretir — submitOmniVideoEdit'in
+// existingVideoUrl zorunluluğu burada YOK. Google'ın resmi Gemini API
+// dokümantasyonu (ai.google.dev/gemini-api/docs/omni), Interactions API'nin
+// gemini-omni-1.1-flash ile metin/görselden sıfırdan video üretimini de
+// desteklediğini doğruluyor — bu fonksiyon submitOmniVideoEdit'in AYNI
+// input-dizisi/response_format şeklini, yalnızca "video" parçası olmadan
+// kullanır. Süre (duration) için dokümante edilmiş bir parametre yok — bu
+// yüzden burada UYDURULMAZ, modelin kendi varsayılanına bırakılır.
+//
+// confirmed !== true ise HİÇBİR ağ isteği atılmadan reddedilir (submitOmniVideoEdit
+// ile aynı savunma amaçlı kural — bkz. aşağıdaki satır).
+export async function submitOmniVideoGeneration(prompt, env = process.env, { referenceImageUrl, aspectRatio = "9:16", resolution = "360p", confirmed } = {}) {
+  if (confirmed !== true) throw new Error("Omni video üretimi onay (confirmed:true) gerektirir — ücretli bir işlemdir.");
+  if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY Vercel Production ortamında tanımlı değil.");
+  const trimmedPrompt = String(prompt || "").trim();
+  if (!trimmedPrompt) throw new Error("Omni video üretimi için bir prompt gerekli.");
+  const allowedResolutions = new Set(["360p", "720p", "1080p", "4k"]);
+  if (!allowedResolutions.has(resolution)) throw new Error(`Desteklenmeyen Omni çözünürlüğü: "${resolution}". Kullanılabilir: ${[...allowedResolutions].join(", ")}.`);
+
+  const input = [];
+  if (typeof referenceImageUrl === "string" && /^https:\/\//i.test(referenceImageUrl)) {
+    const image = await uploadPublicUrlToOmniFiles(referenceImageUrl, "Referans ürün görseli", env);
+    input.push({ type: "image", uri: image.uri, mime_type: image.mimeType });
+  }
+  input.push({ type: "text", text: trimmedPrompt });
+
+  const response = await fetch(`${API_BASE}/interactions`, {
+    method: "POST",
+    headers: omniHeaders(env),
+    body: JSON.stringify({
+      model: OMNI_MODEL,
+      input,
+      response_format: { type: "video", delivery: "uri", aspect_ratio: aspectRatio, resolution }
+    })
+  });
+  const data = await readOmniJson(response, { model: OMNI_MODEL });
+  const interactionId = normalizeInteractionId(data.id || data.name);
+  if (!interactionId) throw new Error("Omni interaction id alınamadı.");
+  const output = extractOmniVideoOutput(data);
+  const resolved = await resolveOmniOutput(output, env);
+  return {
+    provider: "omni",
+    model: OMNI_MODEL,
+    interactionId,
+    ...resolved,
+    prompt: trimmedPrompt,
+    referenceImageUrl: typeof referenceImageUrl === "string" ? referenceImageUrl : null,
+    createdAt: new Date().toISOString()
+  };
+}
+
 // job.outputFileId set edilmişse (bir önceki adımda model_output zaten bir
 // uri üretmiş ama dosya henüz ACTIVE değilmiş), GET /interactions/{id}'ye
 // HİÇ gidilmez — doğrudan Files API'den (GET /v1beta/files/{id}) dosyanın

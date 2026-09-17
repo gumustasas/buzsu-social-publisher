@@ -508,6 +508,90 @@ aynı `GEMINI_API_KEY`'i kullanır — ayrı bir hesap/anahtar gerekmez.
   fonksiyonda yapılır. **İlk gerçek (ücretli, 360p) deneme öncesinde bu alan
   adlarının resmi dokümandan teyit edilmesi önerilir.**
 
+## Google video sağlayıcıları — Omni sıfırdan üretim, Veo model routing, capability endpoint
+
+Bu bölüm yalnızca **Google** video sağlayıcılarını (Omni + Veo 3.1 ailesi)
+kapsar; OpenAI/fal.ai'ye dokunmaz.
+
+**Omni ile sıfırdan (zero-shot) video üretimi** — `generate_gemini_video` /
+`get_gemini_video_status` (MCP), dashboard'da "AI Reels" bölümünde "Google
+Gemini Omni 1.1 Flash" sağlayıcısı olarak. `generate_omni_video_edit`
+(mevcut bir videoyu düzeltme) ile **tamamen ayrı, birbirini kırmayan** bir
+akıştır — ikisi de aynı Interactions API'yi (`src/omni-video.js`) paylaşır,
+tek fark input dizisinde bir `{type:"video",...}` parçası olup olmaması.
+Sıfırdan üretimde `existingVideoUrl` YOKTUR — yalnızca bir `prompt` (+
+isteğe bağlı `referenceImageUrl`) gerekir. Durum sorgusu
+(`get_gemini_video_status`) `get_omni_video_status` ile **aynı** mekanizmayı
+(`omniInteractionStatus`) kullanır; iki ayrı MCP tool adı sadece hangi akıştan
+başlatıldığını netleştirmek içindir. Dokümante edilmiş bir süre (duration)
+parametresi yoktur — uydurulmadı, modelin varsayılanına bırakıldı.
+
+**Veo 3.1 model routing** — `generate_video_clip`'in `model` alanı artık
+tier adlarının (`economy`/`fast`/`quality`/`auto`) yanında temiz eşanlamlı
+adları da kabul eder: `veo-lite`→`economy`, `veo-fast`→`fast`,
+`veo-generate`→`quality` (bkz. `src/veo-video.js:VEO_TIER_ALIASES`). Bunlar
+**birebir eşanlamlıdır**, ayrı bir davranış eklemez — yukarıdaki "Google Veo
+model seçimi" bölümündeki öncelik zinciri, 429 hata yapısı ve "hiçbir zaman
+otomatik model değişimi yok" kuralı değişmeden geçerlidir.
+
+**Fallback politikası (tüm Google video sağlayıcıları için)**: bir provider/
+model seçildiyse **başka bir provider veya modele ASLA sessizce geçilmez**.
+Omni 429/`REGION_UNAVAILABLE` verirse Veo'ya, Veo bir tier'de 429 verirse
+başka bir tier'e otomatik geçilmez — kullanıcı/çağıran taraf açıkça yeni bir
+provider/model seçip `confirmed:true` ile tekrar denemelidir.
+
+**`confirmed:true` kuralı**: Omni'nin (`submitOmniVideoEdit` ve
+`submitOmniVideoGeneration`) her ikisi de `confirmed:true` olmadan **hiçbir
+ağ isteği atmadan** reddeder — bu kontrol fonksiyonun kendi içinde, çağıran
+katmandan (MCP/dashboard) bağımsız bir savunma satırıdır. Veo'da bu kontrol
+çağıran katmanda yapılır (MCP: `args.confirmed !== true` → hata; dashboard:
+iki tıklamalı "Emin misin?" onayı) — `submitVeoVideo`'nun kendisi bir
+`confirmed` parametresi almaz, ama her iki üretim yolu da paralı bir isteği
+asla onaysız başlatmaz.
+
+**Capability/discovery endpoint** — `GET /api/video-provider-capabilities`
+(oturum açmış kullanıcı gerektirir, bkz. `src/auth.js:getSession`).
+`GEMINI_API_KEY` varsa **gerçek** bir `GET /v1beta/models` discovery isteği
+atılır (ücretsiz — bu bir üretim/generation çağrısı değildir); Google'ın o
+hesap için listelediği modellerle Omni/Veo'nun gerçekten erişilebilir olup
+olmadığı karşılaştırılır. Discovery isteği herhangi bir sebeple (ağ, geçici
+hata) başarısız olursa capability sessizce "unavailable" göstermez — bu
+durumda yalnızca anahtar varlığına düşülür (bkz.
+`src/lib/video-provider-capabilities.js`). Yanıt **hiçbir zaman** API key/
+secret/token içermez — yalnızca `available`/`models` alanları döner:
+```jsonc
+{
+  "ok": true,
+  "google": {
+    "omni": { "available": true, "models": ["gemini-omni-1.1-flash"] },
+    "veo": { "available": true, "models": ["veo-3.1-lite-generate-preview", "veo-3.1-fast-generate-preview", "veo-3.1-generate-preview"] }
+  },
+  "fal": { "available": true }
+}
+```
+Dashboard bu uç noktayı sayfa yüklenirken çağırır ve erişilemeyen seçenekleri
+(`#reel-provider`'daki "omni", `#veo-model-tier`'daki tier'lar) devre dışı
+bırakıp " — kullanılamıyor" etiketiyle işaretler; uç nokta henüz deploy
+edilmemişse veya hata dönerse sessizce yok sayılır, seçenekler
+`availableProviders()`'ın (anahtar varlığına dayalı) filtrelediği hâliyle
+kalır.
+
+**Hangi model hangi kullanım için uygun**:
+
+| Sağlayıcı/model | Ne için uygun |
+| --- | --- |
+| Omni (`gemini-omni-1.1-flash`) | Esnek video üretimi (sıfırdan veya mevcut videoyu düzeltme) — tier kavramı yok, tek model |
+| Veo 3.1 Lite (`veo-lite`/`economy`) | En ekonomik seçenek, yüksek hacimli deneme |
+| Veo 3.1 Fast (`veo-fast`/`fast`) | Hızlı denemeler, orta maliyet |
+| Veo 3.1 Generate (`veo-generate`/`quality`) | Daha kaliteli final denemeleri, en pahalı/yavaş |
+
+> **Not — "Veo 3" vs "Veo 3.1":** Bu depoda entegre olan model ailesi
+> Google'ın güncel **Veo 3.1** önizleme modelleridir
+> (`veo-3.1-*-generate-preview`); eski "Veo 3" model ID'leri Google
+> tarafından kullanımdan kaldırılıyor. "Veo 3 Fast/Generate/Lite" gibi
+> günlük isimler burada Veo 3.1'in aynı üç tier'ına (Fast/Generate/Lite)
+> karşılık gelir — ayrı, daha eski bir model ailesi DEĞİLDİR.
+
 ## AI Reels V2 — Creative Provider abstraction + model registry (src/creative-providers/)
 
 AI Reels V2 mimarisinin ikinci aşaması (PR-B): `generate_reel_script` (henüz

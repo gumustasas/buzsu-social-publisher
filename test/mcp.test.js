@@ -419,6 +419,124 @@ test("get_omni_video_status: outputFileId verilirse yalnızca Files API'yi sorgu
   }
 });
 
+// generate_gemini_video: submitOmniVideoGeneration'ın AYNI confirmed:true
+// kuralı, MCP tool seviyesinde de zorunlu (generate_omni_video_edit'in
+// yukarıdaki testiyle aynı desen).
+test("generate_gemini_video confirmed:false ile hiçbir ağ isteği atmadan reddeder", async () => {
+  const originalFetch = global.fetch;
+  let calls = 0;
+  global.fetch = async () => { calls++; throw new Error("fetch should not be called without confirmed:true"); };
+  try {
+    await assert.rejects(
+      () => callTool("generate_gemini_video", { prompt: "bir sahne", confirmed: false }),
+      /confirmed:true/
+    );
+    assert.equal(calls, 0);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// "selected model omni -> yalnız Omni akışı çağrılır": generate_gemini_video
+// SADECE /v1beta/interactions'a gider — Veo'nun :predictLongRunning
+// endpoint'ine veya fal.ai'ye ASLA istek atmaz.
+test("generate_gemini_video only calls the Omni Interactions API, never Veo or fal.ai, and returns the model name explicitly", async () => {
+  const originalFetch = global.fetch;
+  const calledUrls = [];
+  global.fetch = async (url) => {
+    calledUrls.push(String(url));
+    return { ok: true, json: async () => ({ id: "v1_gen_mcp", steps: [{ type: "model_output", content: [{ type: "video", uri: "https://generativelanguage.googleapis.com/v1beta/files/out1:download?alt=media", mime_type: "video/mp4" }] }] }) };
+  };
+  try {
+    const text = await callTool("generate_gemini_video", { prompt: "mutfakta su içen bir aile", confirmed: true });
+    const parsed = JSON.parse(text);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.model, "gemini-omni-1.1-flash");
+    assert.equal(parsed.interactionId, "v1_gen_mcp");
+    assert.ok(calledUrls.every((u) => u.includes("generativelanguage.googleapis.com")));
+    assert.ok(!calledUrls.some((u) => u.includes("predictLongRunning")));
+    assert.ok(!calledUrls.some((u) => u.includes("fal.run")));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("get_gemini_video_status: outputFileId verilirse yalnızca Files API'yi sorgular (get_omni_video_status ile aynı mekanizma)", async () => {
+  const originalFetch = global.fetch;
+  let requestedUrl = null;
+  global.fetch = async (url) => {
+    requestedUrl = String(url);
+    return { ok: true, json: async () => ({ name: "files/out789", state: "PROCESSING" }) };
+  };
+  try {
+    const text = await callTool("get_gemini_video_status", { interactionId: "v1_gen_mcp", outputFileId: "out789", model: "gemini-omni-1.1-flash" });
+    assert.equal(requestedUrl, "https://generativelanguage.googleapis.com/v1beta/files/out789");
+    const parsed = JSON.parse(text);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.status, "OUTPUT_PROCESSING");
+    assert.equal(parsed.outputFileId, "out789");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// HEDEF 2/3/7: "seçilen model X -> yalnız X çağrılır, sessiz fallback yok".
+// Her tier/alias, :predictLongRunning URL'inde TAM OLARAK kendi model ID'sini
+// taşıyor mu diye doğrular; başka bir model asla denenmez.
+for (const [label, requestedModel, expectedModelId] of [
+  ["veo-lite alias", "veo-lite", "veo-3.1-lite-generate-preview"],
+  ["veo-fast alias", "veo-fast", "veo-3.1-fast-generate-preview"],
+  ["veo-generate alias", "veo-generate", "veo-3.1-generate-preview"],
+  ["economy tier name", "economy", "veo-3.1-lite-generate-preview"],
+  ["fast tier name", "fast", "veo-3.1-fast-generate-preview"],
+  ["quality tier name", "quality", "veo-3.1-generate-preview"]
+]) {
+  test(`generate_video_clip with model:"${requestedModel}" (${label}) calls exactly ${expectedModelId} and no other model`, async () => {
+    const originalFetch = global.fetch;
+    const calledUrls = [];
+    global.fetch = async (url, options) => {
+      const href = String(url);
+      calledUrls.push(href);
+      if (!options) return { ok: true, headers: { get: () => "image/jpeg" }, arrayBuffer: async () => new Uint8Array([1]).buffer };
+      return { ok: true, json: async () => ({ name: "operations/op1" }) };
+    };
+    try {
+      const text = await callTool("generate_video_clip", { imageUrl: "https://example.com/x.jpg", prompt: "p", confirmed: true, model: requestedModel });
+      const parsed = JSON.parse(text);
+      assert.equal(parsed.model, expectedModelId);
+      const predictCalls = calledUrls.filter((u) => u.includes(":predictLongRunning"));
+      assert.equal(predictCalls.length, 1);
+      assert.ok(predictCalls[0].includes(`/models/${expectedModelId}:predictLongRunning`));
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+}
+
+// Seçilen model başarısız olursa (429/kota) başka bir modele (örn. economy)
+// ASLA otomatik geçilmez — tek bir çağrı yapılır, hata olduğu gibi
+// (alternatives bilgi amaçlı) döner.
+test("generate_video_clip does not silently retry with a different model when the selected one fails", async () => {
+  const originalFetch = global.fetch;
+  const predictModelUrls = [];
+  global.fetch = async (url, options) => {
+    const href = String(url);
+    if (!options) return { ok: true, headers: { get: () => "image/jpeg" }, arrayBuffer: async () => new Uint8Array([1]).buffer };
+    if (href.includes(":predictLongRunning")) {
+      predictModelUrls.push(href);
+      return { ok: false, status: 429, headers: { get: () => null }, json: async () => ({ error: { message: "quota exceeded", status: "RESOURCE_EXHAUSTED", details: [] } }) };
+    }
+    throw new Error(`Beklenmeyen fetch: ${href}`);
+  };
+  try {
+    await assert.rejects(() => callTool("generate_video_clip", { imageUrl: "https://example.com/x.jpg", prompt: "p", confirmed: true, model: "veo-generate" }));
+    assert.equal(predictModelUrls.length, 1);
+    assert.ok(predictModelUrls[0].includes("/models/veo-3.1-generate-preview:predictLongRunning"));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 // BLOB_READ_WRITE_TOKEN gerektiren gerçek Blob upload akışı burada
 // KASITLI olarak test edilmiyor — bu depodaki hiçbir test @vercel/blob'un
 // put() fonksiyonunu mock'lamıyor (modül mock altyapısı yok); bir token

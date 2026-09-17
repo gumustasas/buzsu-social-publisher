@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { submitOmniVideoEdit, omniInteractionStatus, downloadOmniVideo, waitForOmniFileActive, OmniApiError, OMNI_MODEL } from "../src/omni-video.js";
+import { submitOmniVideoEdit, submitOmniVideoGeneration, omniInteractionStatus, downloadOmniVideo, waitForOmniFileActive, OmniApiError, OMNI_MODEL } from "../src/omni-video.js";
 
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const OUTPUT_FILE_ID = "out789";
@@ -529,6 +529,96 @@ test("downloadOmniVideo fetches the exact canonical :download?alt=media URL it i
   try {
     await downloadOmniVideo(OUTPUT_URI, { GEMINI_API_KEY: "test" });
     assert.equal(requestedUrl, OUTPUT_URI);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// submitOmniVideoGeneration: submitOmniVideoEdit'in AYNI confirmed:true
+// savunma kuralını, existingVideoUrl OLMADAN (sıfırdan/zero-shot üretim)
+// paylaşır.
+test("submitOmniVideoGeneration rejects without confirmed:true, before any network call", async () => {
+  const originalFetch = global.fetch;
+  let calls = 0;
+  global.fetch = async () => { calls++; throw new Error("fetch should not be called without confirmed:true"); };
+  try {
+    await assert.rejects(
+      () => submitOmniVideoGeneration("bir su arıtma cihazının mutfakta göründüğü sahne", { GEMINI_API_KEY: "test" }, {}),
+      /confirmed:true/
+    );
+    assert.equal(calls, 0);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("submitOmniVideoGeneration rejects when GEMINI_API_KEY is missing", async () => {
+  await assert.rejects(
+    () => submitOmniVideoGeneration("sahne açıklaması", {}, { confirmed: true }),
+    /GEMINI_API_KEY/
+  );
+});
+
+test("submitOmniVideoGeneration rejects an empty prompt", async () => {
+  await assert.rejects(
+    () => submitOmniVideoGeneration("   ", { GEMINI_API_KEY: "test" }, { confirmed: true }),
+    /prompt/
+  );
+});
+
+// Zero-shot üretimde existingVideoUrl YOK — input dizisinde ASLA
+// {type:"video",...} parçası olmamalı (yalnızca isteğe bağlı görsel + text).
+// Referans görsel verilirse Files API'ye yüklenip {type:"image"} olarak
+// eklenmeli.
+test("submitOmniVideoGeneration sends only image+text parts (no video part) to /v1beta/interactions, and returns interactionId/model/prompt", async () => {
+  const originalFetch = global.fetch;
+  let capturedBody = null;
+  global.fetch = async (url, options) => {
+    const href = String(url);
+    if (!options && href.startsWith("https://example.com/image")) return { ok: true, headers: { get: () => "image/jpeg" }, arrayBuffer: async () => new Uint8Array([4, 5, 6]).buffer };
+    if (href.includes("/upload/v1beta/files") && options?.headers?.["X-Goog-Upload-Command"] === "start") return { ok: true, headers: { get: (name) => (name === "x-goog-upload-url" ? "https://example.com/upload-session" : null) } };
+    if (href === "https://example.com/upload-session") return { ok: true, json: async () => ({ file: { uri: "https://example.com/files/abc123", name: "files/abc123", mimeType: "image/jpeg" } }) };
+    if (href.includes("/v1beta/files/abc123")) return { ok: true, json: async () => ({ name: "files/abc123", uri: "https://example.com/files/abc123", mimeType: "image/jpeg", state: "ACTIVE" }) };
+    if (href === `${API_BASE}/files/${OUTPUT_FILE_ID}`) return { ok: true, json: async () => ({ name: `files/${OUTPUT_FILE_ID}`, state: "ACTIVE" }) };
+    if (href.endsWith("/v1beta/interactions")) {
+      capturedBody = JSON.parse(options.body);
+      return { ok: true, json: async () => ({ id: "v1_gen1", steps: [{ type: "model_output", content: [{ type: "video", uri: OUTPUT_URI, mime_type: "video/mp4" }] }] }) };
+    }
+    throw new Error(`Beklenmeyen fetch: ${href}`);
+  };
+  try {
+    const job = await submitOmniVideoGeneration("mutfakta su içen bir aile", { GEMINI_API_KEY: "test" }, {
+      referenceImageUrl: "https://example.com/image.jpg",
+      confirmed: true
+    });
+    assert.equal(capturedBody.model, OMNI_MODEL);
+    assert.deepEqual(capturedBody.input.map((part) => part.type), ["image", "text"]);
+    assert.ok(!capturedBody.input.some((part) => part.type === "video"));
+    assert.equal(capturedBody.input[1].text, "mutfakta su içen bir aile");
+    assert.equal(job.provider, "omni");
+    assert.equal(job.model, OMNI_MODEL);
+    assert.equal(job.interactionId, "v1_gen1");
+    assert.equal(job.prompt, "mutfakta su içen bir aile");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("submitOmniVideoGeneration with no referenceImageUrl sends only a text part", async () => {
+  const originalFetch = global.fetch;
+  let capturedBody = null;
+  global.fetch = async (url, options) => {
+    const href = String(url);
+    if (href === `${API_BASE}/files/${OUTPUT_FILE_ID}`) return { ok: true, json: async () => ({ name: `files/${OUTPUT_FILE_ID}`, state: "ACTIVE" }) };
+    if (href.endsWith("/v1beta/interactions")) {
+      capturedBody = JSON.parse(options.body);
+      return { ok: true, json: async () => ({ id: "v1_gen2", steps: [{ type: "model_output", content: [{ type: "video", uri: OUTPUT_URI, mime_type: "video/mp4" }] }] }) };
+    }
+    throw new Error(`Beklenmeyen fetch: ${href}`);
+  };
+  try {
+    await submitOmniVideoGeneration("sahne", { GEMINI_API_KEY: "test" }, { confirmed: true });
+    assert.deepEqual(capturedBody.input.map((part) => part.type), ["text"]);
   } finally {
     global.fetch = originalFetch;
   }
