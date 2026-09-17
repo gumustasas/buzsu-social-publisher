@@ -1,13 +1,12 @@
 import { OMNI_MODEL } from "../omni-video.js";
-import { VEO_3_1_MODEL_TIERS } from "../veo-video.js";
+import { VEO_MODEL_TIERS } from "../veo-video.js";
 
 // Google'ın Gemini API'sinde model listeleme (GET /v1beta/models) ÜCRETSİZDİR
 // — bu bir üretim/generation çağrısı DEĞİL, salt bir discovery isteğidir.
 // Bu yüzden confirmed:true kuralına tabi değildir. Anahtar yoksa veya ağ
 // isteği herhangi bir sebeple başarısız olursa (örn. bu ortamdan Google'a
 // erişim engelli) sessizce null'a düşülür — çağıran taraf bu durumda
-// aşağıdaki fallbackVeoFamilies'e geri düşer, hiçbir zaman bir hata
-// fırlatmaz.
+// "anahtar var mı" bilgisine geri düşer, hiçbir zaman bir hata fırlatmaz.
 async function listGeminiModels(env) {
   if (!env.GEMINI_API_KEY) return null;
   try {
@@ -23,56 +22,20 @@ async function listGeminiModels(env) {
   }
 }
 
-// Veo model ID'lerini AİLE (major.minor sürüm — "3.0" vs "3.1") ve TIER
-// ("generate"/"fast"/"lite") olarak sınıflandırır — sabit bir ID listesine
-// karşı eşleştirme YAPMAZ, ID'nin kendi şeklini (regex) ayrıştırır. Bu,
-// "Model ID'lerini körlemesine hard-code etme" isteğinin doğrudan karşılığı:
-// gerçek discovery'den (GET /v1beta/models) dönen HERHANGİ bir "veo-X.Y-..."
-// ID'si, kod hiçbir zaman ID'yi önceden bilmese bile doğru aile/tier'a
-// yerleşir — örn. Google ileride "veo-3.0-lite-generate-XXX" gibi
-// dokümante etmediğimiz bir ID eklerse bu otomatik olarak "3.0"/"lite"
-// altında raporlanır, kodda tek satır değişmeden.
-const VEO_ID_PATTERN = /^veo-(\d+\.\d+)-(?:(lite)-)?(?:(fast)-)?generate(?:-preview|-\d{3})?$/;
-
-function classifyVeoModelId(id) {
-  const match = VEO_ID_PATTERN.exec(String(id || ""));
-  if (!match) return null;
-  const [, version, lite, fast] = match;
-  return { version, tier: lite ? "lite" : fast ? "fast" : "generate" };
-}
-
-function emptyFamilyModels() {
-  return { generate: null, fast: null, lite: null };
-}
-
-function buildVeoFamiliesFromDiscovery(discoveredModels) {
-  const families = {};
-  for (const id of discoveredModels) {
-    const classified = classifyVeoModelId(id);
-    if (!classified) continue;
-    families[classified.version] ??= emptyFamilyModels();
-    families[classified.version][classified.tier] = id;
-  }
-  return families;
-}
-
-// Gerçek discovery imkansızsa (GEMINI_API_KEY yok VEYA GET /v1beta/models
-// isteği herhangi bir sebeple başarısız/erişilemez — örn. ağ erişimi
-// kısıtlı bir ortam): YALNIZCA Veo 3.1 (bu depoda önceden entegre/varsayılan
-// aile, bkz. src/veo-video.js:VEO_3_1_MODEL_TIERS) için anahtar varlığına
-// dayalı bir varsayım yapılır — bu, depodaki mevcut availableProviders()
-// ile AYNI, önceden var olan davranış. Veo 3 (GA) BU VARSAYIMA DAHİL
-// EDİLMEZ: hangi hesapların Veo 3 (GA)'ya erişimi olduğu hesaba göre
-// değişir (kullanıcının kendi hesabında gördüğü kota bunun kanıtı) — bu
-// yüzden gerçek discovery doğrulamadan "available" denmez, sessizce
-// unavailable kalır.
-function fallbackVeoFamilies(hasGeminiKey) {
-  if (!hasGeminiKey) return {};
-  return {
-    "3.1": { generate: VEO_3_1_MODEL_TIERS.quality, fast: VEO_3_1_MODEL_TIERS.fast, lite: VEO_3_1_MODEL_TIERS.economy }
-  };
-}
-
+// VEO_MODEL_TIERS (bkz. src/veo-video.js), Google'ın TEK AKTİF Veo ailesini
+// (Veo 3.1 Preview) temsil eder — Veo 3 (GA)'nın canonical ID'leri
+// (veo-3.0-generate-001/veo-3.0-fast-generate-001) Google tarafından 30
+// Haziran 2026'da kapatıldığı için src/veo-video.js:VEO_ALLOWED_MODELS'te
+// ARTIK YOKTUR; bu yüzden burada da hiçbir zaman "available:true" olarak
+// raporlanamazlar — deprecated bir model'in hard-code edilmiş bir "var"
+// listesi burada YOKTUR, yalnızca gerçekten aktif olan modeller filtrelenir.
+//
+// discoveredModels null ise (anahtar yok VEYA discovery isteği
+// başarısız/erişilemez) yalnızca "GEMINI_API_KEY tanımlı mı" bilgisine
+// düşülür — bu, discovery isteğinin çalışamadığı ortamlarda (örn. ağ
+// erişimi kısıtlı bir geliştirme sandbox'ı) capability'nin sessizce
+// "unavailable" görünmesini ÖNLER; Vercel Production'da (gerçek ağ erişimi
+// varken) ise gerçekten hangi modellerin listede olduğunu yansıtır.
 export async function getVideoProviderCapabilities(env = process.env) {
   const hasGeminiKey = Boolean(env.GEMINI_API_KEY);
   const discoveredModels = hasGeminiKey ? await listGeminiModels(env) : null;
@@ -80,17 +43,15 @@ export async function getVideoProviderCapabilities(env = process.env) {
   const omniListed = discoveredModels ? discoveredModels.has(OMNI_MODEL) : true;
   const omniAvailable = hasGeminiKey && omniListed;
 
-  const veoFamilies = discoveredModels ? buildVeoFamiliesFromDiscovery(discoveredModels) : fallbackVeoFamilies(hasGeminiKey);
-  const veo = {};
-  for (const version of ["3.0", "3.1"]) {
-    const models = veoFamilies[version] || emptyFamilyModels();
-    veo[version] = { available: Object.values(models).some(Boolean), models };
-  }
+  const veoModelIds = Object.values(VEO_MODEL_TIERS);
+  const veoModels = discoveredModels
+    ? veoModelIds.filter((id) => discoveredModels.has(id))
+    : (hasGeminiKey ? veoModelIds : []);
 
   return {
     google: {
       omni: { available: omniAvailable, models: omniAvailable ? [OMNI_MODEL] : [] },
-      veo
+      veo: { available: hasGeminiKey && veoModels.length > 0, models: veoModels }
     },
     fal: { available: Boolean(env.FAL_KEY) }
   };

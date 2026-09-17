@@ -2,17 +2,12 @@ import { buildVideoPrompt } from "./lib/video-prompt.js";
 
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
-// ÖNEMLİ: Veo 3 (GA) ve Veo 3.1 (Preview), Google'ın API yüzeyinde İKİ AYRI
-// model ailesidir — birbirinin eşanlamlısı DEĞİLDİR, ID'leri de farklıdır.
-// Bu depo daha önce yalnızca Veo 3.1'i entegre etmişti; bu ayrım burada
-// KASITLI olarak iki ayrı sabitle (VEO_3_1_MODEL_TIERS / VEO_3_0_MODEL_TIERS)
-// korunuyor, tek bir "veo3" diye birleştirilmiyor.
-//
-// Veo 3.1 (Preview) — "auto" bir tier DEĞİL: resolveVeoModel'de kendi
-// başına bir modele karşılık gelmez, zincirdeki bir sonraki kaynağa
-// (VEO_DEFAULT_TIER, sonunda "economy") devreder. Google'a ASLA bir "kalan
-// kota" sorgusu atılmaz — Google bunu üretim öncesi güvenilir şekilde
-// sağlamıyor; auto yalnızca statik bir varsayılan zinciridir.
+// AKTİF Google video model ailesi: Veo 3.1 (Preview). "auto" bir tier
+// DEĞİL: resolveVeoModel'de kendi başına bir modele karşılık gelmez,
+// zincirdeki bir sonraki kaynağa (VEO_DEFAULT_TIER, sonunda "economy")
+// devreder. Google'a ASLA bir "kalan kota" sorgusu atılmaz — Google bunu
+// üretim öncesi güvenilir şekilde sağlamıyor; auto yalnızca statik bir
+// varsayılan zinciridir.
 export const VEO_3_1_MODEL_TIERS = {
   economy: "veo-3.1-lite-generate-preview",
   fast: "veo-3.1-fast-generate-preview",
@@ -24,76 +19,78 @@ export const VEO_3_1_MODEL_TIERS = {
 // "quality" dalı, api/mcp.js, dashboard.html, mevcut testler) kırılmaz.
 export const VEO_MODEL_TIERS = VEO_3_1_MODEL_TIERS;
 
-// Veo 3 (GA) — Google'ın Gemini API'sinde resmi olarak duyurulmuş/dokümante
-// edilmiş canonical ID'ler: "veo-3.0-generate-001" ve
-// "veo-3.0-fast-generate-001" (bkz. Google Developers Blog "Veo 3 and Veo 3
-// Fast" duyurusu + Gemini Enterprise Agent Platform dokümantasyonu — Google
-// AI Studio API Referansı/Postman koleksiyonlarında da aynı ID'lerle
-// görülüyor). BİLEREK burada bir "lite" tier'ı YOK: Google'ın resmi Veo 3.1
-// duyurusuna göre "Lite" tier'ı YALNIZCA Veo 3.1 ile tanıtıldı — Veo 3 (GA)
-// için doğrulanmış bir "Lite" canonical ID'si bulunamadı. Hesabınızda
-// AI Studio'da bir "Veo 3 Lite" görüyorsanız (kota/erişim ekranı), bu
-// muhtemelen AI Studio'nun kendi UI gruplamasıdır — GERÇEK API model ID'si
-// farklı bir aileye (örn. Veo 3.1 Lite) ait olabilir. Bu yüzden burada ASLA
-// tahmini bir ID uydurulmaz; resolveVeoModel'in "veo-3-lite" dalı, gerçek
-// ID'yi yalnızca VEO_3_LITE_MODEL_ID ortam değişkeninden (operatör kendi
-// hesabında GET /v1beta/models ile doğrulayıp tanımlar) kabul eder.
-export const VEO_3_0_MODEL_TIERS = {
+// LEGACY/DEPRECATED — Veo 3 (GA). "veo-3.0-generate-001" ve
+// "veo-3.0-fast-generate-001", Google'ın Gemini API'sinde 30 Haziran
+// 2026'da KAPATILDI (shutdown) — Google'ın resmi deprecation dokümanı ve
+// changelog'u bunu doğruluyor. BU SABİT YALNIZCA DOKÜMANTASYON/TARİHÇE
+// AMAÇLIDIR — aşağıdaki VEO_ALIAS_MAP/VEO_ALLOWED_MODELS'te YOKTUR ve
+// resolveVeoModel bu ID'lere (veya "veo-3-generate"/"veo-3-fast" gibi eski
+// alias'lara) giden HİÇBİR isteği aktif bir model'e ÇÖZMEZ — açık bir
+// "deprecated, kapandı" hatası döner (bkz. DEPRECATED_VEO_3_0_ALIASES).
+// AI Studio UI'da "Veo 3 Generate/Fast/Lite" gibi bir kullanıcı dostu
+// etiket görünse bile, arka planda ÇAĞRILAN gerçek model HER ZAMAN Veo 3.1
+// preview ID'lerinden biridir (bkz. VEO_3_1_MODEL_TIERS) — Veo 3 (GA)
+// ID'leri artık hiçbir üretim çağrısında kullanılmaz.
+export const VEO_3_0_MODEL_TIERS_DEPRECATED = {
   generate: "veo-3.0-generate-001",
   fast: "veo-3.0-fast-generate-001"
 };
 
-export const VEO_ALLOWED_MODELS = new Set([...Object.values(VEO_3_1_MODEL_TIERS), ...Object.values(VEO_3_0_MODEL_TIERS)]);
+export const VEO_ALLOWED_MODELS = new Set(Object.values(VEO_3_1_MODEL_TIERS));
 // Maliyet sırası — 429 sonrası "alternatives" listesi bu sırayla üretilir.
 export const VEO_TIER_ORDER = ["economy", "fast", "quality"];
 export const VEO_TIER_LABELS = {
-  economy: "Veo 3.1 Lite (Preview) — ekonomik",
-  fast: "Veo 3.1 Fast (Preview) — hızlı",
-  quality: "Veo 3.1 Generate (Preview) — yüksek kalite"
-};
-export const VEO_3_0_TIER_ORDER = ["fast", "generate"];
-export const VEO_3_0_TIER_LABELS = {
-  generate: "Veo 3 Generate",
-  fast: "Veo 3 Fast"
+  economy: "Veo 3.1 Lite — ekonomik",
+  fast: "Veo 3.1 Fast — hızlı",
+  quality: "Veo 3.1 Generate — yüksek kalite"
 };
 
-// Temiz/açık, AİLE-BELİRTİK isimler — hangi Veo ailesinden bahsedildiği
-// isimden AÇIKÇA anlaşılır ("veo-3-generate" = Veo 3 GA, "veo-3.1-generate"
-// = Veo 3.1 Preview). Eski, aile belirtmeyen "veo-lite"/"veo-fast"/
-// "veo-generate" isimleri KASITLI OLARAK kaldırıldı — bunlar Veo 3/3.1
-// karışıklığına (bu düzeltmenin sebebi) zemin hazırlıyordu ve henüz hiçbir
-// sürümde yayınlanmamıştı (bu PR dışında hiçbir yerde kullanılmıyordu).
-// resolveVeoModel'deki tier adları ("economy"/"fast"/"quality") ve ham
-// model ID'leri (VEO_ALLOWED_MODELS) HÂLÂ birebir aynı şekilde çalışır.
+// Temiz/açık isimler — mevcut tier adlarının ("economy"/"fast"/"quality")
+// birebir eşanlamlısı. AKTİF, TEK model ailesi Veo 3.1 (Preview) olduğu
+// için burada aile öneki bilgi amaçlı ama tek bir aileye işaret ediyor.
 export const VEO_ALIAS_MAP = {
   "veo-3.1-lite": { tiers: VEO_3_1_MODEL_TIERS, tier: "economy" },
   "veo-3.1-fast": { tiers: VEO_3_1_MODEL_TIERS, tier: "fast" },
-  "veo-3.1-generate": { tiers: VEO_3_1_MODEL_TIERS, tier: "quality" },
-  "veo-3-generate": { tiers: VEO_3_0_MODEL_TIERS, tier: "generate" },
-  "veo-3-fast": { tiers: VEO_3_0_MODEL_TIERS, tier: "fast" }
-  // "veo-3-lite" KASITLI OLARAK burada YOK — bkz. VEO_3_0_MODEL_TIERS'ın
-  // üstündeki not ve resolveVeoModel'deki özel hata dalı.
+  "veo-3.1-generate": { tiers: VEO_3_1_MODEL_TIERS, tier: "quality" }
 };
 
-function familyAndTierForModel(model) {
-  const tier31 = VEO_TIER_ORDER.find((tier) => VEO_3_1_MODEL_TIERS[tier] === model);
-  if (tier31) return { tiers: VEO_3_1_MODEL_TIERS, order: VEO_TIER_ORDER, labels: VEO_TIER_LABELS, tier: tier31 };
-  const tier30 = VEO_3_0_TIER_ORDER.find((tier) => VEO_3_0_MODEL_TIERS[tier] === model);
-  if (tier30) return { tiers: VEO_3_0_MODEL_TIERS, order: VEO_3_0_TIER_ORDER, labels: VEO_3_0_TIER_LABELS, tier: tier30 };
-  return null;
+// Eski Veo 3 (GA) alias'ları/ham ID'leri artık AKTİF DEĞİL — seçilirse
+// (yanlışlıkla eski bir entegrasyon/dokümantasyondan kopyalanmış olabilir)
+// sessizce Veo 3.1'e düşülmez, ne de kapanmış bir ID'ye istek atılır;
+// bunun yerine hangi Veo 3.1 alias'ının kullanılması gerektiğini açıkça
+// söyleyen bir hata döner.
+const DEPRECATED_VEO_3_0_ALIASES = {
+  "veo-3-generate": { deadId: "veo-3.0-generate-001", replacement: "veo-3.1-generate" },
+  "veo-3-fast": { deadId: "veo-3.0-fast-generate-001", replacement: "veo-3.1-fast" },
+  // "veo-3-lite" için zaten hiçbir zaman doğrulanmış bir canonical GA ID'si
+  // yoktu (Google'ın "Lite" tier'ı yalnızca Veo 3.1 ile tanıtıldı) — Veo 3
+  // (GA) ailesinin tamamı artık kapandığı için bu da aynı yönlendirmeye tabi.
+  "veo-3-lite": { deadId: "(hiçbir zaman geçerli bir Veo 3 GA \"Lite\" ID'si yayınlanmadı)", replacement: "veo-3.1-lite" },
+  "veo-3.0-generate-001": { deadId: "veo-3.0-generate-001", replacement: "veo-3.1-generate" },
+  "veo-3.0-fast-generate-001": { deadId: "veo-3.0-fast-generate-001", replacement: "veo-3.1-fast" }
+};
+
+function deprecatedVeo3ErrorOrNull(candidate) {
+  const info = DEPRECATED_VEO_3_0_ALIASES[candidate];
+  if (!info) return null;
+  return new Error(
+    `Veo 3 (GA) modeli "${info.deadId}", Google tarafından 30 Haziran 2026'da kapatıldı (Gemini API deprecation dokümanı) — artık ` +
+    `hiçbir çağrıda kullanılamaz. Bunun yerine Google'ın aktif "${info.replacement}" (Veo 3.1 Preview) modelini seçin — AI Studio'da ` +
+    "\"Veo 3\" başlığı altında görünse bile arka planda çağrılan gerçek model her zaman Veo 3.1'dir."
+  );
 }
 
 // 429 sonrası önerilecek diğer modeller — başarısız olan HARİÇ, ucuzdan
-// pahalıya, ve YALNIZCA AYNI AİLE İÇİNDE (Veo 3 başarısız olursa Veo 3.1
-// önerilmez, bunun tersi de geçerli — aileler arası "alternatif" önerisi
-// bile yapılmaz, kaldı ki hiçbir zaman otomatik olarak çağrılmaz; yalnızca
-// bilgi amaçlıdır, bkz. VeoApiError.alternatives). Kullanıcı açıkça yeni
-// bir model seçip confirmed:true ile tekrar çağırmalıdır.
+// pahalıya. Hiçbir zaman otomatik olarak bu modellerden biri çağrılmaz;
+// yalnızca bilgi amaçlıdır (bkz. VeoApiError.alternatives) — kullanıcı
+// açıkça yeni bir model seçip confirmed:true ile tekrar çağırmalıdır.
+function tierForModel(model) {
+  return VEO_TIER_ORDER.find((tier) => VEO_MODEL_TIERS[tier] === model) || null;
+}
+
 function alternativesFor(failedModel) {
-  const found = familyAndTierForModel(failedModel);
-  if (!found) return [];
-  const { tiers, order, labels, tier: failedTier } = found;
-  return order.filter((tier) => tier !== failedTier).map((tier) => ({ tier, model: tiers[tier], label: labels[tier] }));
+  const failedTier = tierForModel(failedModel);
+  return VEO_TIER_ORDER.filter((tier) => tier !== failedTier).map((tier) => ({ tier, model: VEO_MODEL_TIERS[tier], label: VEO_TIER_LABELS[tier] }));
 }
 
 // GEMINI_API_KEY zaten bu depoda kullanılıyor (bkz. src/scene-image.js,
@@ -224,34 +221,18 @@ async function readJson(response, { model } = {}) {
 // Geçersiz/tanınmayan bir değer zincirin neresinde olursa olsun HEMEN
 // fırlatılır — sessizce yok sayılıp bir sonraki katmana düşülmez, aksi
 // halde bir yazım hatası fark edilmeden farklı bir modele geçilmiş olurdu.
-// "veo-3-lite" için hesapta gerçekten doğrulanmış bir canonical ID
-// bulunmadıkça (bkz. VEO_3_0_MODEL_TIERS'ın üstündeki not) burada ASLA bir
-// ID uydurulmaz — ne Veo 3.1 Lite'a sessizce düşülür ne de tahmini bir
-// "veo-3.0-lite-generate-..." ID'si denenir. Operatör kendi hesabında
-// GET /v1beta/models (veya /api/video-provider-capabilities) ile gerçek
-// ID'yi doğrulayıp VEO_3_LITE_MODEL_ID'ye tanımlarsa AYNEN o kullanılır.
-function resolveVeo3LiteOrThrow(env) {
-  if (env.VEO_3_LITE_MODEL_ID) return env.VEO_3_LITE_MODEL_ID;
-  throw new Error(
-    "Veo 3 (GA) ailesinde \"Lite\" tier'ı için Google tarafında doğrulanmış bir canonical model ID yok " +
-    "— Google'ın resmi duyurusuna göre \"Lite\" tier'ı yalnızca Veo 3.1'de tanıtıldı. Hesabınızda gerçekten " +
-    "bir \"Veo 3 Lite\" modeli görüyorsanız (AI Studio'nun kendi grup adlandırması gerçek API model ID'sinden " +
-    "farklı olabilir), gerçek model ID'sini GET /v1beta/models ile doğrulayıp VEO_3_LITE_MODEL_ID ortam " +
-    "değişkenine tanımlayın. Veo 3.1 Lite'ı denemek isterseniz \"veo-3.1-lite\" seçin — bu farklı bir aile, " +
-    "otomatik olarak ona düşülmez."
-  );
-}
 
 export function resolveVeoModel(modelOrProfile, env = process.env) {
   const chain = [modelOrProfile, env.VEO_VIDEO_MODEL, env.VEO_DEFAULT_TIER];
   for (const candidate of chain) {
     if (!candidate) continue;
     if (candidate === "auto") continue;
-    if (candidate === "veo-3-lite") return resolveVeo3LiteOrThrow(env);
+    const deprecatedError = deprecatedVeo3ErrorOrNull(candidate);
+    if (deprecatedError) throw deprecatedError;
     if (VEO_ALIAS_MAP[candidate]) { const { tiers, tier } = VEO_ALIAS_MAP[candidate]; return tiers[tier]; }
     if (VEO_MODEL_TIERS[candidate]) return VEO_MODEL_TIERS[candidate];
     if (VEO_ALLOWED_MODELS.has(candidate)) return candidate;
-    throw new Error(`Desteklenmeyen Veo modeli/tier'ı: "${candidate}". Kullanılabilir: auto, economy, fast, quality, ${Object.keys(VEO_ALIAS_MAP).join(", ")}, veo-3-lite (VEO_3_LITE_MODEL_ID gerektirir), ${[...VEO_ALLOWED_MODELS].join(", ")}.`);
+    throw new Error(`Desteklenmeyen Veo modeli/tier'ı: "${candidate}". Kullanılabilir: auto, economy, fast, quality, ${Object.keys(VEO_ALIAS_MAP).join(", ")}, ${[...VEO_ALLOWED_MODELS].join(", ")}.`);
   }
   return VEO_MODEL_TIERS.economy;
 }
