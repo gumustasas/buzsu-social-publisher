@@ -484,12 +484,16 @@ test("get_gemini_video_status: outputFileId verilirse yalnızca Files API'yi sor
 // Her tier/alias, :predictLongRunning URL'inde TAM OLARAK kendi model ID'sini
 // taşıyor mu diye doğrular; başka bir model asla denenmez.
 for (const [label, requestedModel, expectedModelId] of [
-  ["veo-lite alias", "veo-lite", "veo-3.1-lite-generate-preview"],
-  ["veo-fast alias", "veo-fast", "veo-3.1-fast-generate-preview"],
-  ["veo-generate alias", "veo-generate", "veo-3.1-generate-preview"],
+  ["veo-3.1-lite alias", "veo-3.1-lite", "veo-3.1-lite-generate-preview"],
+  ["veo-3.1-fast alias", "veo-3.1-fast", "veo-3.1-fast-generate-preview"],
+  ["veo-3.1-generate alias", "veo-3.1-generate", "veo-3.1-generate-preview"],
   ["economy tier name", "economy", "veo-3.1-lite-generate-preview"],
   ["fast tier name", "fast", "veo-3.1-fast-generate-preview"],
-  ["quality tier name", "quality", "veo-3.1-generate-preview"]
+  ["quality tier name", "quality", "veo-3.1-generate-preview"],
+  // Veo 3 (GA) — Veo 3.1 (Preview) ile AYNI test döngüsünde, ama tamamen
+  // farklı model ID'lerine gitmesi gerektiğini doğrulamak için birlikte.
+  ["veo-3-generate alias (Veo 3 GA, NOT 3.1)", "veo-3-generate", "veo-3.0-generate-001"],
+  ["veo-3-fast alias (Veo 3 GA, NOT 3.1)", "veo-3-fast", "veo-3.0-fast-generate-001"]
 ]) {
   test(`generate_video_clip with model:"${requestedModel}" (${label}) calls exactly ${expectedModelId} and no other model`, async () => {
     const originalFetch = global.fetch;
@@ -529,9 +533,60 @@ test("generate_video_clip does not silently retry with a different model when th
     throw new Error(`Beklenmeyen fetch: ${href}`);
   };
   try {
-    await assert.rejects(() => callTool("generate_video_clip", { imageUrl: "https://example.com/x.jpg", prompt: "p", confirmed: true, model: "veo-generate" }));
+    await assert.rejects(() => callTool("generate_video_clip", { imageUrl: "https://example.com/x.jpg", prompt: "p", confirmed: true, model: "veo-3.1-generate" }));
     assert.equal(predictModelUrls.length, 1);
     assert.ok(predictModelUrls[0].includes("/models/veo-3.1-generate-preview:predictLongRunning"));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// Düzeltme: Veo 3 (GA) ve Veo 3.1 (Preview) birbirinden AYRI aileler —
+// biri seçildiğinde diğerinin endpoint'i/model ID'si ASLA çağrılmaz.
+test("generate_video_clip with model:\"veo-3-generate\" (Veo 3 GA) never calls a Veo 3.1 URL", async () => {
+  const originalFetch = global.fetch;
+  const calledUrls = [];
+  global.fetch = async (url, options) => {
+    const href = String(url);
+    calledUrls.push(href);
+    if (!options) return { ok: true, headers: { get: () => "image/jpeg" }, arrayBuffer: async () => new Uint8Array([1]).buffer };
+    return { ok: true, json: async () => ({ name: "operations/op-v3" }) };
+  };
+  try {
+    await callTool("generate_video_clip", { imageUrl: "https://example.com/x.jpg", prompt: "p", confirmed: true, model: "veo-3-generate" });
+    assert.ok(!calledUrls.some((u) => u.includes("veo-3.1")));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generate_video_clip with model:\"veo-3.1-generate\" (Veo 3.1 Preview) never calls a Veo 3 (GA) URL", async () => {
+  const originalFetch = global.fetch;
+  const calledUrls = [];
+  global.fetch = async (url, options) => {
+    const href = String(url);
+    calledUrls.push(href);
+    if (!options) return { ok: true, headers: { get: () => "image/jpeg" }, arrayBuffer: async () => new Uint8Array([1]).buffer };
+    return { ok: true, json: async () => ({ name: "operations/op-v31" }) };
+  };
+  try {
+    await callTool("generate_video_clip", { imageUrl: "https://example.com/x.jpg", prompt: "p", confirmed: true, model: "veo-3.1-generate" });
+    assert.ok(!calledUrls.some((u) => u.includes("veo-3.0")));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generate_video_clip with model:\"veo-3-lite\" rejects with a clear error (no verified canonical ID) instead of silently using Veo 3.1 Lite", async () => {
+  const originalFetch = global.fetch;
+  let calls = 0;
+  global.fetch = async () => { calls++; throw new Error("fetch should not be called"); };
+  try {
+    await assert.rejects(
+      () => callTool("generate_video_clip", { imageUrl: "https://example.com/x.jpg", prompt: "p", confirmed: true, model: "veo-3-lite" }),
+      /VEO_3_LITE_MODEL_ID/
+    );
+    assert.equal(calls, 0);
   } finally {
     global.fetch = originalFetch;
   }

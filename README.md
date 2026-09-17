@@ -508,9 +508,9 @@ aynı `GEMINI_API_KEY`'i kullanır — ayrı bir hesap/anahtar gerekmez.
   fonksiyonda yapılır. **İlk gerçek (ücretli, 360p) deneme öncesinde bu alan
   adlarının resmi dokümandan teyit edilmesi önerilir.**
 
-## Google video sağlayıcıları — Omni sıfırdan üretim, Veo model routing, capability endpoint
+## Google video sağlayıcıları — Omni sıfırdan üretim, Veo 3 / Veo 3.1 model routing, capability endpoint
 
-Bu bölüm yalnızca **Google** video sağlayıcılarını (Omni + Veo 3.1 ailesi)
+Bu bölüm yalnızca **Google** video sağlayıcılarını (Omni + Veo 3 + Veo 3.1)
 kapsar; OpenAI/fal.ai'ye dokunmaz.
 
 **Omni ile sıfırdan (zero-shot) video üretimi** — `generate_gemini_video` /
@@ -526,53 +526,105 @@ isteğe bağlı `referenceImageUrl`) gerekir. Durum sorgusu
 başlatıldığını netleştirmek içindir. Dokümante edilmiş bir süre (duration)
 parametresi yoktur — uydurulmadı, modelin varsayılanına bırakıldı.
 
-**Veo 3.1 model routing** — `generate_video_clip`'in `model` alanı artık
-tier adlarının (`economy`/`fast`/`quality`/`auto`) yanında temiz eşanlamlı
-adları da kabul eder: `veo-lite`→`economy`, `veo-fast`→`fast`,
-`veo-generate`→`quality` (bkz. `src/veo-video.js:VEO_TIER_ALIASES`). Bunlar
-**birebir eşanlamlıdır**, ayrı bir davranış eklemez — yukarıdaki "Google Veo
-model seçimi" bölümündeki öncelik zinciri, 429 hata yapısı ve "hiçbir zaman
-otomatik model değişimi yok" kuralı değişmeden geçerlidir.
+### Veo 3 (GA) ve Veo 3.1 (Preview) — İKİ AYRI aile, KARIŞTIRILMAZ
+
+Google'ın Gemini API'sinde **Veo 3** (GA — genel kullanıma açık, dokümante
+edilmiş canonical ID'ler `veo-3.0-generate-001` / `veo-3.0-fast-generate-001`)
+ve **Veo 3.1** (Preview — `veo-3.1-*-generate-preview`) **birbirinin
+eşanlamlısı OLMAYAN, ayrı model aileleridir**. Bu depo başlangıçta yalnızca
+Veo 3.1'i entegre etmişti; bu bölüm ikisini de destekleyecek şekilde
+genişletildi — **hiçbir noktada bir aile diğerine sessizce düşürülmez**.
+
+`generate_video_clip`'in `model` alanı artık her iki aileyi de, adından
+hangi aileden bahsedildiği açıkça anlaşılan isimlerle kabul eder
+(bkz. `src/veo-video.js:VEO_ALIAS_MAP`):
+
+| Alias | Gerçek canonical model ID | Aile |
+| --- | --- | --- |
+| `veo-3-generate` | `veo-3.0-generate-001` | Veo 3 (GA) |
+| `veo-3-fast` | `veo-3.0-fast-generate-001` | Veo 3 (GA) |
+| `veo-3-lite` | *(yok — aşağıya bkz.)* | — |
+| `veo-3.1-lite` / `economy` | `veo-3.1-lite-generate-preview` | Veo 3.1 (Preview) |
+| `veo-3.1-fast` / `fast` | `veo-3.1-fast-generate-preview` | Veo 3.1 (Preview) |
+| `veo-3.1-generate` / `quality` | `veo-3.1-generate-preview` | Veo 3.1 (Preview) |
+
+`veo-3-generate`/`veo-3-fast` için kullanılan ID'ler **uydurulmadı** —
+Google Developers Blog'un "Veo 3 and Veo 3 Fast" duyurusu ve Gemini
+Enterprise Agent Platform dokümantasyonuyla çapraz doğrulanmış, resmi
+olarak yayınlanmış canonical ID'lerdir.
+
+**"Veo 3 Lite" hakkında önemli not**: Google'ın resmi Veo 3.1 duyurusuna
+göre "Lite" tier'ı **yalnızca Veo 3.1 ile tanıtıldı** — Veo 3 (GA) için
+doğrulanmış bir "Lite" canonical ID'si **bulunamadı**. AI Studio'da bir
+"Veo 3 Lite Generate" görüyorsanız bu, AI Studio'nun kendi UI gruplaması
+olabilir (AI Studio, Veo 3.1'in model kartını `aistudio.google.com/models/
+veo-3` yolunda sunuyor — yani "Veo 3" etiketi altında fiilen Veo 3.1
+modelleri de gösterilebiliyor); gerçek API model ID'si farklı bir aileye
+ait olabilir. Bu yüzden `veo-3-lite` alias'ı **kasıtlı olarak yoktur** —
+seçilirse ne bir ID uydurulur ne de Veo 3.1 Lite'a sessizce düşülür, açık
+bir hata döner. Kendi hesabınızda gerçek ID'yi `GET /v1beta/models` (veya
+aşağıdaki capability endpoint) ile doğrularsanız `VEO_3_LITE_MODEL_ID` ortam
+değişkenine tanımlayabilirsiniz — kod bunu aynen kullanır, asla kendi
+başına tahmin etmez.
+
+**429/kota hatası, alternatives ve aile sınırı**: bir model 429 verdiğinde
+`alternatives` listesi **yalnızca AYNI AİLE içindeki** diğer tier'ları
+önerir (Veo 3 başarısız olursa Veo 3.1 hiç önerilmez, tersi de geçerli) —
+zaten bu liste bilgi amaçlıdır, hiçbir zaman otomatik çağrılmaz. Öncelik
+zinciri (çağrı parametresi > `VEO_VIDEO_MODEL` > `VEO_DEFAULT_TIER` >
+`economy`) ve genel 429 yapısı değişmedi.
 
 **Fallback politikası (tüm Google video sağlayıcıları için)**: bir provider/
-model seçildiyse **başka bir provider veya modele ASLA sessizce geçilmez**.
-Omni 429/`REGION_UNAVAILABLE` verirse Veo'ya, Veo bir tier'de 429 verirse
-başka bir tier'e otomatik geçilmez — kullanıcı/çağıran taraf açıkça yeni bir
-provider/model seçip `confirmed:true` ile tekrar denemelidir.
+aile/model seçildiyse **başka birine ASLA sessizce geçilmez**. Omni 429/
+`REGION_UNAVAILABLE` verirse Veo'ya, Veo 3 bir tier'de 429 verirse Veo 3.1'e
+(veya tersi), bir tier discovery'de yoksa başka bir tier'e otomatik
+geçilmez — kullanıcı/çağıran taraf açıkça yeni bir provider/aile/model
+seçip `confirmed:true` ile tekrar denemelidir.
 
 **`confirmed:true` kuralı**: Omni'nin (`submitOmniVideoEdit` ve
 `submitOmniVideoGeneration`) her ikisi de `confirmed:true` olmadan **hiçbir
 ağ isteği atmadan** reddeder — bu kontrol fonksiyonun kendi içinde, çağıran
-katmandan (MCP/dashboard) bağımsız bir savunma satırıdır. Veo'da bu kontrol
-çağıran katmanda yapılır (MCP: `args.confirmed !== true` → hata; dashboard:
-iki tıklamalı "Emin misin?" onayı) — `submitVeoVideo`'nun kendisi bir
-`confirmed` parametresi almaz, ama her iki üretim yolu da paralı bir isteği
-asla onaysız başlatmaz.
+katmandan (MCP/dashboard) bağımsız bir savunma satırıdır. Veo'da (Veo 3 ve
+Veo 3.1'in İKİSİNDE de) bu kontrol çağıran katmanda yapılır (MCP:
+`args.confirmed !== true` → hata; dashboard: iki tıklamalı "Emin misin?"
+onayı) — `submitVeoVideo`'nun kendisi bir `confirmed` parametresi almaz,
+ama her iki üretim yolu da paralı bir isteği asla onaysız başlatmaz.
 
 **Capability/discovery endpoint** — `GET /api/video-provider-capabilities`
 (oturum açmış kullanıcı gerektirir, bkz. `src/auth.js:getSession`).
 `GEMINI_API_KEY` varsa **gerçek** bir `GET /v1beta/models` discovery isteği
-atılır (ücretsiz — bu bir üretim/generation çağrısı değildir); Google'ın o
-hesap için listelediği modellerle Omni/Veo'nun gerçekten erişilebilir olup
-olmadığı karşılaştırılır. Discovery isteği herhangi bir sebeple (ağ, geçici
-hata) başarısız olursa capability sessizce "unavailable" göstermez — bu
-durumda yalnızca anahtar varlığına düşülür (bkz.
-`src/lib/video-provider-capabilities.js`). Yanıt **hiçbir zaman** API key/
-secret/token içermez — yalnızca `available`/`models` alanları döner:
+atılır (ücretsiz — bu bir üretim/generation çağrısı değildir). Dönen her
+model ID'si **regex ile sınıflandırılır** (`src/lib/video-provider-
+capabilities.js:VEO_ID_PATTERN`) — sabit bir ID listesine karşı
+eşleştirilmez; bu sayede Google ileride dokümante etmediğimiz yeni bir
+"veo-X.Y-..." ID'si eklerse (örn. gerçek bir "Veo 3 Lite" GA modeli)
+kod hiç değişmeden doğru aile/tier'a otomatik yerleşir. Discovery isteği
+herhangi bir sebeple (ağ, geçici hata) başarısız olursa capability
+sessizce "unavailable" göstermez — ama bu fallback **yalnızca Veo 3.1**
+için uygulanır (anahtar varlığına düşülür, bu depodaki önceden var olan
+davranış); **Veo 3 (GA) bu varsayıma dahil edilmez** — hangi hesapların
+Veo 3'e erişimi olduğu değişkendir (kullanıcının kendi hesabında gördüğü
+2 RPM/10 RPD kota bunun kanıtı), gerçek discovery doğrulamadan "available"
+denmez. Yanıt **hiçbir zaman** API key/secret/token içermez:
 ```jsonc
 {
   "ok": true,
   "google": {
     "omni": { "available": true, "models": ["gemini-omni-1.1-flash"] },
-    "veo": { "available": true, "models": ["veo-3.1-lite-generate-preview", "veo-3.1-fast-generate-preview", "veo-3.1-generate-preview"] }
+    "veo": {
+      "3.0": { "available": true, "models": { "generate": "veo-3.0-generate-001", "fast": "veo-3.0-fast-generate-001", "lite": null } },
+      "3.1": { "available": true, "models": { "generate": "veo-3.1-generate-preview", "fast": "veo-3.1-fast-generate-preview", "lite": "veo-3.1-lite-generate-preview" } }
+    }
   },
   "fal": { "available": true }
 }
 ```
-Dashboard bu uç noktayı sayfa yüklenirken çağırır ve erişilemeyen seçenekleri
-(`#reel-provider`'daki "omni", `#veo-model-tier`'daki tier'lar) devre dışı
-bırakıp " — kullanılamıyor" etiketiyle işaretler; uç nokta henüz deploy
-edilmemişse veya hata dönerse sessizce yok sayılır, seçenekler
+`"lite": null` gibi bir alan, o tier'ın discovery'de dönmediğini (yani
+hesapta erişilebilir olmadığını) belirtir. Dashboard bu uç noktayı sayfa
+yüklenirken çağırır; `#reel-provider`'daki "omni" ve `#veo-model-tier`'daki
+her bir Veo 3/Veo 3.1 tier'ı (6 seçenek — `auto` hariç) ayrı ayrı bu yapıya
+göre devre dışı gösterilir (" — kullanılamıyor" etiketiyle); uç nokta henüz
+deploy edilmemişse veya hata dönerse sessizce yok sayılır, seçenekler
 `availableProviders()`'ın (anahtar varlığına dayalı) filtrelediği hâliyle
 kalır.
 
@@ -581,16 +633,11 @@ kalır.
 | Sağlayıcı/model | Ne için uygun |
 | --- | --- |
 | Omni (`gemini-omni-1.1-flash`) | Esnek video üretimi (sıfırdan veya mevcut videoyu düzeltme) — tier kavramı yok, tek model |
-| Veo 3.1 Lite (`veo-lite`/`economy`) | En ekonomik seçenek, yüksek hacimli deneme |
-| Veo 3.1 Fast (`veo-fast`/`fast`) | Hızlı denemeler, orta maliyet |
-| Veo 3.1 Generate (`veo-generate`/`quality`) | Daha kaliteli final denemeleri, en pahalı/yavaş |
-
-> **Not — "Veo 3" vs "Veo 3.1":** Bu depoda entegre olan model ailesi
-> Google'ın güncel **Veo 3.1** önizleme modelleridir
-> (`veo-3.1-*-generate-preview`); eski "Veo 3" model ID'leri Google
-> tarafından kullanımdan kaldırılıyor. "Veo 3 Fast/Generate/Lite" gibi
-> günlük isimler burada Veo 3.1'in aynı üç tier'ına (Fast/Generate/Lite)
-> karşılık gelir — ayrı, daha eski bir model ailesi DEĞİLDİR.
+| Veo 3 Generate (`veo-3-generate`) | GA, daha kaliteli final denemeleri |
+| Veo 3 Fast (`veo-3-fast`) | GA, hızlı denemeler |
+| Veo 3.1 Lite (`veo-3.1-lite`/`economy`) | Preview, en ekonomik seçenek, yüksek hacimli deneme |
+| Veo 3.1 Fast (`veo-3.1-fast`/`fast`) | Preview, hızlı denemeler, orta maliyet |
+| Veo 3.1 Generate (`veo-3.1-generate`/`quality`) | Preview, daha kaliteli final denemeleri, en pahalı/yavaş |
 
 ## AI Reels V2 — Creative Provider abstraction + model registry (src/creative-providers/)
 

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { veoModel, resolveVeoModel, submitVeoVideo, veoVideoStatus, VeoApiError, VEO_MODEL_TIERS, VEO_TIER_ALIASES } from "../src/veo-video.js";
+import { veoModel, resolveVeoModel, submitVeoVideo, veoVideoStatus, VeoApiError, VEO_MODEL_TIERS, VEO_3_0_MODEL_TIERS } from "../src/veo-video.js";
 import { MAX_FAL_PROMPT_LENGTH } from "../src/fal-video.js";
 
 test("resolveVeoModel with no input and no env config defaults to economy (Lite) — NOT fast, since Fast's daily quota is the reported problem", () => {
@@ -44,22 +44,108 @@ test("resolveVeoModel rejects an unknown tier/model name, listing the valid opti
   assert.throws(() => resolveVeoModel("bogus-model", {}), /auto, economy, fast, quality/);
 });
 
-// HEDEF 2/3: kullanıcı dostu, açık model adları ("veo-lite"/"veo-fast"/
-// "veo-generate") tier adlarının BİREBİR eşanlamlısı olmalı — mevcut tier
-// adları/ham model ID'leri KIRILMADAN, sadece ek bir yol olarak.
-test("resolveVeoModel accepts the clean 'veo-lite'/'veo-fast'/'veo-generate' aliases as exact synonyms of economy/fast/quality", () => {
-  assert.equal(resolveVeoModel("veo-lite", {}), VEO_MODEL_TIERS.economy);
-  assert.equal(resolveVeoModel("veo-fast", {}), VEO_MODEL_TIERS.fast);
-  assert.equal(resolveVeoModel("veo-generate", {}), VEO_MODEL_TIERS.quality);
-  assert.deepEqual(VEO_TIER_ALIASES, { "veo-lite": "economy", "veo-fast": "fast", "veo-generate": "quality" });
+// HEDEF (düzeltme): Veo 3 (GA) ve Veo 3.1 (Preview) İKİ AYRI aile — açık,
+// aile-belirtik alias'lar birbirine karışmamalı. "veo-3-generate"/
+// "veo-3-fast" GERÇEK, dokümante edilmiş Veo 3 GA canonical ID'lerine
+// (veo-3.0-generate-001/veo-3.0-fast-generate-001) gider; "veo-3.1-*"
+// alias'ları ise mevcut Veo 3.1 Preview tier'larına (economy/fast/quality)
+// gider. Hiçbiri KIRILMADAN, sadece ek bir yol olarak.
+test("resolveVeoModel: 'veo-3-generate'/'veo-3-fast' resolve to the real, documented Veo 3 (GA) canonical IDs — NOT Veo 3.1", () => {
+  assert.equal(resolveVeoModel("veo-3-generate", {}), VEO_3_0_MODEL_TIERS.generate);
+  assert.equal(resolveVeoModel("veo-3-fast", {}), VEO_3_0_MODEL_TIERS.fast);
+  assert.equal(VEO_3_0_MODEL_TIERS.generate, "veo-3.0-generate-001");
+  assert.equal(VEO_3_0_MODEL_TIERS.fast, "veo-3.0-fast-generate-001");
+  // Veo 3 ve Veo 3.1 ID'leri hiçbir noktada karışmıyor
+  assert.notEqual(resolveVeoModel("veo-3-generate", {}), resolveVeoModel("veo-3.1-generate", {}));
+  assert.notEqual(resolveVeoModel("veo-3-fast", {}), resolveVeoModel("veo-3.1-fast", {}));
+});
+
+test("resolveVeoModel: 'veo-3.1-lite'/'veo-3.1-fast'/'veo-3.1-generate' resolve to the existing Veo 3.1 Preview tiers (unchanged aliases, just renamed to be family-explicit)", () => {
+  assert.equal(resolveVeoModel("veo-3.1-lite", {}), VEO_MODEL_TIERS.economy);
+  assert.equal(resolveVeoModel("veo-3.1-fast", {}), VEO_MODEL_TIERS.fast);
+  assert.equal(resolveVeoModel("veo-3.1-generate", {}), VEO_MODEL_TIERS.quality);
+});
+
+// "Veo 3 Lite" için Google tarafında doğrulanmış bir canonical ID yok
+// (Lite tier'ı yalnızca Veo 3.1'de var) — bu yüzden ASLA Veo 3.1 Lite'a
+// sessizce düşülmez veya bir ID uydurulmaz; operatör VEO_3_LITE_MODEL_ID
+// ortam değişkeniyle gerçek ID'yi kendisi tanımlamadıkça açık bir hata
+// döner.
+test("resolveVeoModel: 'veo-3-lite' throws a clear error (no verified canonical ID) instead of silently falling back to Veo 3.1 Lite", () => {
+  assert.throws(() => resolveVeoModel("veo-3-lite", {}), /VEO_3_LITE_MODEL_ID/);
+});
+
+test("resolveVeoModel: 'veo-3-lite' uses VEO_3_LITE_MODEL_ID verbatim when the operator has confirmed the real ID themselves", () => {
+  assert.equal(resolveVeoModel("veo-3-lite", { VEO_3_LITE_MODEL_ID: "veo-3.0-lite-generate-001" }), "veo-3.0-lite-generate-001");
 });
 
 // Sessiz fallback YOK: seçilen model/tier geçersizse (ör. bir yazım hatası
 // veya erişimi olmayan bir model) HEMEN hata fırlatılır — asla başka bir
-// tier'a (örn. economy) sessizce düşülmez.
-test("resolveVeoModel never silently falls back to another tier when an invalid model/tier is explicitly given", () => {
-  assert.throws(() => resolveVeoModel("veo-3-generate", {}), /Desteklenmeyen Veo/);
+// tier'a (örn. economy) veya başka bir aileye sessizce düşülmez.
+test("resolveVeoModel never silently falls back to another tier/family when an invalid model/tier is explicitly given", () => {
+  assert.throws(() => resolveVeoModel("veo-3-generate-preview", {}), /Desteklenmeyen Veo/);
   assert.throws(() => resolveVeoModel("Veo-Fast", {}), /Desteklenmeyen Veo/);
+});
+
+// Veo 3 seçildiğinde Veo 3.1'in :predictLongRunning endpoint'i ÇAĞRILMAZ,
+// ve tersi de geçerli — gerçek HTTP isteğinin URL'inde geçen model ID'sini
+// doğrular (yalnızca resolveVeoModel'in döndürdüğü string'e değil).
+test("submitVeoVideo calls the exact Veo 3 (GA) model URL when 'veo-3-generate' is selected, never a Veo 3.1 URL", async () => {
+  const originalFetch = global.fetch;
+  const calledUrls = [];
+  global.fetch = async (url, options) => {
+    const href = String(url);
+    calledUrls.push(href);
+    if (!options) return { ok: true, headers: { get: () => "image/jpeg" }, arrayBuffer: async () => new Uint8Array([1]).buffer };
+    return { ok: true, json: async () => ({ name: "operations/op-v3" }) };
+  };
+  try {
+    const job = await submitVeoVideo({ imageUrl: "https://example.com/x.jpg", title: "t" }, { GEMINI_API_KEY: "test" }, { finalizedPrompt: "p", model: "veo-3-generate" });
+    assert.equal(job.model, "veo-3.0-generate-001");
+    const predictCalls = calledUrls.filter((u) => u.includes(":predictLongRunning"));
+    assert.equal(predictCalls.length, 1);
+    assert.ok(predictCalls[0].includes("/models/veo-3.0-generate-001:predictLongRunning"));
+    assert.ok(!predictCalls[0].includes("veo-3.1"));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("submitVeoVideo calls the exact Veo 3.1 (Preview) model URL when 'veo-3.1-generate' is selected, never a Veo 3 (GA) URL", async () => {
+  const originalFetch = global.fetch;
+  const calledUrls = [];
+  global.fetch = async (url, options) => {
+    const href = String(url);
+    calledUrls.push(href);
+    if (!options) return { ok: true, headers: { get: () => "image/jpeg" }, arrayBuffer: async () => new Uint8Array([1]).buffer };
+    return { ok: true, json: async () => ({ name: "operations/op-v31" }) };
+  };
+  try {
+    const job = await submitVeoVideo({ imageUrl: "https://example.com/x.jpg", title: "t" }, { GEMINI_API_KEY: "test" }, { finalizedPrompt: "p", model: "veo-3.1-generate" });
+    assert.equal(job.model, "veo-3.1-generate-preview");
+    const predictCalls = calledUrls.filter((u) => u.includes(":predictLongRunning"));
+    assert.equal(predictCalls.length, 1);
+    assert.ok(predictCalls[0].includes("/models/veo-3.1-generate-preview:predictLongRunning"));
+    assert.ok(!predictCalls[0].includes("veo-3.0"));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// 429 sonrası "alternatives" listesi de aile-sınırlı olmalı — Veo 3
+// başarısız olursa yalnızca Veo 3'ün diğer tier'ı (fast<->generate)
+// önerilir, Veo 3.1 hiç önerilmez (bilgi amaçlı olsa da).
+test("VeoApiError alternatives stay within the same Veo family — Veo 3 failure never suggests a Veo 3.1 model", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: false, status: 429, headers: { get: () => null }, json: async () => ({ error: { message: "quota exceeded", status: "RESOURCE_EXHAUSTED", details: [] } }) });
+  try {
+    const error = await veoVideoStatus({ operationName: "operations/1", model: VEO_3_0_MODEL_TIERS.generate }, { GEMINI_API_KEY: "test" }).catch((e) => e);
+    assert.ok(error instanceof VeoApiError);
+    assert.deepEqual(error.alternatives.map((a) => a.model), [VEO_3_0_MODEL_TIERS.fast]);
+    assert.ok(!error.alternatives.some((a) => String(a.model).includes("3.1")));
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test("resolveVeoModel rejects an unknown VEO_VIDEO_MODEL env value the same way", () => {
