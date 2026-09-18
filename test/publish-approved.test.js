@@ -17,6 +17,21 @@ async function loadStoryImageUrlWithBaseUrl(baseUrl) {
   }
 }
 
+// facebookStoriesEnabled STORY_IMAGE_BASE_URL gibi modül yüklenirken bir kez
+// okunan üst seviye bir const (bkz. src/publish-approved.js) — Facebook Hikâye
+// testleri için aynı cache-busting yeniden import deseni kullanılıyor.
+async function loadPublishFacebookWithStoriesEnabled() {
+  const originalValue = process.env.ENABLE_FACEBOOK_STORIES;
+  process.env.ENABLE_FACEBOOK_STORIES = "true";
+  try {
+    const mod = await import(`../src/publish-approved.js?t=${Date.now()}-${Math.random()}`);
+    return mod.publishFacebook;
+  } finally {
+    if (originalValue === undefined) delete process.env.ENABLE_FACEBOOK_STORIES;
+    else process.env.ENABLE_FACEBOOK_STORIES = originalValue;
+  }
+}
+
 const originalEnv = {
   META_ACCESS_TOKEN: process.env.META_ACCESS_TOKEN,
   META_INSTAGRAM_ACCOUNT_ID: process.env.META_INSTAGRAM_ACCOUNT_ID,
@@ -289,6 +304,115 @@ test("publishFacebook Carousel explicitly rejects a mixed image+video combinatio
     };
     await assert.rejects(() => publishFacebook(fields, "Carousel"), /UNSUPPORTED_FACEBOOK_MEDIA_COMBINATION/);
     assert.equal(calls.length, 0, "reddedilmeden önce hiçbir Graph API çağrısı yapılmamalı");
+  });
+});
+
+// HEDEF: format:"Hikâye" + "Video URL" doluysa video story ÖNCELİKLİDİR —
+// "Görsel URL"/storyImageUrl() otomatik bilgi kartı/overlay TAMAMEN atlanır,
+// hem "Görsel URL" hem "Video URL" kayıtta birlikte bulunsa bile. Regresyon
+// öncesi bu senaryo sessizce Görsel URL + kart görselini yayınlıyordu.
+test("publishInstagram Hikâye + videoUrl → video story path is used, no image_url/overlay card even when Görsel URL is also present", async () => {
+  await withMocks(
+    [
+      { id: "story_video_container" },
+      { status_code: "FINISHED" },
+      { id: "ig_story_video_1" }
+    ],
+    async (calls) => {
+      const fields = {
+        "Görsel URL": "https://blob.vercel-storage.com/photo.jpg",
+        "Video URL": "https://blob.vercel-storage.com/story.mp4",
+        "Başlık": "Test Ürünü | Hikâye"
+      };
+      const postId = await publishInstagram(fields, "Hikâye");
+      assert.equal(postId, "ig_story_video_1");
+      assert.equal(calls.length, 3);
+      assert.match(calls[0].url, /\/media$/);
+      assert.equal(calls[0].body.get("media_type"), "STORIES");
+      assert.equal(calls[0].body.get("video_url"), "https://blob.vercel-storage.com/story.mp4");
+      // Otomatik bilgi kartı/overlay yolu (image_url) hiç kullanılmadı.
+      assert.equal(calls[0].body.has("image_url"), false);
+    }
+  );
+});
+
+// HEDEF: videoUrl YOKSA mevcut görsel-story fallback (storyImageUrl kartı
+// dahil) aynen çalışmaya devam etmeli — regresyon yok.
+test("publishInstagram Hikâye without videoUrl → existing image-story fallback (storyImageUrl card path) unchanged", async () => {
+  await withMocks(
+    [
+      { id: "story_image_container" },
+      { status_code: "FINISHED" },
+      { id: "ig_story_image_1" }
+    ],
+    async (calls) => {
+      const fields = { "Görsel URL": "https://blob.vercel-storage.com/photo.jpg", "Başlık": "Test Ürünü | Hikâye" };
+      const postId = await publishInstagram(fields, "Hikâye");
+      assert.equal(postId, "ig_story_image_1");
+      assert.equal(calls[0].body.get("media_type"), "STORIES");
+      assert.equal(calls[0].body.get("image_url"), "https://blob.vercel-storage.com/photo.jpg");
+      assert.equal(calls[0].body.has("video_url"), false);
+    }
+  );
+});
+
+test("publishFacebook Hikâye + videoUrl (ENABLE_FACEBOOK_STORIES=true) → video story path (video_stories) is used, no photo_stories/overlay card even when Görsel URL is also present", async () => {
+  const publishFacebookWithStories = await loadPublishFacebookWithStoriesEnabled();
+  await withMocks(
+    [
+      { video_id: "fb_story_video_1" },
+      { success: true },
+      { success: true }
+    ],
+    async (calls) => {
+      const fields = {
+        "Görsel URL": "https://blob.vercel-storage.com/photo.jpg",
+        "Video URL": "https://blob.vercel-storage.com/story.mp4",
+        "Başlık": "Test Ürünü | Hikâye"
+      };
+      const postId = await publishFacebookWithStories(fields, "Hikâye");
+      assert.equal(postId, "fb_story_video_1");
+      assert.match(calls[0].url, /\/video_stories$/);
+      assert.equal(calls[0].body.get("upload_phase"), "start");
+      assert.ok(calls.some((call) => call.url.includes("rupload.facebook.com")));
+      // Otomatik bilgi kartı/overlay yolu (photos + storyImageUrl + photo_stories) hiç kullanılmadı.
+      assert.ok(!calls.some((call) => call.url.endsWith("/photos")));
+      assert.ok(!calls.some((call) => call.url.endsWith("/photo_stories")));
+    }
+  );
+});
+
+test("publishFacebook Hikâye without videoUrl (ENABLE_FACEBOOK_STORIES=true) → existing image-story fallback (photos + photo_stories) unchanged", async () => {
+  const publishFacebookWithStories = await loadPublishFacebookWithStoriesEnabled();
+  await withMocks(
+    [
+      { id: "fb_story_photo_1" },
+      { post_id: "fb_story_image_1" }
+    ],
+    async (calls) => {
+      const fields = { "Görsel URL": "https://blob.vercel-storage.com/photo.jpg", "Başlık": "Test Ürünü | Hikâye" };
+      const postId = await publishFacebookWithStories(fields, "Hikâye");
+      assert.equal(postId, "fb_story_image_1");
+      assert.match(calls[0].url, /\/photos$/);
+      assert.equal(calls[0].body.get("published"), "false");
+      assert.match(calls[1].url, /\/photo_stories$/);
+      assert.equal(calls[1].body.get("photo_id"), "fb_story_photo_1");
+    }
+  );
+});
+
+// Regresyon: ENABLE_FACEBOOK_STORIES kapalıyken (varsayılan), videoUrl dolu
+// bile olsa Facebook Hikâye'de hâlâ hiçbir Graph API çağrısı yapılmadan
+// null dönmeli — flag kontrolü, yeni videoUrl dalından ÖNCE kalmalı.
+test("publishFacebook Hikâye returns null without any fetch when ENABLE_FACEBOOK_STORIES is off, even with a videoUrl present (regression)", async () => {
+  await withMocks([], async (calls) => {
+    const fields = {
+      "Görsel URL": "https://blob.vercel-storage.com/photo.jpg",
+      "Video URL": "https://blob.vercel-storage.com/story.mp4"
+    };
+    const postId = await publishFacebook(fields, "Hikâye");
+    assert.equal(postId, null);
+    assert.equal(calls.length, 0);
   });
 });
 
