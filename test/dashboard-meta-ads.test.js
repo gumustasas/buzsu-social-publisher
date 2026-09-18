@@ -300,3 +300,27 @@ test("PR-5: ham effective_status değerleri (CAMPAIGN_PAUSED, ADSET_PAUSED, WITH
   assert.match(labelsBlock, /WITH_ISSUES:\s*"Sorunlu"/);
   assert.match(client, /const statusLabel = \(value\) => STATUS_LABELS\[value\] \|\| value;/);
 });
+
+// PR-6: Reklam tablosunda sticky sütunlar (Reklam=sol, İncele=sağ) — salt CSS,
+// tabloyu üreten renderTable() koduna hiç dokunulmadı (bkz. dashboard-meta-ads.js
+// içindeki değişmeyen th/td sırası). Sticky kaydırmanın #meta-ads-table-wrap'in
+// kendisine ait olması gerekiyor (position:sticky, kendi kaydıran atasına göre
+// çalışır) — aksi halde sticky hücreler sayfanın kendisine göre konumlanırdı.
+test("PR-6: #meta-ads-table-wrap kendi içinde yatay kaydırılabilir (mobil davranış korunur)", () => {
+  assert.match(dashboard, /#meta-ads-table-wrap\{overflow-x:auto/);
+});
+
+test("PR-6: ilk sütun (Reklam) sticky left, son sütun (İncele) sticky right — opak arka plan + hafif shadow ile", () => {
+  assert.match(dashboard, /#meta-ads-table-wrap th:first-child,#meta-ads-table-wrap td:first-child\{position:sticky;left:0;[^}]*background:#fff/);
+  assert.match(dashboard, /#meta-ads-table-wrap th:last-child,#meta-ads-table-wrap td:last-child\{position:sticky;right:0;[^}]*background:#fff/);
+  assert.match(dashboard, /box-shadow:2px 0 4px -2px/);
+  assert.match(dashboard, /box-shadow:-2px 0 4px -2px/);
+});
+
+test("PR-6: sticky düzeltmesi tabloyu üreten renderTable() fonksiyonuna dokunmadı — kolon sırası (Reklam/Durum/Gerçek Durum/Kampanya/Reklam Seti/İncele) aynı kaldı", () => {
+  const fn = client.match(/function renderTable\(\) \{[\s\S]*?\n  \}/)[0];
+  assert.match(
+    fn,
+    /Reklam<\/th><th style="padding:8px">Durum<\/th><th style="padding:8px">Gerçek Durum<\/th>\s*<th style="padding:8px">Kampanya<\/th><th style="padding:8px">Reklam Seti<\/th><th style="padding:8px"><\/th>/
+  );
+});
