@@ -5,6 +5,8 @@ import adCreativeHandler from "../api/meta-ads/ad-creative.js";
 import overviewHandler from "../api/meta-ads/overview.js";
 import adStatusHandler from "../api/meta-ads/ad-status.js";
 import adsetBudgetHandler from "../api/meta-ads/adset-budget.js";
+import adDeleteHandler from "../api/meta-ads/ad-delete.js";
+import adCreativeUpdateHandler from "../api/meta-ads/ad-creative-update.js";
 import { setSession } from "../src/auth.js";
 
 process.env.SESSION_SECRET = process.env.SESSION_SECRET || "test-secret-for-meta-ads-routes";
@@ -362,7 +364,7 @@ test("GET /api/meta-ads/overview: pixel_get başarısız olursa yalnız pixel b�
   assert.equal(res.payload.overview.today.spend, 10);
 });
 
-test("Yalnız izin verilen tool'lar çağrılır — PR-1/2 read-only'ler + PR-3'ün iki tersinir write'ı, başka hiçbiri", async () => {
+test("Yalnız izin verilen tool'lar çağrılır — PR-1/2/3'ün read-only + tersinir write'ları, PR-4'ün delete/creative write'ları çağrılmadan", async () => {
   const calledTools = [];
   await withMockedFetch(
     withStandardHandshake(
@@ -390,8 +392,37 @@ test("Yalnız izin verilen tool'lar çağrılır — PR-1/2 read-only'ler + PR-3
     "ads_update_adset_budget"
   ]);
   assert.ok(calledTools.every((name) => ALLOWED_TOOLS.has(name)), `izin verilmeyen tool çağrıldı: ${calledTools}`);
-  // delete/create/catalog/creative-update tool'ları asla çağrılmamalı (PR-4 kapsamı).
-  assert.ok(!calledTools.some((name) => /delete|create|catalog/i.test(name)), `PR-4 kapsamındaki bir tool çağrıldı: ${calledTools}`);
+  // PR-4'ün delete/creative write'ları (ad-delete/ad-creative-update route'ları
+  // hiç çağrılmadı) burada asla tetiklenmemeli; kapsam dışı olan katalog/
+  // WhatsApp/kampanya/reklam-seti oluşturma tool'ları da asla çağrılmaz.
+  assert.ok(!calledTools.some((name) => /^ads_delete_ad$|^ads_create_ad_creative$|^ads_update_ad$|catalog|whatsapp|^ads_create_campaign$|^ads_create_adset$/i.test(name)), `PR-4 kapsamındaki bir tool çağrıldı: ${calledTools}`);
+});
+
+test("PR-4: ad-delete/ad-creative-update route'ları çağrılınca YALNIZ kendi tool'larını (+ ad-creative-update için önce ads_get_ad_creative_assets) çağırır — başka hiçbir Meta write tool'una dokunmaz", async () => {
+  const calledTools = [];
+  await withMockedFetch(
+    withStandardHandshake(
+      {
+        ads_delete_ad: () => toolCallSuccessResponse({ deleted: true, deletion_semantics: "archived" }),
+        ads_get_ad_creative_assets: () => toolCallSuccessResponse({ ad_id: "ad_2", creative_id: "old_1", cards: [] }),
+        ads_create_ad_creative: () => toolCallSuccessResponse({ creative_id: "new_1" }),
+        ads_update_ad: () => toolCallSuccessResponse({ success: true })
+      },
+      calledTools
+    ),
+    async () => {
+      await adDeleteHandler(makeRequest({ method: "POST", role: "Admin", body: { ad_id: "ad_1", confirm: true } }), makeResponse());
+      await adCreativeUpdateHandler(
+        makeRequest({
+          method: "POST",
+          role: "Admin",
+          body: { ad_id: "ad_2", name: "n", message: "m", headline: "h", link: "https://x.test", call_to_action_type: "LEARN_MORE", image_hash: "hash_1", confirm: true }
+        }),
+        makeResponse()
+      );
+    }
+  );
+  assert.deepEqual(calledTools, ["ads_delete_ad", "ads_get_ad_creative_assets", "ads_create_ad_creative", "ads_update_ad"]);
 });
 
 test("POST /api/meta-ads/ad-status: oturum yoksa 401 döner", async () => {
@@ -541,4 +572,321 @@ test("POST /api/meta-ads/adset-budget: Admin + confirm:true → ads_update_adset
   assert.equal(res.payload.ok, true);
   assert.equal(callCount, 1);
   assert.deepEqual(capturedArgs, { adset_id: "adset_9", daily_budget_try: 350.5, confirmed: true });
+});
+
+// ===== PR-4: POST /api/meta-ads/ad-delete =====
+
+test("POST /api/meta-ads/ad-delete: oturum yoksa 401, Editor ise 403 döner — tool hiç çağrılmaz", async () => {
+  const unauthorized = makeResponse();
+  await adDeleteHandler(makeRequest({ method: "POST", authorized: false, body: { ad_id: "ad_1", confirm: true } }), unauthorized);
+  assert.equal(unauthorized.statusCode, 401);
+
+  const calledTools = [];
+  const forbidden = makeResponse();
+  await withMockedFetch(withStandardHandshake({}, calledTools), async () => {
+    await adDeleteHandler(makeRequest({ method: "POST", role: "Editor", body: { ad_id: "ad_1", confirm: true } }), forbidden);
+  });
+  assert.equal(forbidden.statusCode, 403);
+  assert.equal(forbidden.payload.error.code, "FORBIDDEN");
+  assert.deepEqual(calledTools, []);
+});
+
+test("GET /api/meta-ads/ad-delete: yalnız POST desteklenir, 405 döner", async () => {
+  const res = makeResponse();
+  await adDeleteHandler(makeRequest({ method: "GET", role: "Admin" }), res);
+  assert.equal(res.statusCode, 405);
+});
+
+test("POST /api/meta-ads/ad-delete: ad_id eksikse 400 döner, tool hiç çağrılmaz", async () => {
+  const calledTools = [];
+  const res = makeResponse();
+  await withMockedFetch(withStandardHandshake({}, calledTools), async () => {
+    await adDeleteHandler(makeRequest({ method: "POST", role: "Admin", body: { confirm: true } }), res);
+  });
+  assert.equal(res.statusCode, 400);
+  assert.deepEqual(calledTools, []);
+});
+
+test("POST /api/meta-ads/ad-delete: Admin + geçerli ad_id AMA confirm yok/false → 400 CONFIRMATION_REQUIRED, tool hiç çağrılmaz", async () => {
+  const calledTools = [];
+  const noConfirm = makeResponse();
+  const falseConfirm = makeResponse();
+  await withMockedFetch(withStandardHandshake({}, calledTools), async () => {
+    await adDeleteHandler(makeRequest({ method: "POST", role: "Admin", body: { ad_id: "ad_1" } }), noConfirm);
+    await adDeleteHandler(makeRequest({ method: "POST", role: "Admin", body: { ad_id: "ad_1", confirm: false } }), falseConfirm);
+  });
+  assert.equal(noConfirm.statusCode, 400);
+  assert.equal(noConfirm.payload.error.code, "CONFIRMATION_REQUIRED");
+  assert.equal(falseConfirm.statusCode, 400);
+  assert.deepEqual(calledTools, []);
+});
+
+test("POST /api/meta-ads/ad-delete: istemci confirmed:true göndermeye çalışsa da yok sayılır — MCP'ye giden confirmed HER ZAMAN sunucu tarafında üretilir", async () => {
+  let capturedArgs;
+  const res = makeResponse();
+  await withMockedFetch(
+    withStandardHandshake({
+      ads_delete_ad: (message) => {
+        capturedArgs = message.params.arguments;
+        return toolCallSuccessResponse({ deleted: true, deletion_semantics: "hard_delete" });
+      }
+    }),
+    async () => {
+      // confirm:true (Social Publisher sözleşmesi) + confirmed:false (istemcinin
+      // yanlışlıkla/kötü niyetle MCP'nin alanını taklit etmeye çalışması) — route
+      // body.confirmed'i hiç OKUMAZ, bu yüzden hangi değeri gönderirse göndersin
+      // MCP'ye giden confirmed her zaman true'dur.
+      await adDeleteHandler(makeRequest({ method: "POST", role: "Admin", body: { ad_id: "ad_1", confirm: true, confirmed: false } }), res);
+    }
+  );
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(capturedArgs, { ad_id: "ad_1", confirmed: true });
+});
+
+test("POST /api/meta-ads/ad-delete: Admin + confirm:true → ads_delete_ad TAM BİR KEZ confirmed:true ile çağrılır, 200 + normalize edilmiş alanlar döner", async () => {
+  let callCount = 0;
+  const res = makeResponse();
+  await withMockedFetch(
+    withStandardHandshake({
+      ads_delete_ad: () => {
+        callCount += 1;
+        return toolCallSuccessResponse({ deleted: true, deletion_semantics: "archived", status: "DELETED", effective_status: "DELETED" });
+      }
+    }),
+    async () => {
+      await adDeleteHandler(makeRequest({ method: "POST", role: "Admin", body: { ad_id: "ad_42", confirm: true } }), res);
+    }
+  );
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.ok, true);
+  assert.equal(callCount, 1);
+  assert.equal(res.payload.deleted, true);
+  assert.equal(res.payload.deletion_semantics, "archived");
+  assert.equal(res.payload.status, "DELETED");
+});
+
+test("POST /api/meta-ads/ad-delete: MCP guard'ı ACTIVE reklamı reddederse (deleted hiç denenmez) sabit hata sözleşmesiyle 502 döner", async () => {
+  const res = makeResponse();
+  await withMockedFetch(
+    withStandardHandshake({
+      ads_delete_ad: () =>
+        fakeFetchResponse({
+          headers: { "content-type": "application/json" },
+          bodyText: JSON.stringify({ jsonrpc: "2.0", id: "call", result: { isError: true, content: [{ type: "text", text: "Ad is ACTIVE, refusing delete" }] } })
+        })
+    }),
+    async () => {
+      await adDeleteHandler(makeRequest({ method: "POST", role: "Admin", body: { ad_id: "ad_active", confirm: true } }), res);
+    }
+  );
+  assert.equal(res.statusCode, 502);
+  assert.equal(res.payload.ok, false);
+  assert.match(res.payload.error.message, /ACTIVE/);
+});
+
+test("POST /api/meta-ads/ad-delete: deleted:null (read-back doğrulanamadı) durumu 200 içinde olduğu gibi (uydurulmadan) döner", async () => {
+  const res = makeResponse();
+  await withMockedFetch(
+    withStandardHandshake({ ads_delete_ad: () => toolCallSuccessResponse({ deleted: null, deletion_semantics: "unconfirmed" }) }),
+    async () => {
+      await adDeleteHandler(makeRequest({ method: "POST", role: "Admin", body: { ad_id: "ad_1", confirm: true } }), res);
+    }
+  );
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.deleted, null);
+  assert.equal(res.payload.deletion_semantics, "unconfirmed");
+});
+
+// ===== PR-4: POST /api/meta-ads/ad-creative-update =====
+
+const VALID_CREATIVE_BODY = {
+  ad_id: "ad_1",
+  name: "Kreatif adı",
+  message: "Ana metin",
+  headline: "Başlık",
+  link: "https://buzsu.com.tr/urun",
+  call_to_action_type: "LEARN_MORE",
+  image_hash: "hash_1",
+  confirm: true
+};
+
+function creativeToolHandlers(overrides = {}) {
+  return {
+    ads_get_ad_creative_assets: () => toolCallSuccessResponse({ ad_id: "ad_1", creative_id: "old_1", cards: [] }),
+    ads_create_ad_creative: () => toolCallSuccessResponse({ creative_id: "new_1" }),
+    ads_update_ad: () => toolCallSuccessResponse({ success: true }),
+    ...overrides
+  };
+}
+
+test("POST /api/meta-ads/ad-creative-update: oturum yoksa 401, Editor ise 403 döner — hiçbir tool çağrılmaz", async () => {
+  const unauthorized = makeResponse();
+  await adCreativeUpdateHandler(makeRequest({ method: "POST", authorized: false, body: VALID_CREATIVE_BODY }), unauthorized);
+  assert.equal(unauthorized.statusCode, 401);
+
+  const calledTools = [];
+  const forbidden = makeResponse();
+  await withMockedFetch(withStandardHandshake({}, calledTools), async () => {
+    await adCreativeUpdateHandler(makeRequest({ method: "POST", role: "Editor", body: VALID_CREATIVE_BODY }), forbidden);
+  });
+  assert.equal(forbidden.statusCode, 403);
+  assert.deepEqual(calledTools, []);
+});
+
+test("GET /api/meta-ads/ad-creative-update: yalnız POST desteklenir, 405 döner", async () => {
+  const res = makeResponse();
+  await adCreativeUpdateHandler(makeRequest({ method: "GET", role: "Admin" }), res);
+  assert.equal(res.statusCode, 405);
+});
+
+for (const missingField of ["ad_id", "name", "message", "headline", "link", "call_to_action_type"]) {
+  test(`POST /api/meta-ads/ad-creative-update: ${missingField} eksikse 400 döner, hiçbir tool çağrılmaz`, async () => {
+    const calledTools = [];
+    const res = makeResponse();
+    const body = { ...VALID_CREATIVE_BODY, [missingField]: "" };
+    await withMockedFetch(withStandardHandshake({}, calledTools), async () => {
+      await adCreativeUpdateHandler(makeRequest({ method: "POST", role: "Admin", body }), res);
+    });
+    assert.equal(res.statusCode, 400);
+    assert.deepEqual(calledTools, []);
+  });
+}
+
+test("POST /api/meta-ads/ad-creative-update: image_hash eksikse 400 döner (bu ekran yalnız mevcut görseli yeniden kullanır) — tool hiç çağrılmaz", async () => {
+  const calledTools = [];
+  const res = makeResponse();
+  const body = { ...VALID_CREATIVE_BODY, image_hash: "" };
+  await withMockedFetch(withStandardHandshake({}, calledTools), async () => {
+    await adCreativeUpdateHandler(makeRequest({ method: "POST", role: "Admin", body }), res);
+  });
+  assert.equal(res.statusCode, 400);
+  assert.deepEqual(calledTools, []);
+});
+
+test("POST /api/meta-ads/ad-creative-update: geçersiz call_to_action_type 400 döner, tool hiç çağrılmaz", async () => {
+  const calledTools = [];
+  const res = makeResponse();
+  const body = { ...VALID_CREATIVE_BODY, call_to_action_type: "BUY_NOW_PLEASE" };
+  await withMockedFetch(withStandardHandshake({}, calledTools), async () => {
+    await adCreativeUpdateHandler(makeRequest({ method: "POST", role: "Admin", body }), res);
+  });
+  assert.equal(res.statusCode, 400);
+  assert.deepEqual(calledTools, []);
+});
+
+test("POST /api/meta-ads/ad-creative-update: image_url alanı istemciden gönderilse bile YOK SAYILIR ve hiçbir MCP çağrısına geçirilmez (Meta CDN URL'i yeniden kullanılmaz)", async () => {
+  let capturedCreateArgs;
+  const res = makeResponse();
+  const body = { ...VALID_CREATIVE_BODY, image_url: "https://scontent.xx.fbcdn.net/temporary-cdn-link.jpg" };
+  await withMockedFetch(
+    withStandardHandshake(
+      creativeToolHandlers({
+        ads_create_ad_creative: (message) => {
+          capturedCreateArgs = message.params.arguments;
+          return toolCallSuccessResponse({ creative_id: "new_1" });
+        }
+      })
+    ),
+    async () => {
+      await adCreativeUpdateHandler(makeRequest({ method: "POST", role: "Admin", body }), res);
+    }
+  );
+  assert.equal(res.statusCode, 200);
+  assert.ok(!("image_url" in capturedCreateArgs), "image_url MCP'ye sızdı");
+  assert.equal(capturedCreateArgs.image_hash, "hash_1");
+});
+
+test("POST /api/meta-ads/ad-creative-update: Admin + geçerli body AMA confirm yok/false → 400 CONFIRMATION_REQUIRED, hiçbir tool çağrılmaz", async () => {
+  const calledTools = [];
+  const noConfirm = makeResponse();
+  const falseConfirm = makeResponse();
+  await withMockedFetch(withStandardHandshake({}, calledTools), async () => {
+    await adCreativeUpdateHandler(makeRequest({ method: "POST", role: "Admin", body: { ...VALID_CREATIVE_BODY, confirm: undefined } }), noConfirm);
+    await adCreativeUpdateHandler(makeRequest({ method: "POST", role: "Admin", body: { ...VALID_CREATIVE_BODY, confirm: false } }), falseConfirm);
+  });
+  assert.equal(noConfirm.statusCode, 400);
+  assert.equal(noConfirm.payload.error.code, "CONFIRMATION_REQUIRED");
+  assert.equal(falseConfirm.statusCode, 400);
+  assert.deepEqual(calledTools, []);
+});
+
+test("POST /api/meta-ads/ad-creative-update: istemci confirmed:true göndermeye çalışsa da yok sayılır — MCP'ye giden confirmed HER ZAMAN sunucu tarafında üretilir", async () => {
+  let capturedCreateArgs;
+  let capturedBindArgs;
+  const res = makeResponse();
+  await withMockedFetch(
+    withStandardHandshake(
+      creativeToolHandlers({
+        ads_create_ad_creative: (message) => {
+          capturedCreateArgs = message.params.arguments;
+          return toolCallSuccessResponse({ creative_id: "new_1" });
+        },
+        ads_update_ad: (message) => {
+          capturedBindArgs = message.params.arguments;
+          return toolCallSuccessResponse({ success: true });
+        }
+      })
+    ),
+    async () => {
+      await adCreativeUpdateHandler(makeRequest({ method: "POST", role: "Admin", body: { ...VALID_CREATIVE_BODY, confirmed: false } }), res);
+    }
+  );
+  assert.equal(res.statusCode, 200);
+  assert.equal(capturedCreateArgs.confirmed, true);
+  assert.equal(capturedBindArgs.confirmed, true);
+});
+
+test("POST /api/meta-ads/ad-creative-update: Admin + confirm:true → ads_get_ad_creative_assets -> ads_create_ad_creative -> ads_update_ad sırayla TAM BİR KEZ çağrılır, 200 + previous_creative_id/new_creative_id döner", async () => {
+  const calledTools = [];
+  const res = makeResponse();
+  await withMockedFetch(withStandardHandshake(creativeToolHandlers(), calledTools), async () => {
+    await adCreativeUpdateHandler(makeRequest({ method: "POST", role: "Admin", body: VALID_CREATIVE_BODY }), res);
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.ok, true);
+  assert.equal(res.payload.previous_creative_id, "old_1");
+  assert.equal(res.payload.new_creative_id, "new_1");
+  assert.deepEqual(calledTools, ["ads_get_ad_creative_assets", "ads_create_ad_creative", "ads_update_ad"]);
+});
+
+test("POST /api/meta-ads/ad-creative-update: bind (ads_update_ad) reddedilirse 502 döner ve new_creative_id hatada kaybolmadan taşınır", async () => {
+  const res = makeResponse();
+  await withMockedFetch(
+    withStandardHandshake(
+      creativeToolHandlers({
+        ads_update_ad: () =>
+          fakeFetchResponse({
+            headers: { "content-type": "application/json" },
+            bodyText: JSON.stringify({ jsonrpc: "2.0", id: "call", result: { isError: true, content: [{ type: "text", text: "bind reddedildi" }] } })
+          })
+      })
+    ),
+    async () => {
+      await adCreativeUpdateHandler(makeRequest({ method: "POST", role: "Admin", body: VALID_CREATIVE_BODY }), res);
+    }
+  );
+  assert.equal(res.statusCode, 502);
+  assert.equal(res.payload.ok, false);
+  assert.equal(res.payload.error.new_creative_id, "new_1");
+});
+
+test("POST /api/meta-ads/ad-creative-update: description/instagram_user_id verilmezse MCP çağrısına HİÇ eklenmez (undefined alan olarak sızmaz)", async () => {
+  let capturedCreateArgs;
+  const res = makeResponse();
+  await withMockedFetch(
+    withStandardHandshake(
+      creativeToolHandlers({
+        ads_create_ad_creative: (message) => {
+          capturedCreateArgs = message.params.arguments;
+          return toolCallSuccessResponse({ creative_id: "new_1" });
+        }
+      })
+    ),
+    async () => {
+      await adCreativeUpdateHandler(makeRequest({ method: "POST", role: "Admin", body: VALID_CREATIVE_BODY }), res);
+    }
+  );
+  assert.equal(res.statusCode, 200);
+  assert.ok(!("description" in capturedCreateArgs));
+  assert.ok(!("instagram_user_id" in capturedCreateArgs));
 });

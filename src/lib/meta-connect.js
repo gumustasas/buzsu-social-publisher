@@ -280,13 +280,87 @@ export async function updateAdSetBudget(adSetId, dailyBudgetTry) {
   return { success: Boolean(data?.success) };
 }
 
+// PR-4: destructive/creative yönetimi. confirmed HER ZAMAN burada sunucu
+// tarafında true gönderilir — PR-3'teki (setAdStatus/updateAdSetBudget) İLE
+// AYNI kural, istemciden bir "confirmed" alanı ASLA kabul edilmez/geçirilmez.
+// ads_delete_ad'ın kendisi PAUSED-only guard'ı zaten uyguluyor (ACTIVE bir
+// reklamı reddeder, DELETED/ARCHIVED için idempotent başarı döner) — bu
+// asıl güvenlik sınırıdır; buradaki/route'taki/UI'daki hiçbir kontrol bunun
+// yerini TUTMAZ, sadece erken/UX seviyesinde aynı kısıtı tekrarlar.
+//
+// ads_delete_ad'ın tam dönüş şeması (deleted/deletion_semantics dışında)
+// upstream kodda doğrulanamadı — bilinen alanlar varsa geçirilir, yoksa
+// null kalır (uydurulmaz, bkz. getAdCreativeAssets'teki aynı yaklaşım).
+export async function deleteAd(adId) {
+  const data = await callTool("ads_delete_ad", { ad_id: adId, confirmed: true });
+  return {
+    deleted: data?.deleted ?? null,
+    deletion_semantics: data?.deletion_semantics ?? null,
+    delete_call_issued: data?.delete_call_issued ?? null,
+    status: data?.status ?? null,
+    effective_status: data?.effective_status ?? null
+  };
+}
+
+// name/message/headline/link/call_to_action_type zorunlu (ads_create_ad_creative
+// şemasıyla birebir aynı); description/image_hash/instagram_user_id/page_id/
+// ad_account_id isteğe bağlı. image_url burada KASITLI OLARAK parametre olarak
+// alınmaz/iletilmez — bu PR'ın UI'sı yalnızca ads_get_ad_creative_assets'ten
+// gelen MEVCUT image_hash'i yeniden kullanır; Meta'nın geçici CDN image_url'i
+// hiçbir zaman yeni bir creative'e girdi olarak geri verilmez.
+export async function createAdCreative(params) {
+  const data = await callTool("ads_create_ad_creative", { ...params, confirmed: true });
+  return { creative_id: data?.creative_id ?? null };
+}
+
+// Var olan bir creative_id'yi var olan bir reklama bağlar. Geri alma
+// (rollback), bu fonksiyonun önceki creative_id ile AYNEN tekrar
+// çağrılmasıdır (ads_update_ad'ın kendi dokümantasyonundaki yöntem) —
+// createAndBindAdCreative bu yüzden bağlamadan ÖNCE mevcut creative_id'yi
+// okuyup previous_creative_id olarak döner.
+export async function updateAdCreative(adId, creativeId) {
+  const data = await callTool("ads_update_ad", { ad_id: adId, creative_id: creativeId, confirmed: true });
+  return { success: Boolean(data?.success), ad_id: data?.ad_id ?? adId, creative_id: data?.creative_id ?? creativeId };
+}
+
+/**
+ * PR-4'ün "Yeni kreatif oluştur ve reklama bağla" tek adımlık akışı: (1) reklamın
+ * MEVCUT creative_id'sini okur (rollback bilgisi için), (2) yeni bir tekil-görsel
+ * link creative oluşturur, (3) onu reklama bağlar. ads_create_ad_creative
+ * kendisi "no ad is created, updated, or activated, and nothing can spend"
+ * diyor — yani (2) başarılı ama (3) başarısız olursa oluşturulan creative
+ * hiçbir ada bağlı olmadığı için ZARARSIZDIR, ama kaybolmasın diye hatanın
+ * new_creative_id alanına eklenir (bkz. errorToApiShape).
+ */
+export async function createAndBindAdCreative(adId, creativeParams) {
+  const current = await getAdCreativeAssets(adId);
+  const previousCreativeId = current.creative_id || null;
+
+  const { creative_id: newCreativeId } = await createAdCreative(creativeParams);
+  if (!newCreativeId) {
+    throw new Error("Kreatif oluşturuldu ama creative_id alınamadı.");
+  }
+
+  try {
+    const bind = await updateAdCreative(adId, newCreativeId);
+    return { previous_creative_id: previousCreativeId, new_creative_id: newCreativeId, bind };
+  } catch (error) {
+    error.new_creative_id = newCreativeId;
+    throw error;
+  }
+}
+
 // Route'ların UI'ya döndürdüğü hata her zaman bu sabit sözleşmeye normalize
 // edilir; MCP/JSON-RPC'nin ham hata biçimi asla UI'ya sızmaz.
 export function errorToApiShape(error) {
-  return {
+  const shape = {
     code: error?.code || "MCP_UPSTREAM_ERROR",
     message: redact(error?.message || "Meta bağlantı servisiyle iletişimde beklenmeyen bir hata oluştu.")
   };
+  // createAndBindAdCreative: create başarılı ama bind başarısız olduysa,
+  // oluşturulan (zararsız, bağlanmamış) creative_id kaybolmasın diye taşınır.
+  if (error?.new_creative_id) shape.new_creative_id = error.new_creative_id;
+  return shape;
 }
 
 function todaySummaryFields(row) {
