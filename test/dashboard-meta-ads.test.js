@@ -306,18 +306,45 @@ test("PR-5: ham effective_status değerleri (CAMPAIGN_PAUSED, ADSET_PAUSED, WITH
 // içindeki değişmeyen th/td sırası). Sticky kaydırmanın #meta-ads-table-wrap'in
 // kendisine ait olması gerekiyor (position:sticky, kendi kaydıran atasına göre
 // çalışır) — aksi halde sticky hücreler sayfanın kendisine göre konumlanırdı.
-test("PR-6: #meta-ads-table-wrap kendi içinde yatay kaydırılabilir (mobil davranış korunur)", () => {
+//
+// PR-8: PR-6'daki İncele=sticky right davranışı KALDIRILDI — iki sticky sütun
+// arasında ortadaki Durum/Gerçek Durum/Kampanya/Reklam Seti sıkışıp okunmaz hale
+// geliyordu. Artık yalnız Reklam sticky left; İncele normal bir sütun olarak
+// yatay scroll ile sağa kaydırılıp erişiliyor. Orta sütunlara sıkışmayı önleyen
+// min-width YALNIZ mobil media query (≤760px) içinde uygulanıyor — masaüstünde
+// hiç forced min-width yok, bu yüzden önceki (scroll'suz) desktop görünümü aynen
+// korunuyor (bkz. aşağıdaki testler).
+test("PR-8: #meta-ads-table-wrap kendi içinde yatay kaydırılabilir (mobil davranış korunur)", () => {
   assert.match(dashboard, /#meta-ads-table-wrap\{overflow-x:auto/);
 });
 
-test("PR-6: ilk sütun (Reklam) sticky left, son sütun (İncele) sticky right — opak arka plan + hafif shadow ile", () => {
+test("PR-8: yalnız ilk sütun (Reklam) sticky left kalır — opak arka plan + hafif shadow ile", () => {
   assert.match(dashboard, /#meta-ads-table-wrap th:first-child,#meta-ads-table-wrap td:first-child\{position:sticky;left:0;[^}]*background:#fff/);
-  assert.match(dashboard, /#meta-ads-table-wrap th:last-child,#meta-ads-table-wrap td:last-child\{position:sticky;right:0;[^}]*background:#fff/);
   assert.match(dashboard, /box-shadow:2px 0 4px -2px/);
-  assert.match(dashboard, /box-shadow:-2px 0 4px -2px/);
 });
 
-test("PR-6: sticky düzeltmesi tabloyu üreten renderTable() fonksiyonuna dokunmadı — kolon sırası (Reklam/Durum/Gerçek Durum/Kampanya/Reklam Seti/İncele) aynı kaldı", () => {
+test("PR-8: son sütun (İncele) artık sticky DEĞİL — normal sütun olarak yatay scroll ile erişiliyor", () => {
+  const lastChildRule = dashboard.match(/#meta-ads-table-wrap th:last-child,#meta-ads-table-wrap td:last-child\{[^}]*\}/)[0];
+  assert.doesNotMatch(lastChildRule, /position:\s*sticky/);
+  assert.doesNotMatch(lastChildRule, /right:\s*0/);
+  assert.doesNotMatch(dashboard, /td:last-child\{position:sticky;right:0/);
+});
+
+test("PR-8: orta sütunlara (Durum/Gerçek Durum/Kampanya/Reklam Seti) sıkışmayı önleyen min-width YALNIZ mobil media query içinde uygulanır — masaüstünde forced genişlik yok, mevcut desktop görünümü bozulmaz", () => {
+  const mediaQueryIndex = dashboard.indexOf("@media(max-width:760px)");
+  assert.ok(mediaQueryIndex !== -1, "#meta-ads-table-wrap için mobil media query bulunamadı");
+  const mobileBlock = dashboard.slice(mediaQueryIndex).match(/@media\(max-width:760px\)\{[\s\S]*?\n\}/)[0];
+  assert.match(mobileBlock, /#meta-ads-table-wrap table\{min-width:820px\}/);
+  assert.match(mobileBlock, /th:nth-child\(3\),#meta-ads-table-wrap td:nth-child\(3\)\{min-width:170px\}/);
+  // Aynı min-width kuralı @media bloğunun DIŞINDA (yani masaüstü için geçerli
+  // genel kuralların olduğu kısımda) tekrar etmemeli — aksi halde desktop'ta
+  // da zorla genişleyip gereksiz bir yatay scroll açardı.
+  const outsideMediaQuery = dashboard.slice(0, mediaQueryIndex);
+  assert.doesNotMatch(outsideMediaQuery, /td:nth-child\(3\)\{min-width/);
+  assert.doesNotMatch(outsideMediaQuery, /#meta-ads-table-wrap table\{min-width/);
+});
+
+test("PR-8: sticky düzeltmesi tabloyu üreten renderTable() fonksiyonuna dokunmadı — kolon sırası (Reklam/Durum/Gerçek Durum/Kampanya/Reklam Seti/İncele) aynı kaldı (masaüstü davranışı değişmedi)", () => {
   const fn = client.match(/function renderTable\(\) \{[\s\S]*?\n  \}/)[0];
   assert.match(
     fn,
