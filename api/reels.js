@@ -44,10 +44,19 @@ export default async function handler(request, response) {
     // üretir. Provider'dan bağımsızdır — ikisi de aynı promptu kullanır.
     if (body.action === "preview") {
       if (body.provider !== "fal" && body.provider !== "veo" && body.provider !== "omni") return response.status(400).json({ error: "Önizleme yalnızca fal.ai, Veo veya Omni için kullanılabilir." });
-      const previewProduct = await resolveProduct(body.productId);
-      if (!previewProduct) return response.status(400).json({ error: "Ürün bulunamadı." });
-      const title = previewProduct.title;
       const freePrompt = typeof body.freePrompt === "string" ? body.freePrompt.trim() : "";
+      // Omni sıfırdan (zero-shot) üretim: serbest metin promptu doluysa ve
+      // hiçbir productId verilmemişse ürün çözümlemesi TAMAMEN atlanır —
+      // freePrompt zaten birebir/olduğu gibi gönderiliyor (aşağıdaki
+      // "if (freePrompt)" dalı), ürün başlığına hiç ihtiyaç yok. fal.ai/Veo
+      // için bu istisna YOKTUR (ikisi de image-to-video, ürün/görsel şart).
+      const skipProductForOmni = body.provider === "omni" && Boolean(freePrompt) && !body.productId;
+      let title = "";
+      if (!skipProductForOmni) {
+        const previewProduct = await resolveProduct(body.productId);
+        if (!previewProduct) return response.status(400).json({ error: "Ürün bulunamadı." });
+        title = previewProduct.title;
+      }
       let motion = typeof body.motion === "string" ? body.motion.trim() : "";
       let motionSource = "user";
       // Serbest metin doluysa REFERENCE/PRESERVE/MOTION/CAMERA/CONSTRAINTS
@@ -84,17 +93,26 @@ export default async function handler(request, response) {
     }
 
     if (!providers.includes(body.provider)) return response.status(400).json({ error: "Seçilen AI sağlayıcısının API anahtarı Vercel'de tanımlı değil." });
-    const resolvedProduct = await resolveProduct(body.productId);
-    if (!resolvedProduct || !resolvedProduct.url) return response.status(400).json({ error: "Ürün URL bilgisi eksik." });
     // Kompozerde önceden bir AI sahne görseli üretilip kalıcı bir URL aldıysa
     // (bkz. api/scene-image.js), video bunun üzerinden üretilsin — kullanıcı
     // önizlediği sahneyi baz almak istiyor, ham ürün fotoğrafını değil. Bu,
     // fotoğrafı Airtable'da olmayan (katalog) ürünler için TEK görsel
     // kaynağıdır — onlarda resolvedProduct.imageUrl boştur.
     const sceneImageUrl = typeof body.sceneImageUrl === "string" && /^https:\/\//i.test(body.sceneImageUrl) ? body.sceneImageUrl : null;
-    const imageUrl = sceneImageUrl || resolvedProduct.imageUrl;
-    if (!imageUrl) return response.status(400).json({ error: "Ürün görseli eksik — önce üstte bir AI sahne görseli üretip \"Sahneyi baz alarak video üret\" kutusunu işaretleyin." });
-    const product = { title: resolvedProduct.title, url: resolvedProduct.url, imageUrl };
+    // Omni sıfırdan (zero-shot) üretim: productId verilmemiş VE bir sahne
+    // görseli de istenmemişse ürün çözümlemesi/görsel zorunluluğu TAMAMEN
+    // atlanır — submitOmniVideoGeneration referenceImageUrl'siz de çalışır
+    // (bkz. src/omni-video.js). fal.ai/Veo için bu istisna YOKTUR (ikisi de
+    // image-to-video, ürün/görsel her zaman şart).
+    const skipProductForOmni = body.provider === "omni" && !body.productId && !sceneImageUrl;
+    let product = null;
+    if (!skipProductForOmni) {
+      const resolvedProduct = await resolveProduct(body.productId);
+      if (!resolvedProduct || !resolvedProduct.url) return response.status(400).json({ error: "Ürün URL bilgisi eksik." });
+      const imageUrl = sceneImageUrl || resolvedProduct.imageUrl;
+      if (!imageUrl) return response.status(400).json({ error: "Ürün görseli eksik — önce üstte bir AI sahne görseli üretip \"Sahneyi baz alarak video üret\" kutusunu işaretleyin." });
+      product = { title: resolvedProduct.title, url: resolvedProduct.url, imageUrl };
+    }
 
     if (body.provider === "fal" || body.provider === "veo" || body.provider === "omni") {
       // Video üretimi her zaman önce "preview" ile kurulmuş bir snapshot
@@ -123,7 +141,7 @@ export default async function handler(request, response) {
         ? await submitFalVideo(product, process.env, { finalizedPrompt })
         : body.provider === "veo"
           ? await submitVeoVideo(product, process.env, { finalizedPrompt, model: modelOverride })
-          : await submitOmniVideoGeneration(finalizedPrompt, process.env, { referenceImageUrl: imageUrl, confirmed: true });
+          : await submitOmniVideoGeneration(finalizedPrompt, process.env, { referenceImageUrl: product?.imageUrl, confirmed: true });
       console.log(JSON.stringify({ event: "video-prompt-sent", promptId, provider: body.provider, model: job.model, productId: body.productId, at: new Date().toISOString() }));
       return response.status(200).json({ ok: true, [body.provider]: job });
     }

@@ -130,6 +130,123 @@ test("reels handler: Veo 429 döndürürse HTTP 429 + yapılandırılmış JSON 
   );
 });
 
+// Bulunan bug: Omni sıfırdan (zero-shot) üretiminde productId koşulsuz
+// zorunlu tutuluyordu ("Ürün seçin." hatası) — hem dashboard.html'de hem
+// burada, api/reels.js'de. Bu, Omni'nin fal.ai/Veo'dan farklı olarak
+// image-to-video DEĞİL, salt metinden video üretebilmesini (bkz.
+// src/omni-video.js:submitOmniVideoGeneration) tamamen engelliyordu.
+// Aşağıdaki testler düzeltmeyi (skipProductForOmni) doğruluyor.
+const OMNI_INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions";
+
+test("reels handler: Omni zero-shot (freePrompt + productId yok) → preview action, Airtable'a HİÇ dokunmadan promptu birebir döner", async () => {
+  const originalFetch = global.fetch;
+  let airtableCalled = false;
+  global.fetch = async (url) => {
+    const href = String(url);
+    if (href.includes("api.airtable.com")) { airtableCalled = true; return { ok: true, json: async () => ({ records: [] }) }; }
+    throw new Error(`Beklenmeyen fetch: ${href}`);
+  };
+  try {
+    const req = makeRequest({ action: "preview", provider: "omni", productId: "", freePrompt: "a glass of water on a counter" });
+    const res = makeResponse();
+    await handler(req, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.payload.ok, true);
+    assert.equal(res.payload.preview.prompt, "a glass of water on a counter");
+    assert.equal(res.payload.preview.motionSource, "free");
+    assert.equal(airtableCalled, false, "productId olmadan Omni zero-shot Airtable'a hiç istek atmamalı");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("reels handler: Omni zero-shot (freePrompt + productId yok, sahne görseli yok) → generation isteği Airtable'a dokunmadan gönderilir, submitOmniVideoGeneration'a referenceImageUrl:undefined gider", async () => {
+  const originalFetch = global.fetch;
+  let airtableCalled = false;
+  let interactionsCallCount = 0;
+  let capturedBody = null;
+  global.fetch = async (url, options) => {
+    const href = String(url);
+    if (href.includes("api.airtable.com")) { airtableCalled = true; return { ok: true, json: async () => ({ records: [] }) }; }
+    if (href === OMNI_INTERACTIONS_URL) {
+      interactionsCallCount++;
+      capturedBody = JSON.parse(options.body);
+      return { ok: true, json: async () => ({ id: "v1_zeroshot", steps: [{ type: "model_output", content: [{ type: "video", uri: `${OMNI_INTERACTIONS_URL.replace("/interactions", "/files/out1")}:download?alt=media`, mime_type: "video/mp4" }] }] }) };
+    }
+    if (href.includes("/v1beta/files/out1")) return { ok: true, json: async () => ({ name: "files/out1", state: "ACTIVE" }) };
+    throw new Error(`Beklenmeyen fetch: ${href}`);
+  };
+  try {
+    const prompt = "a glass of water on a counter";
+    const req = makeRequest({ provider: "omni", productId: "", finalizedPrompt: prompt, promptId: hashVideoPrompt(prompt) });
+    const res = makeResponse();
+    await handler(req, res);
+    assert.equal(res.statusCode, 200, JSON.stringify(res.payload));
+    assert.equal(res.payload.ok, true);
+    assert.equal(res.payload.omni.interactionId, "v1_zeroshot");
+    assert.equal(airtableCalled, false, "productId olmadan Omni zero-shot Airtable'a hiç istek atmamalı — ürün zorunlu OLMAMALI");
+    assert.equal(interactionsCallCount, 1, "tam olarak bir generation isteği gönderilmeli, tekrar/fallback yok");
+    assert.deepEqual(capturedBody.input.map((p) => p.type), ["text"], "referenceImageUrl verilmediği için input yalnızca text içermeli (image parçası yok)");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// Ürün tabanlı/referans görselli akışlar (fal.ai, Veo, ve productId VERİLEN
+// Omni çağrıları) eski validasyonu AYNEN korumalı — bu istisna yalnızca
+// "Omni + productId yok" kombinasyonuna özgü.
+test("reels handler: Veo (ürün tabanlı akış) productId olmadan hâlâ eski validasyonla reddedilir — istisna Omni'ye özgü, Veo'ya sızmıyor", async () => {
+  await withMockedFetch(
+    () => { throw new Error("Veo'ya hiç istek atılmamalıydı — ürün doğrulaması önce başarısız olmalı"); },
+    async () => {
+      // productId boş → resolveProduct(Airtable'da "" id'li kayıt bulamaz) → null.
+      const req = makeRequest({ provider: "veo", productId: "", finalizedPrompt: "p", promptId: hashVideoPrompt("p") });
+      const res = makeResponse();
+      await handler(req, res);
+      assert.equal(res.statusCode, 400);
+      assert.match(res.payload.error, /Ürün URL bilgisi eksik/);
+    }
+  );
+});
+
+test("reels handler: Omni + productId VERİLDİYSE (ürün tabanlı Omni akışı) eski validasyon aynen çalışır — ürün bulunamazsa 400 döner", async () => {
+  await withMockedFetch(
+    () => { throw new Error("Omni'ye hiç istek atılmamalıydı — ürün doğrulaması önce başarısız olmalı"); },
+    async () => {
+      const req = makeRequest({ provider: "omni", productId: "recBogusDoesNotExist", finalizedPrompt: "p", promptId: hashVideoPrompt("p") });
+      const res = makeResponse();
+      await handler(req, res);
+      assert.equal(res.statusCode, 400);
+      assert.match(res.payload.error, /Ürün URL bilgisi eksik/);
+    }
+  );
+});
+
+test("reels handler: Omni + productId VERİLDİYSE referenceImageUrl olarak ürün görseli kullanılır (image-to-video referansı korunuyor)", async () => {
+  const originalFetch = global.fetch;
+  let capturedBody = null;
+  global.fetch = async (url, options) => {
+    const href = String(url);
+    if (href.includes("api.airtable.com")) return { ok: true, json: async () => ({ records: [PRODUCT_RECORD] }) };
+    if (href === "https://example.com/p.jpg") return { ok: true, headers: { get: () => "image/jpeg" }, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer };
+    if (href.includes("/upload/v1beta/files") && options?.headers?.["X-Goog-Upload-Command"] === "start") return { ok: true, headers: { get: (name) => (name === "x-goog-upload-url" ? "https://example.com/upload-session" : null) } };
+    if (href === "https://example.com/upload-session") return { ok: true, json: async () => ({ file: { uri: "https://example.com/files/img1", name: "files/img1", mimeType: "image/jpeg" } }) };
+    if (href.includes("/v1beta/files/img1")) return { ok: true, json: async () => ({ name: "files/img1", uri: "https://example.com/files/img1", mimeType: "image/jpeg", state: "ACTIVE" }) };
+    if (href === OMNI_INTERACTIONS_URL) { capturedBody = JSON.parse(options.body); return { ok: true, json: async () => ({ id: "v1_withproduct", steps: [] }) }; }
+    throw new Error(`Beklenmeyen fetch: ${href}`);
+  };
+  try {
+    const prompt = "p";
+    const req = makeRequest({ provider: "omni", productId: PRODUCT_ID, finalizedPrompt: prompt, promptId: hashVideoPrompt(prompt) });
+    const res = makeResponse();
+    await handler(req, res);
+    assert.equal(res.statusCode, 200, JSON.stringify(res.payload));
+    assert.deepEqual(capturedBody.input.map((p) => p.type), ["image", "text"]);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("reels handler: prompt hash doğrulaması model parametresinden etkilenmiyor — model değişse de aynı prompt/promptId kabul edilir", async () => {
   await withMockedFetch(
     () => ({ ok: true, json: async () => ({ name: "operations/test" }) }),
