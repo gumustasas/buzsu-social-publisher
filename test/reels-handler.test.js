@@ -79,6 +79,38 @@ test("reels handler: body.profile, body.model'in eşanlamlısı olarak kabul edi
   );
 });
 
+test("reels handler: body.resolution ('720p'/'1080p') Veo isteğinin parameters alanına aktarılır", async () => {
+  await withMockedFetch(
+    () => ({ ok: true, json: async () => ({ name: "operations/test" }) }),
+    async (veoCalls) => {
+      const prompt = "REFERENCE:\ntest\n\nMOTION:\ntest";
+      const req = makeRequest({ provider: "veo", productId: PRODUCT_ID, finalizedPrompt: prompt, promptId: hashVideoPrompt(prompt), model: "economy", resolution: "1080p" });
+      const res = makeResponse();
+      await handler(req, res);
+      assert.equal(res.statusCode, 200);
+      const predictCall = veoCalls.find((c) => c.url.includes("predictLongRunning"));
+      const body = JSON.parse(predictCall.options.body);
+      assert.equal(body.parameters.resolution, "1080p");
+    }
+  );
+});
+
+test("reels handler: geçersiz/beklenmeyen bir body.resolution değeri (allowlist dışı) sessizce yok sayılır, model varsayılanına düşülür", async () => {
+  await withMockedFetch(
+    () => ({ ok: true, json: async () => ({ name: "operations/test" }) }),
+    async (veoCalls) => {
+      const prompt = "REFERENCE:\ntest\n\nMOTION:\ntest";
+      const req = makeRequest({ provider: "veo", productId: PRODUCT_ID, finalizedPrompt: prompt, promptId: hashVideoPrompt(prompt), model: "economy", resolution: "4k" });
+      const res = makeResponse();
+      await handler(req, res);
+      assert.equal(res.statusCode, 200);
+      const predictCall = veoCalls.find((c) => c.url.includes("predictLongRunning"));
+      const body = JSON.parse(predictCall.options.body);
+      assert.equal("resolution" in body.parameters, false);
+    }
+  );
+});
+
 test("reels handler: model belirtilmezse (undefined) resolver zincirine düşer — economy varsayılanı kullanılır", async () => {
   await withMockedFetch(
     () => ({ ok: true, json: async () => ({ name: "operations/test" }) }),

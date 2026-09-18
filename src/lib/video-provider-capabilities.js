@@ -1,5 +1,7 @@
 import { OMNI_MODEL } from "../omni-video.js";
-import { VEO_MODEL_TIERS } from "../veo-video.js";
+import { VEO_MODEL_TIERS, VEO_TIER_ORDER } from "../veo-video.js";
+import { NANO_BANANA_2_MODEL } from "../scene-image.js";
+import { VEO_TIER_UI_LABELS, OMNI_UI_LABEL, NANO_BANANA_2_UI_LABEL, NANO_BANANA_2_LITE_UI_LABEL } from "./video-model-labels.js";
 
 // Google'ın Gemini API'sinde model listeleme (GET /v1beta/models) ÜCRETSİZDİR
 // — bu bir üretim/generation çağrısı DEĞİL, salt bir discovery isteğidir.
@@ -48,10 +50,31 @@ export async function getVideoProviderCapabilities(env = process.env) {
     ? veoModelIds.filter((id) => discoveredModels.has(id))
     : (hasGeminiKey ? veoModelIds : []);
 
+  // Her tier için ayrı available/label — dashboard bunu kullanarak
+  // discovery'de görünmeyen bir tier'ı (ör. hesapta erişim yoksa) UI'da
+  // disabled gösterir; hard-code edilmiş bir "hepsi açık" varsayımı YOKTUR.
+  const veoTiers = VEO_TIER_ORDER.map((tier) => {
+    const model = VEO_MODEL_TIERS[tier];
+    return { tier, model, label: VEO_TIER_UI_LABELS[tier], available: veoModels.includes(model) };
+  });
+
+  const nanoBanana2LiteModel = env.GEMINI_SCENE_MODEL || "gemini-3.1-flash-lite-image";
+  const nanoBanana2Model = env.GEMINI_NANO_BANANA_2_MODEL || NANO_BANANA_2_MODEL;
+  // Nano Banana 2, Gemini image modelleri (generateContent, GET /v1beta/models
+  // discovery'sinde Veo/Omni ile AYNI listede görünür) — bu yüzden aynı
+  // discoveredModels setine bakılır; discovery başarısızsa (bkz. listGeminiModels)
+  // yalnızca anahtar varlığına düşülür, Veo/Omni ile BİREBİR aynı davranış.
+  const nanoBanana2Listed = discoveredModels ? discoveredModels.has(nanoBanana2Model) : true;
+  const nanoBanana2LiteListed = discoveredModels ? discoveredModels.has(nanoBanana2LiteModel) : true;
+
   return {
     google: {
-      omni: { available: omniAvailable, models: omniAvailable ? [OMNI_MODEL] : [] },
-      veo: { available: hasGeminiKey && veoModels.length > 0, models: veoModels }
+      omni: { available: omniAvailable, models: omniAvailable ? [OMNI_MODEL] : [], label: OMNI_UI_LABEL },
+      veo: { available: hasGeminiKey && veoModels.length > 0, models: veoModels, tiers: veoTiers },
+      image: {
+        nanoBanana2: { available: hasGeminiKey && nanoBanana2Listed, model: nanoBanana2Model, label: NANO_BANANA_2_UI_LABEL },
+        nanoBanana2Lite: { available: hasGeminiKey && nanoBanana2LiteListed, model: nanoBanana2LiteModel, label: NANO_BANANA_2_LITE_UI_LABEL }
+      }
     },
     fal: { available: Boolean(env.FAL_KEY) }
   };

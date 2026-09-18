@@ -132,6 +132,12 @@ export default async function handler(request, response) {
       // başka bir provider'a sessizce geçilmez (fal/veo/omni birbirinden
       // tamamen ayrı çağrılır) — bu if/else zinciri buna göre yazıldı.
       const modelOverride = body.provider === "veo" ? (body.model || body.profile) : undefined;
+      // Çözünürlük SADECE Veo için anlamlı (fal.ai/Omni'de bu alan
+      // kullanılmaz, submitVeoVideo zaten sadece "720p"/"1080p" kabul eder —
+      // bkz. src/veo-video.js, generate_video_clip MCP tool'unun aynı
+      // enum'u). Kullanıcı dostu UI seçenekleri (#veo-resolution) da bu
+      // gerçek değerlerle birebir eşleşir, uydurma bir değer YOK.
+      const resolutionOverride = body.provider === "veo" && (body.resolution === "720p" || body.resolution === "1080p") ? body.resolution : undefined;
       // Omni'nin confirmed:true zorunluluğu (bkz. src/omni-video.js) burada
       // sabit true'dur — bu satıra ulaşılması, kullanıcının dashboard'daki
       // iki tıklamalı "Emin misin?" onayını (fal/veo ile AYNI UX) zaten
@@ -140,7 +146,7 @@ export default async function handler(request, response) {
       const job = body.provider === "fal"
         ? await submitFalVideo(product, process.env, { finalizedPrompt })
         : body.provider === "veo"
-          ? await submitVeoVideo(product, process.env, { finalizedPrompt, model: modelOverride })
+          ? await submitVeoVideo(product, process.env, { finalizedPrompt, model: modelOverride, resolution: resolutionOverride })
           : await submitOmniVideoGeneration(finalizedPrompt, process.env, { referenceImageUrl: product?.imageUrl, confirmed: true });
       console.log(JSON.stringify({ event: "video-prompt-sent", promptId, provider: body.provider, model: job.model, productId: body.productId, at: new Date().toISOString() }));
       return response.status(200).json({ ok: true, [body.provider]: job });
