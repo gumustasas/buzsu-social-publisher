@@ -29,6 +29,13 @@ export default async function handler(request, response) {
   if (!Number.isFinite(dailyBudgetTry) || dailyBudgetTry < MIN_BUDGET_TRY || dailyBudgetTry > MAX_BUDGET_TRY) {
     return response.status(400).json({ ok: false, error: { code: "BAD_REQUEST", message: `daily_budget_try ${MIN_BUDGET_TRY}-${MAX_BUDGET_TRY} arasında bir sayı olmalı.` } });
   }
+  // Frontend'in iki tıklamalı UI onayından sonra gönderdiği açık niyet sinyali.
+  // Bu, MCP'nin confirmed=true'sunun yerini TUTMAZ (browser hâlâ o alanı hiç
+  // görmez/kontrol etmez) — yalnız Social Publisher'ın kendi HTTP sözleşmesinde
+  // kazara/otomatik bir çağrının sessizce yazma yapmasını önler.
+  if (body.confirm !== true) {
+    return response.status(400).json({ ok: false, error: { code: "CONFIRMATION_REQUIRED", message: "confirm:true gerekli." } });
+  }
 
   try {
     const result = await updateAdSetBudget(adsetId, dailyBudgetTry);

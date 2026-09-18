@@ -373,8 +373,8 @@ test("Yalnız izin verilen tool'lar çağrılır — PR-1/2 read-only'ler + PR-3
       await adsHandler(makeRequest(), makeResponse());
       await adCreativeHandler(makeRequest({ query: { ad_id: "ad_1" } }), makeResponse());
       await overviewHandler(makeRequest(), makeResponse());
-      await adStatusHandler(makeRequest({ method: "POST", role: "Admin", body: { ad_id: "ad_1", status: "PAUSED" } }), makeResponse());
-      await adsetBudgetHandler(makeRequest({ method: "POST", role: "Admin", body: { adset_id: "adset_1", daily_budget_try: 100 } }), makeResponse());
+      await adStatusHandler(makeRequest({ method: "POST", role: "Admin", body: { ad_id: "ad_1", status: "PAUSED", confirm: true } }), makeResponse());
+      await adsetBudgetHandler(makeRequest({ method: "POST", role: "Admin", body: { adset_id: "adset_1", daily_budget_try: 100, confirm: true } }), makeResponse());
     }
   );
   const ALLOWED_TOOLS = new Set([
@@ -429,23 +429,40 @@ test("POST /api/meta-ads/ad-status: status ACTIVE/PAUSED dışındaysa (örn. DE
   assert.deepEqual(calledTools, []);
 });
 
-test("POST /api/meta-ads/ad-status: Admin + geçerli body → ads_set_ad_status confirmed:true ile çağrılır, 200 döner", async () => {
+test("POST /api/meta-ads/ad-status: Admin + geçerli body AMA confirm yok/false → 400 CONFIRMATION_REQUIRED, tool hiç çağrılmaz", async () => {
+  const calledTools = [];
+  const noConfirm = makeResponse();
+  const falseConfirm = makeResponse();
+  await withMockedFetch(withStandardHandshake({}, calledTools), async () => {
+    await adStatusHandler(makeRequest({ method: "POST", role: "Admin", body: { ad_id: "ad_1", status: "PAUSED" } }), noConfirm);
+    await adStatusHandler(makeRequest({ method: "POST", role: "Admin", body: { ad_id: "ad_1", status: "PAUSED", confirm: false } }), falseConfirm);
+  });
+  assert.equal(noConfirm.statusCode, 400);
+  assert.equal(noConfirm.payload.error.code, "CONFIRMATION_REQUIRED");
+  assert.equal(falseConfirm.statusCode, 400);
+  assert.deepEqual(calledTools, []);
+});
+
+test("POST /api/meta-ads/ad-status: Admin + confirm:true → ads_set_ad_status TAM BİR KEZ confirmed:true ile çağrılır, 200 döner", async () => {
   let capturedArgs;
+  let callCount = 0;
   const res = makeResponse();
   await withMockedFetch(
     withStandardHandshake({
       ads_set_ad_status: (message) => {
+        callCount += 1;
         capturedArgs = message.params.arguments;
         return toolCallSuccessResponse({ success: true });
       }
     }),
     async () => {
-      await adStatusHandler(makeRequest({ method: "POST", role: "Admin", body: { ad_id: "ad_42", status: "ACTIVE" } }), res);
+      await adStatusHandler(makeRequest({ method: "POST", role: "Admin", body: { ad_id: "ad_42", status: "ACTIVE", confirm: true } }), res);
     }
   );
   assert.equal(res.statusCode, 200);
   assert.equal(res.payload.ok, true);
   assert.equal(res.payload.success, true);
+  assert.equal(callCount, 1);
   assert.deepEqual(capturedArgs, { ad_id: "ad_42", status: "ACTIVE", confirmed: true });
 });
 
@@ -460,7 +477,7 @@ test("POST /api/meta-ads/ad-status: MCP guard'ı reddederse (örn. connector kı
         })
     }),
     async () => {
-      await adStatusHandler(makeRequest({ method: "POST", role: "Admin", body: { ad_id: "ad_1", status: "PAUSED" } }), res);
+      await adStatusHandler(makeRequest({ method: "POST", role: "Admin", body: { ad_id: "ad_1", status: "PAUSED", confirm: true } }), res);
     }
   );
   assert.equal(res.statusCode, 502);
@@ -490,21 +507,38 @@ test("POST /api/meta-ads/adset-budget: daily_budget_try aralık dışıysa (0 ve
   assert.deepEqual(calledTools, []);
 });
 
-test("POST /api/meta-ads/adset-budget: Admin + geçerli body → ads_update_adset_budget confirmed:true ile çağrılır, 200 döner", async () => {
+test("POST /api/meta-ads/adset-budget: Admin + geçerli body AMA confirm yok/false → 400 CONFIRMATION_REQUIRED, tool hiç çağrılmaz", async () => {
+  const calledTools = [];
+  const noConfirm = makeResponse();
+  const falseConfirm = makeResponse();
+  await withMockedFetch(withStandardHandshake({}, calledTools), async () => {
+    await adsetBudgetHandler(makeRequest({ method: "POST", role: "Admin", body: { adset_id: "adset_1", daily_budget_try: 100 } }), noConfirm);
+    await adsetBudgetHandler(makeRequest({ method: "POST", role: "Admin", body: { adset_id: "adset_1", daily_budget_try: 100, confirm: false } }), falseConfirm);
+  });
+  assert.equal(noConfirm.statusCode, 400);
+  assert.equal(noConfirm.payload.error.code, "CONFIRMATION_REQUIRED");
+  assert.equal(falseConfirm.statusCode, 400);
+  assert.deepEqual(calledTools, []);
+});
+
+test("POST /api/meta-ads/adset-budget: Admin + confirm:true → ads_update_adset_budget TAM BİR KEZ confirmed:true ile çağrılır, 200 döner", async () => {
   let capturedArgs;
+  let callCount = 0;
   const res = makeResponse();
   await withMockedFetch(
     withStandardHandshake({
       ads_update_adset_budget: (message) => {
+        callCount += 1;
         capturedArgs = message.params.arguments;
         return toolCallSuccessResponse({ success: true });
       }
     }),
     async () => {
-      await adsetBudgetHandler(makeRequest({ method: "POST", role: "Admin", body: { adset_id: "adset_9", daily_budget_try: 350.5 } }), res);
+      await adsetBudgetHandler(makeRequest({ method: "POST", role: "Admin", body: { adset_id: "adset_9", daily_budget_try: 350.5, confirm: true } }), res);
     }
   );
   assert.equal(res.statusCode, 200);
   assert.equal(res.payload.ok, true);
+  assert.equal(callCount, 1);
   assert.deepEqual(capturedArgs, { adset_id: "adset_9", daily_budget_try: 350.5, confirmed: true });
 });

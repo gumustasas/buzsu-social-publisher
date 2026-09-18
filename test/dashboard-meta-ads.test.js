@@ -83,6 +83,16 @@ test("PR-3: 'confirmed' alanı istemciden ASLA gönderilmez — sunucu her zaman
   requestBodies.forEach((body) => assert.doesNotMatch(body, /confirmed/i));
 });
 
+test("PR-3: iki tıklamalı onay sonrası GERÇEK gönderilen istek, Social Publisher'ın kendi 'confirm:true' niyet sinyalini taşır", () => {
+  // Bu 'confirm' (MCP'nin 'confirmed'inden farklı) — backend'de body.confirm !== true
+  // ise 400 döner; route'a doğrudan curl ile confirm göndermeden gidilirse artık
+  // sessizce yazma yapılmaz.
+  const requestBodies = [...client.matchAll(/JSON\.stringify\((\{[^}]*\})\)/g)].map((match) => match[1]);
+  const writeBodies = requestBodies.filter((body) => /ad_id|adset_id/.test(body));
+  assert.ok(writeBodies.length >= 2, "ad-status ve adset-budget body'leri bulunamadı");
+  writeBodies.forEach((body) => assert.match(body, /confirm:\s*true/));
+});
+
 test("PR-3: Admin-only kontrolü var — write kontrolleri isAdmin false ise gösterilmez", () => {
   assert.match(client, /state\.isAdmin/);
   assert.match(client, /if \(!state\.isAdmin\) \{/);

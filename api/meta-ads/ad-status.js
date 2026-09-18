@@ -25,6 +25,13 @@ export default async function handler(request, response) {
   if (!VALID_STATUSES.has(status)) {
     return response.status(400).json({ ok: false, error: { code: "BAD_REQUEST", message: "status ACTIVE veya PAUSED olmalı." } });
   }
+  // Frontend'in iki tıklamalı UI onayından sonra gönderdiği açık niyet sinyali.
+  // Bu, MCP'nin confirmed=true'sunun yerini TUTMAZ (browser hâlâ o alanı hiç
+  // görmez/kontrol etmez) — yalnız Social Publisher'ın kendi HTTP sözleşmesinde
+  // kazara/otomatik bir çağrının sessizce yazma yapmasını önler.
+  if (body.confirm !== true) {
+    return response.status(400).json({ ok: false, error: { code: "CONFIRMATION_REQUIRED", message: "confirm:true gerekli." } });
+  }
 
   try {
     const result = await setAdStatus(adId, status);

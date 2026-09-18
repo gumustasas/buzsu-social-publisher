@@ -337,7 +337,7 @@
     writeState.statusError = false;
     renderWriteControls();
     try {
-      const res = await mAdsApi("/api/meta-ads/ad-status", { method: "POST", body: JSON.stringify({ ad_id: writeState.adId, status: targetStatus }) });
+      const res = await mAdsApi("/api/meta-ads/ad-status", { method: "POST", body: JSON.stringify({ ad_id: writeState.adId, status: targetStatus, confirm: true }) });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data?.error?.message || "Durum güncellenemedi.");
       writeState.adStatus = targetStatus;
@@ -381,7 +381,7 @@
     writeState.budgetError = false;
     renderWriteControls();
     try {
-      const res = await mAdsApi("/api/meta-ads/adset-budget", { method: "POST", body: JSON.stringify({ adset_id: writeState.adsetId, daily_budget_try: value }) });
+      const res = await mAdsApi("/api/meta-ads/adset-budget", { method: "POST", body: JSON.stringify({ adset_id: writeState.adsetId, daily_budget_try: value, confirm: true }) });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data?.error?.message || "Bütçe güncellenemedi.");
       writeState.budgetMessage = `Bütçe güncellendi: ${formatMoney(value)}`;
