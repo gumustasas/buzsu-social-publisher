@@ -987,6 +987,47 @@ güvenilirlikte; ancak TTS/Lyria `response_format` içindeki tam alan adları
 dosyasının Omni'deki gibi Files API ACTIVE beklemesi gerekip gerekmediği
 **doğrulanmadı** — gerçek ücretli ilk denemeden önce teyit edilmesi önerilir.
 
+## YouTube Shorts — OAuth bağlantısı (youtube-auth / youtube-callback / youtube-status)
+
+YouTube Data API v3'e (`videos.insert`) statik bir anahtar yeterli değil —
+marka kanalı adına yükleme yapabilmek için OAuth 2.0 3-legged akışı
+(kalıcı bir **refresh token**) gerekir. Bu akış üç uç noktaya bölünmüştür:
+
+| Uç nokta | Rolü |
+| --- | --- |
+| `GET /api/youtube-auth` | **Başlangıç.** Panelde oturum açmış bir tarayıcıdan (dashboard'daki "Platform bağlantıları" panelindeki "Bağlan / Yeniden bağlan" linki) ziyaret edilir; hiçbir sır göndermeden, kullanıcıyı Google'ın yetkilendirme sayfasına 302 ile yönlendirir. `client_secret` bu URL'de ASLA görünmez. |
+| `GET /api/youtube-callback` | **Dönüş.** Google'ın kendisi buraya `?code=...` ile yönlendirir (oturum gerekmez — bu istek Google'dan gelir, dashboard'dan değil). Tek seferlik kodu kalıcı bir `refresh_token` ile değiştirip ekranda **bir kez** gösterir. |
+| `GET /api/youtube-status` | Dashboard'un canlı durum göstergesi (oturum gerektirir). `YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN` tanımlı mı VE refresh token gerçekten hâlâ geçerli mi (Google'a ücretsiz bir token yenileme çağrısıyla) kontrol eder. |
+
+**Yetkilendirme URL'i şunları içerir** (`api/youtube-auth.js`):
+- `access_type=offline` — yalnızca `access_token` değil, kalıcı bir `refresh_token` de döner (uygulama tarayıcı kapalıyken de, ör. cron ile, video yükleyebilsin diye zorunlu).
+- `prompt=consent` — Google, aynı istemciye DAHA ÖNCE izin verilmişse normalde ikinci yetkilendirmede `refresh_token` DÖNDÜRMEZ; bu parametre onay ekranını her seferinde yeniden gösterip yeni bir `refresh_token` almayı garanti eder — **süresi dolmuş/iptal edilmiş bir token'ı yenilemenin tek yolu budur**.
+- `scope=https://www.googleapis.com/auth/youtube.upload`
+- `redirect_uri=https://buzsu-social-publisher.vercel.app/api/youtube-callback` — Google Cloud Console'da bu OAuth Client için kayıtlı olan URI ile **birebir** aynı olmalı (aksi halde `redirect_uri_mismatch`); `api/youtube-auth.js` ve `api/youtube-callback.js`'te aynı sabit değer kullanılır.
+
+**Güvenli saklama:** bu uygulamanın kalıcı bir sır deposu yok (bilinçli
+tasarım) — `refresh_token` hiçbir veritabanına/dosyaya yazılmaz, yalnızca
+`/api/youtube-callback`'in tek seferlik yanıtında gösterilir. Tek doğru
+saklama yeri **Vercel Production ortam değişkenleridir**
+(`YOUTUBE_REFRESH_TOKEN`) — sayfa kapatıldıktan sonra bir daha gösterilmez,
+kaybedilirse `/api/youtube-auth` ile akış baştan tekrarlanır.
+
+**"YouTube token yenilenemedi: Token has been expired or revoked" hatası**
+kodda bir kusur değil, Google'ın `invalid_grant` cevabıdır — kayıtlı
+`YOUTUBE_REFRESH_TOKEN` artık geçersizdir. En sık neden: Google Cloud
+Console'daki OAuth consent screen hâlâ **"Testing"** durumundaysa, verilen
+refresh token'lar **7 gün sonra otomatik geçersiz olur**. Kalıcı kullanım
+için consent screen'i **"In production"**a almak gerekir; aksi halde
+`/api/youtube-auth` ile periyodik olarak yeniden bağlanmak gerekir.
+Dashboard'daki YouTube Shorts satırı artık bunu proaktif olarak gösterir
+(`/api/youtube-status` üzerinden) — sabit "Bağlı değil" metni değil, gerçek
+`configured`/`connected` durumu.
+
+`src/youtube-publish.js`'teki gerçek yükleme mantığı (`uploadShort`,
+resumable upload) bu değişiklikle **değişmedi** — yalnızca `getAccessToken`/
+`assertYouTubeConfigured` dışa açıldı (`/api/youtube-status`'ün aynı OAuth
+çağrısını tekrar yazmadan yeniden kullanabilmesi için).
+
 ## Sonraki adım
 
 Dry-run doğru çalıştıktan sonra Meta API için ayrı gönderim scripti eklenir. O aşamada da önce test modu, sonra tek kayıtla kontrollü canlı paylaşım yapılmalıdır.
