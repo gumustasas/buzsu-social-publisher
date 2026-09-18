@@ -2,8 +2,12 @@
    (Genel Bakış: bugün/7 gün performansı, low_volume uyarısı, aktif kampanya
    sayısı, Pixel durumu, reklam listesinde campaign/adset isim çözümlemesi) +
    PR-3 (tersinir yazma işlemleri: reklam durumu pause/resume + reklam seti
-   günlük bütçesi — Admin-only, iki tıklamalı onay; asıl güvenlik sınırı
-   backend'in Admin-only kontrolü ve MCP'nin confirmed=true şartıdır). */
+   günlük bütçesi) + PR-4 (destructive/creative yönetimi: reklam silme —
+   yalnız PAUSED, geri alınamaz — ve mevcut bir image_hash'i yeniden kullanarak
+   yeni bir kreatif oluşturup reklama bağlama). Tümü Admin-only, iki tıklamalı
+   onay; asıl güvenlik sınırı backend'in Admin-only kontrolü ve MCP'nin
+   confirmed=true şartıdır (bkz. src/lib/meta-connect.js) — buradaki
+   PAUSED-only/Admin-only kontroller SADECE UX katmanıdır. */
 (function () {
   "use strict";
 
@@ -12,8 +16,10 @@
   let searchDebounceTimer = null;
 
   const CONFIRM_ARM_MS = 6000;
+  const CTA_OPTIONS = ["LEARN_MORE", "SHOP_NOW", "GET_QUOTE", "CONTACT_US", "SIGN_UP", "GET_OFFER", "SUBSCRIBE"];
   const writeState = {
     adId: null,
+    adName: null,
     adStatus: null,
     adsetId: null,
     statusConfirmArmed: false,
@@ -26,7 +32,29 @@
     budgetConfirmTimer: null,
     budgetBusy: false,
     budgetMessage: "",
-    budgetError: false
+    budgetError: false,
+    // PR-4: silme — geri alınamaz, bu yüzden ayrı ve kendi onay zamanlayıcısına sahip.
+    deleteConfirmArmed: false,
+    deleteConfirmTimer: null,
+    deleteBusy: false,
+    deleteMessage: "",
+    deleteError: false,
+    // PR-4: kreatif oluştur + bağla. image_hash listesi mevcut kartlardan
+    // türetilir — burada YENİ bir görsel yüklenmez (Meta CDN image_url asla
+    // yeniden kullanılmaz, bkz. src/lib/meta-connect.js:createAdCreative).
+    creativeImageHashes: [],
+    creativeName: "",
+    creativeMessage: "",
+    creativeHeadline: "",
+    creativeDescription: "",
+    creativeLink: "",
+    creativeCta: CTA_OPTIONS[0],
+    creativeImageHash: "",
+    creativeConfirmArmed: false,
+    creativeConfirmTimer: null,
+    creativeBusy: false,
+    creativeResultMessage: "",
+    creativeResultError: false
   };
 
   const byId = (id) => document.getElementById(id);
@@ -298,6 +326,16 @@
     writeState.budgetConfirmArmed = false;
   }
 
+  function resetDeleteConfirm() {
+    clearTimeout(writeState.deleteConfirmTimer);
+    writeState.deleteConfirmArmed = false;
+  }
+
+  function resetCreativeConfirm() {
+    clearTimeout(writeState.creativeConfirmTimer);
+    writeState.creativeConfirmArmed = false;
+  }
+
   function renderWriteControls() {
     const container = byId("meta-ads-write-controls");
     if (!container) return;
@@ -327,6 +365,54 @@
           <button type="button" id="meta-ads-budget-submit" class="${writeState.budgetConfirmArmed ? "danger" : ""}"${writeState.budgetBusy ? " disabled" : ""}>${writeState.budgetConfirmArmed ? "Emin misiniz? Tekrar tıklayın" : "Bütçeyi Güncelle"}</button>
         </div>
         ${writeState.budgetMessage ? `<p class="${writeState.budgetError ? "error" : "hint"}" style="margin-top:8px">${escapeHtml(writeState.budgetMessage)}</p>` : ""}
+      </div>
+      ${renderCreativeCard()}
+      ${renderDeleteCard()}
+    `;
+  }
+
+  // PR-4: kreatif oluştur + reklama bağla. Yalnızca MEVCUT bir image_hash
+  // (bu reklamın şu anki kartlarından) yeniden kullanılır — yeni görsel
+  // yükleme bu ilk sürümün kapsamı dışında (bkz. PR-4 açıklaması).
+  function renderCreativeCard() {
+    const hashOptions = writeState.creativeImageHashes.length
+      ? writeState.creativeImageHashes.map((hash) => `<option value="${escapeHtml(hash)}"${hash === writeState.creativeImageHash ? " selected" : ""}>${escapeHtml(hash)}</option>`).join("")
+      : "";
+    const ctaOptions = CTA_OPTIONS.map((cta) => `<option value="${escapeHtml(cta)}"${cta === writeState.creativeCta ? " selected" : ""}>${escapeHtml(cta)}</option>`).join("");
+    return `
+      <div class="card" style="margin-top:12px">
+        <strong>Yeni Kreatif Oluştur ve Reklama Bağla</strong>
+        <p class="hint">Yalnızca bu reklamın mevcut görsellerinden biri (image_hash) yeniden kullanılabilir — yeni görsel yükleme desteklenmiyor. Bağlama işlemi ACTIVE bir reklamda yeni bir Meta incelemesi tetikleyebilir ve öğrenme aşamasını sıfırlayabilir.</p>
+        <label class="field-label">Ana metin<textarea id="meta-ads-creative-message" rows="2" style="width:100%">${escapeHtml(writeState.creativeMessage)}</textarea></label>
+        <label class="field-label" style="margin-top:8px">Başlık<input id="meta-ads-creative-headline" style="width:100%" value="${escapeHtml(writeState.creativeHeadline)}"></label>
+        <label class="field-label" style="margin-top:8px">Açıklama (opsiyonel)<input id="meta-ads-creative-description" style="width:100%" value="${escapeHtml(writeState.creativeDescription)}"></label>
+        <label class="field-label" style="margin-top:8px">Hedef URL<input id="meta-ads-creative-link" style="width:100%" value="${escapeHtml(writeState.creativeLink)}"></label>
+        <div class="auth-grid" style="margin-top:8px">
+          <label class="field-label">CTA<select id="meta-ads-creative-cta">${ctaOptions}</select></label>
+          <label class="field-label">Görsel (image_hash)<select id="meta-ads-creative-image-hash">${hashOptions || '<option value="">Yeniden kullanılabilir görsel bulunamadı</option>'}</select></label>
+        </div>
+        <button type="button" id="meta-ads-creative-submit" class="${writeState.creativeConfirmArmed ? "danger" : "secondary"}" style="margin-top:10px"${writeState.creativeBusy || !hashOptions ? " disabled" : ""}>${writeState.creativeConfirmArmed ? "Emin misiniz? Yeni kreatif oluşturulup bağlanacak — tekrar tıklayın" : "Yeni kreatif oluştur ve reklama bağla"}</button>
+        ${writeState.creativeResultMessage ? `<p class="${writeState.creativeResultError ? "error" : "hint"}" style="margin-top:8px">${escapeHtml(writeState.creativeResultMessage)}</p>` : ""}
+      </div>
+    `;
+  }
+
+  // PR-4: silme — geri alınamaz. Buton yalnız reklam PAUSED iken görünür
+  // (asıl guard MCP/ads_delete_ad tarafında: ACTIVE reddedilir, bu sadece UX).
+  function renderDeleteCard() {
+    if (writeState.adStatus !== "PAUSED") {
+      return `<div class="card" style="margin-top:12px"><strong>Reklamı Sil</strong><p class="hint" style="margin-top:6px">Silmek için önce reklamı Duraklat (PAUSED) durumuna alın.</p></div>`;
+    }
+    const label = writeState.deleteConfirmArmed
+      ? `Emin misiniz? "${escapeHtml(writeState.adName || writeState.adId)}" (${escapeHtml(writeState.adId)}, PAUSED) KALICI OLARAK silinecek — tekrar tıklayın`
+      : "Reklamı Sil (geri alınamaz)";
+    return `
+      <div class="card" style="margin-top:12px">
+        <strong>Reklamı Sil</strong>
+        <p class="hint">Reklam: ${escapeHtml(writeState.adName || "—")} · ID: ${escapeHtml(writeState.adId || "—")} · Durum: PAUSED</p>
+        <p class="hint" style="color:#b42318">Bu işlem GERİ ALINAMAZ. Meta bazen hard-delete yerine arşivler; sonuç durumu aşağıda gösterilir.</p>
+        <button type="button" id="meta-ads-delete-submit" class="danger"${writeState.deleteBusy ? " disabled" : ""}>${escapeHtml(label)}</button>
+        ${writeState.deleteMessage ? `<p class="${writeState.deleteError ? "error" : "hint"}" style="margin-top:8px">${escapeHtml(writeState.deleteMessage)}</p>` : ""}
       </div>
     `;
   }
@@ -418,24 +504,160 @@
     performBudgetChange(value);
   }
 
+  // PR-4: silme. İki tıklamalı onay + PAUSED-only render guard'ı zaten
+  // renderDeleteCard'ta — bu fonksiyon yalnız buton gerçekten görünürken
+  // (yani status PAUSED'ken) çalışabilir durumda olacak şekilde yazıldı.
+  async function performDelete() {
+    writeState.deleteBusy = true;
+    writeState.deleteMessage = "Siliniyor...";
+    writeState.deleteError = false;
+    renderWriteControls();
+    try {
+      const res = await mAdsApi("/api/meta-ads/ad-delete", { method: "POST", body: JSON.stringify({ ad_id: writeState.adId, confirm: true }) });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data?.error?.message || "Reklam silinemedi.");
+      // deletion_semantics: "hard_delete"/"archived"/"still_present"/"unconfirmed" —
+      // deleted:null, Meta'nın read-back'i sonucu kesin olarak doğrulayamadığı anlamına
+      // gelir (uydurulmaz, olduğu gibi gösterilir). delete_call_issued/status/
+      // effective_status de MCP döndürdüyse (garanti değil) aynı şekilde eklenir.
+      const detailParts = [];
+      if (data.deletion_semantics) detailParts.push(data.deletion_semantics);
+      if (data.status) detailParts.push(`status: ${data.status}`);
+      if (data.effective_status && data.effective_status !== data.status) detailParts.push(`effective_status: ${data.effective_status}`);
+      if (data.delete_call_issued === false) detailParts.push("delete çağrısı hiç gönderilmedi (zaten DELETED/ARCHIVED idi)");
+      const detail = detailParts.length ? ` (${detailParts.join(", ")})` : "";
+      const deletedLabel = data.deleted === true ? "Silindi" : data.deleted === false ? "Silinmedi" : "Durum doğrulanamadı";
+      writeState.deleteMessage = `${deletedLabel}${detail}`;
+      state.ads = state.ads.filter((ad) => ad.id !== writeState.adId);
+      renderTable();
+      showListView();
+      setListMessage(`Reklam silindi: ${writeState.adName || writeState.adId}${detail}`, false);
+    } catch (error) {
+      writeState.deleteMessage = error.message;
+      writeState.deleteError = true;
+      writeState.deleteBusy = false;
+      renderWriteControls();
+    }
+  }
+
+  function handleDeleteClick() {
+    if (writeState.deleteBusy || writeState.adStatus !== "PAUSED") return;
+    if (!writeState.deleteConfirmArmed) {
+      writeState.deleteConfirmArmed = true;
+      writeState.deleteMessage = "";
+      clearTimeout(writeState.deleteConfirmTimer);
+      writeState.deleteConfirmTimer = setTimeout(() => {
+        writeState.deleteConfirmArmed = false;
+        renderWriteControls();
+      }, CONFIRM_ARM_MS);
+      renderWriteControls();
+      return;
+    }
+    resetDeleteConfirm();
+    performDelete();
+  }
+
+  // PR-4: yeni kreatif oluştur + reklama bağla. previous_creative_id
+  // (rollback bilgisi) ve new_creative_id her zaman gösterilir — bind adımı
+  // başarısız olsa bile new_creative_id varsa (create başarılı ama bağlama
+  // başarısız oldu) kaybolmasın diye hata mesajında da gösterilir.
+  async function performCreativeUpdate() {
+    writeState.creativeBusy = true;
+    writeState.creativeResultMessage = "Kreatif oluşturuluyor ve bağlanıyor...";
+    writeState.creativeResultError = false;
+    renderWriteControls();
+    try {
+      const creativeName = (writeState.adName || writeState.adId) + " — güncel kreatif " + new Date().toISOString();
+      const res = await mAdsApi("/api/meta-ads/ad-creative-update", {
+        method: "POST",
+        body: JSON.stringify({
+          ad_id: writeState.adId,
+          name: creativeName,
+          message: writeState.creativeMessage,
+          headline: writeState.creativeHeadline,
+          description: writeState.creativeDescription,
+          link: writeState.creativeLink,
+          call_to_action_type: writeState.creativeCta,
+          image_hash: writeState.creativeImageHash,
+          confirm: true
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        const extra = data?.error?.new_creative_id ? ` (yeni kreatif oluşturuldu ama bağlanamadı: ${data.error.new_creative_id})` : "";
+        throw new Error(`${data?.error?.message || "Kreatif güncellenemedi."}${extra}`);
+      }
+      writeState.creativeResultMessage = `Kreatif bağlandı. Önceki: ${data.previous_creative_id || "—"} · Yeni: ${data.new_creative_id || "—"}`;
+      // Metin/kartlar güncel kreatife göre yeniden yüklensin.
+      await openAdDetail(writeState.adId);
+      return;
+    } catch (error) {
+      writeState.creativeResultMessage = error.message;
+      writeState.creativeResultError = true;
+      writeState.creativeBusy = false;
+      renderWriteControls();
+    }
+  }
+
+  function handleCreativeSubmitClick() {
+    if (writeState.creativeBusy) return;
+    if (!writeState.creativeMessage.trim() || !writeState.creativeHeadline.trim() || !writeState.creativeLink.trim() || !writeState.creativeImageHash) {
+      writeState.creativeResultMessage = "Ana metin, başlık, hedef URL ve görsel (image_hash) gerekli.";
+      writeState.creativeResultError = true;
+      renderWriteControls();
+      return;
+    }
+    if (!writeState.creativeConfirmArmed) {
+      writeState.creativeConfirmArmed = true;
+      writeState.creativeResultMessage = "";
+      clearTimeout(writeState.creativeConfirmTimer);
+      writeState.creativeConfirmTimer = setTimeout(() => {
+        writeState.creativeConfirmArmed = false;
+        renderWriteControls();
+      }, CONFIRM_ARM_MS);
+      renderWriteControls();
+      return;
+    }
+    resetCreativeConfirm();
+    performCreativeUpdate();
+  }
+
   async function openAdDetail(adId) {
     showDetailView();
     byId("meta-ads-detail-content").innerHTML = '<p class="hint">Yükleniyor...</p>';
     byId("meta-ads-write-controls").innerHTML = "";
     resetStatusConfirm();
     resetBudgetConfirm();
+    resetDeleteConfirm();
+    resetCreativeConfirm();
     writeState.adId = adId;
+    writeState.adName = state.ads.find((ad) => ad.id === adId)?.name || null;
     writeState.adStatus = state.ads.find((ad) => ad.id === adId)?.status || null;
     writeState.adsetId = null;
     writeState.budgetValue = "";
     writeState.statusMessage = "";
     writeState.budgetMessage = "";
+    writeState.deleteMessage = "";
+    writeState.deleteBusy = false;
+    writeState.creativeBusy = false;
+    writeState.creativeResultMessage = "";
     try {
       const res = await mAdsApi(`/api/meta-ads/ad-creative?ad_id=${encodeURIComponent(adId)}`);
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data?.error?.message || "Kreatif bilgisi yüklenemedi.");
       renderDetail(data.creative);
       writeState.adsetId = data.creative.adset_id || null;
+      writeState.adName = data.creative.ad_name || writeState.adName;
+      // PR-4: kreatif formu, o ANIN mevcut kopyasıyla önceden doldurulur —
+      // admin her alanı sıfırdan yazmak zorunda kalmaz, yalnız değiştirmek
+      // istediğini düzenler. image_hash listesi kartlardan (tekilleştirilmiş) türetilir.
+      writeState.creativeMessage = data.creative.primary_text || "";
+      writeState.creativeHeadline = data.creative.headline || "";
+      writeState.creativeDescription = data.creative.description || "";
+      writeState.creativeLink = data.creative.destination_url || "";
+      writeState.creativeCta = CTA_OPTIONS.includes(data.creative.call_to_action) ? data.creative.call_to_action : CTA_OPTIONS[0];
+      writeState.creativeImageHashes = [...new Set((data.creative.cards || []).map((card) => card.image_hash).filter(Boolean))];
+      writeState.creativeImageHash = writeState.creativeImageHashes[0] || "";
       renderWriteControls();
     } catch (error) {
       byId("meta-ads-detail-content").innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
@@ -463,16 +685,42 @@
     byId("meta-ads-detail-view").addEventListener("click", (event) => {
       if (event.target.id === "meta-ads-status-toggle") handleStatusToggleClick();
       if (event.target.id === "meta-ads-budget-submit") handleBudgetSubmitClick();
+      if (event.target.id === "meta-ads-delete-submit") handleDeleteClick();
+      if (event.target.id === "meta-ads-creative-submit") handleCreativeSubmitClick();
     });
     byId("meta-ads-detail-view").addEventListener("input", (event) => {
-      if (event.target.id !== "meta-ads-budget-input") return;
-      writeState.budgetValue = event.target.value;
-      if (writeState.budgetConfirmArmed) {
-        resetBudgetConfirm();
-        const button = byId("meta-ads-budget-submit");
+      if (event.target.id === "meta-ads-budget-input") {
+        writeState.budgetValue = event.target.value;
+        if (writeState.budgetConfirmArmed) {
+          resetBudgetConfirm();
+          const button = byId("meta-ads-budget-submit");
+          if (button) {
+            button.textContent = "Bütçeyi Güncelle";
+            button.className = "";
+          }
+        }
+        return;
+      }
+      // PR-4: kreatif formundaki herhangi bir alan değişirse (metin/CTA/görsel
+      // dahil) armed onay sıfırlanır — eski onay yeni içeriğe sirayet etmez
+      // (bütçedeki desenle aynı).
+      const CREATIVE_FIELD_IDS = {
+        "meta-ads-creative-message": "creativeMessage",
+        "meta-ads-creative-headline": "creativeHeadline",
+        "meta-ads-creative-description": "creativeDescription",
+        "meta-ads-creative-link": "creativeLink",
+        "meta-ads-creative-cta": "creativeCta",
+        "meta-ads-creative-image-hash": "creativeImageHash"
+      };
+      const stateKey = CREATIVE_FIELD_IDS[event.target.id];
+      if (!stateKey) return;
+      writeState[stateKey] = event.target.value;
+      if (writeState.creativeConfirmArmed) {
+        resetCreativeConfirm();
+        const button = byId("meta-ads-creative-submit");
         if (button) {
-          button.textContent = "Bütçeyi Güncelle";
-          button.className = "";
+          button.textContent = "Yeni kreatif oluştur ve reklama bağla";
+          button.className = "secondary";
         }
       }
     });

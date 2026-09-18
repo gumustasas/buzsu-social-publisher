@@ -1,6 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { callTool, listAllAds, getAdCreativeAssets, setAdStatus, updateAdSetBudget, errorToApiShape } from "../src/lib/meta-connect.js";
+import {
+  callTool,
+  listAllAds,
+  getAdCreativeAssets,
+  setAdStatus,
+  updateAdSetBudget,
+  deleteAd,
+  createAdCreative,
+  updateAdCreative,
+  createAndBindAdCreative,
+  errorToApiShape
+} from "../src/lib/meta-connect.js";
 
 // Gitleaks'in gerçek bir secret sanmaması için açıkça sahte bir değer kullanılıyor.
 process.env.META_CONNECT_URL = process.env.META_CONNECT_URL || "https://buzsu-social-connect.example.test";
@@ -437,4 +448,199 @@ test("setAdStatus, MCP guard'ı hata döndürürse (örn. connector tarafında b
       await assert.rejects(() => setAdStatus("ad_bad", "ACTIVE"), /Bilinmeyen ad_id/);
     }
   );
+});
+
+// ===== PR-4: destructive/creative yönetimi =====
+
+test("deleteAd, ads_delete_ad'ı doğru argümanlarla çağırır, confirmed:true'yu sunucu tarafında sabit gönderir ve bilinen alanları normalize eder (uydurulmayan alanlar null kalır)", async () => {
+  let capturedArgs;
+  let capturedName;
+  await withMockedFetch(
+    withStandardHandshake((message) => {
+      capturedName = message.params.name;
+      capturedArgs = message.params.arguments;
+      return toolCallSuccessResponse({ deleted: true, deletion_semantics: "archived", status: "DELETED" });
+    }),
+    async () => {
+      const result = await deleteAd("ad_1");
+      assert.deepEqual(result, { deleted: true, deletion_semantics: "archived", delete_call_issued: null, status: "DELETED", effective_status: null });
+    }
+  );
+  assert.equal(capturedName, "ads_delete_ad");
+  assert.deepEqual(capturedArgs, { ad_id: "ad_1", confirmed: true });
+});
+
+test("deleteAd, deleted:null (read-back doğrulanamadı) durumunu uydurmadan olduğu gibi taşır", async () => {
+  await withMockedFetch(
+    withStandardHandshake(() => toolCallSuccessResponse({ deleted: null, deletion_semantics: "unconfirmed" })),
+    async () => {
+      const result = await deleteAd("ad_1");
+      assert.equal(result.deleted, null);
+      assert.equal(result.deletion_semantics, "unconfirmed");
+    }
+  );
+});
+
+test("deleteAd, MCP guard'ı (örn. ACTIVE reklamı reddetme) hata döndürürse hatayı olduğu gibi fırlatır", async () => {
+  await withMockedFetch(
+    withStandardHandshake(() =>
+      fakeResponse({
+        headers: { "content-type": "application/json" },
+        bodyText: JSON.stringify({ jsonrpc: "2.0", id: "call", result: { isError: true, content: [{ type: "text", text: "Ad is ACTIVE, refusing delete" }] } })
+      })
+    ),
+    async () => {
+      await assert.rejects(() => deleteAd("ad_active"), /ACTIVE/);
+    }
+  );
+});
+
+test("createAdCreative, ads_create_ad_creative'i verilen parametrelerle + sunucu tarafında sabit confirmed:true ile çağırır ve yalnız creative_id döner", async () => {
+  let capturedArgs;
+  let capturedName;
+  await withMockedFetch(
+    withStandardHandshake((message) => {
+      capturedName = message.params.name;
+      capturedArgs = message.params.arguments;
+      return toolCallSuccessResponse({ creative_id: "creative_new" });
+    }),
+    async () => {
+      const result = await createAdCreative({ name: "n", message: "m", headline: "h", link: "https://x.test", call_to_action_type: "SHOP_NOW", image_hash: "hash_1" });
+      assert.deepEqual(result, { creative_id: "creative_new" });
+    }
+  );
+  assert.equal(capturedName, "ads_create_ad_creative");
+  assert.deepEqual(capturedArgs, { name: "n", message: "m", headline: "h", link: "https://x.test", call_to_action_type: "SHOP_NOW", image_hash: "hash_1", confirmed: true });
+});
+
+test("updateAdCreative, ads_update_ad'ı verilen ad_id/creative_id ile + sunucu tarafında sabit confirmed:true ile çağırır", async () => {
+  let capturedArgs;
+  let capturedName;
+  await withMockedFetch(
+    withStandardHandshake((message) => {
+      capturedName = message.params.name;
+      capturedArgs = message.params.arguments;
+      return toolCallSuccessResponse({ success: true });
+    }),
+    async () => {
+      const result = await updateAdCreative("ad_1", "creative_new");
+      assert.deepEqual(result, { success: true, ad_id: "ad_1", creative_id: "creative_new" });
+    }
+  );
+  assert.equal(capturedName, "ads_update_ad");
+  assert.deepEqual(capturedArgs, { ad_id: "ad_1", creative_id: "creative_new", confirmed: true });
+});
+
+test("createAndBindAdCreative: sırayla ads_get_ad_creative_assets (mevcut creative_id) -> ads_create_ad_creative -> ads_update_ad çağırır, previous_creative_id + new_creative_id + bind döner", async () => {
+  const calledTools = [];
+  await withMockedFetch(
+    withStandardHandshake((message) => {
+      calledTools.push(message.params.name);
+      if (message.params.name === "ads_get_ad_creative_assets") {
+        assert.deepEqual(message.params.arguments, { ad_id: "ad_1" });
+        return toolCallSuccessResponse({ ad_id: "ad_1", creative_id: "old_creative_1", cards: [] });
+      }
+      if (message.params.name === "ads_create_ad_creative") {
+        assert.deepEqual(message.params.arguments, {
+          name: "n", message: "m", headline: "h", link: "https://x.test", call_to_action_type: "LEARN_MORE", image_hash: "hash_1", confirmed: true
+        });
+        return toolCallSuccessResponse({ creative_id: "new_creative_1" });
+      }
+      if (message.params.name === "ads_update_ad") {
+        assert.deepEqual(message.params.arguments, { ad_id: "ad_1", creative_id: "new_creative_1", confirmed: true });
+        return toolCallSuccessResponse({ success: true });
+      }
+      throw new Error(`beklenmeyen tool: ${message.params.name}`);
+    }),
+    async () => {
+      const result = await createAndBindAdCreative("ad_1", {
+        name: "n", message: "m", headline: "h", link: "https://x.test", call_to_action_type: "LEARN_MORE", image_hash: "hash_1"
+      });
+      assert.deepEqual(result, {
+        previous_creative_id: "old_creative_1",
+        new_creative_id: "new_creative_1",
+        bind: { success: true, ad_id: "ad_1", creative_id: "new_creative_1" }
+      });
+    }
+  );
+  assert.deepEqual(calledTools, ["ads_get_ad_creative_assets", "ads_create_ad_creative", "ads_update_ad"]);
+});
+
+test("createAndBindAdCreative: reklamın hiç mevcut kreatifi yoksa (creative_id null) previous_creative_id null döner, akış yine tamamlanır", async () => {
+  await withMockedFetch(
+    withStandardHandshake((message) => {
+      if (message.params.name === "ads_get_ad_creative_assets") return toolCallSuccessResponse({ ad_id: "ad_1", cards: [] });
+      if (message.params.name === "ads_create_ad_creative") return toolCallSuccessResponse({ creative_id: "new_1" });
+      if (message.params.name === "ads_update_ad") return toolCallSuccessResponse({ success: true });
+      throw new Error("beklenmeyen tool");
+    }),
+    async () => {
+      const result = await createAndBindAdCreative("ad_1", { name: "n", message: "m", headline: "h", link: "https://x.test", call_to_action_type: "LEARN_MORE", image_hash: "hash_1" });
+      assert.equal(result.previous_creative_id, null);
+      assert.equal(result.new_creative_id, "new_1");
+    }
+  );
+});
+
+test("createAndBindAdCreative: create başarılı ama bind (ads_update_ad) reddedilirse hata fırlatır ve new_creative_id'yi kaybetmeden hataya ekler", async () => {
+  await withMockedFetch(
+    withStandardHandshake((message) => {
+      if (message.params.name === "ads_get_ad_creative_assets") return toolCallSuccessResponse({ ad_id: "ad_1", creative_id: "old_1", cards: [] });
+      if (message.params.name === "ads_create_ad_creative") return toolCallSuccessResponse({ creative_id: "new_1" });
+      if (message.params.name === "ads_update_ad") {
+        return fakeResponse({
+          headers: { "content-type": "application/json" },
+          bodyText: JSON.stringify({ jsonrpc: "2.0", id: "call", result: { isError: true, content: [{ type: "text", text: "bind reddedildi" }] } })
+        });
+      }
+      throw new Error("beklenmeyen tool");
+    }),
+    async () => {
+      await assert.rejects(
+        () => createAndBindAdCreative("ad_1", { name: "n", message: "m", headline: "h", link: "https://x.test", call_to_action_type: "LEARN_MORE", image_hash: "hash_1" }),
+        (error) => {
+          assert.match(error.message, /bind reddedildi/);
+          assert.equal(error.new_creative_id, "new_1");
+          return true;
+        }
+      );
+    }
+  );
+});
+
+test("createAndBindAdCreative: create adımının kendisi başarısız olursa hiç bind denenmez (ads_update_ad çağrılmaz)", async () => {
+  const calledTools = [];
+  await withMockedFetch(
+    withStandardHandshake((message) => {
+      calledTools.push(message.params.name);
+      if (message.params.name === "ads_get_ad_creative_assets") return toolCallSuccessResponse({ ad_id: "ad_1", creative_id: "old_1", cards: [] });
+      if (message.params.name === "ads_create_ad_creative") {
+        return fakeResponse({
+          headers: { "content-type": "application/json" },
+          bodyText: JSON.stringify({ jsonrpc: "2.0", id: "call", result: { isError: true, content: [{ type: "text", text: "create reddedildi" }] } })
+        });
+      }
+      throw new Error(`beklenmeyen tool: ${message.params.name}`);
+    }),
+    async () => {
+      await assert.rejects(
+        () => createAndBindAdCreative("ad_1", { name: "n", message: "m", headline: "h", link: "https://x.test", call_to_action_type: "LEARN_MORE", image_hash: "hash_1" }),
+        /create reddedildi/
+      );
+    }
+  );
+  assert.deepEqual(calledTools, ["ads_get_ad_creative_assets", "ads_create_ad_creative"]);
+});
+
+test("errorToApiShape, error.new_creative_id varsa döndürdüğü şekle taşır (create başarılı/bind başarısız senaryosu UI'da kaybolmasın) ve secret'ı yine redakte eder", () => {
+  const secret = process.env.META_CONNECT_MCP_PATH_SECRET;
+  const error = Object.assign(new Error(`bind reddedildi ${secret}`), { new_creative_id: "new_99" });
+  const shape = errorToApiShape(error);
+  assert.equal(shape.new_creative_id, "new_99");
+  assert.ok(!shape.message.includes(secret));
+});
+
+test("errorToApiShape, new_creative_id yoksa şekilde bu alanı hiç eklemez (PR-3'ün mevcut hata şeklini bozmaz)", () => {
+  const shape = errorToApiShape(new Error("sıradan hata"));
+  assert.ok(!("new_creative_id" in shape));
 });

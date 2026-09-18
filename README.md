@@ -1046,6 +1046,64 @@ resumable upload) bu değişiklikle **değişmedi** — yalnızca `getAccessToke
 `assertYouTubeConfigured` dışa açıldı (`/api/youtube-status`'ün aynı OAuth
 çağrısını tekrar yazmadan yeniden kullanabilmesi için).
 
+## Meta Reklamlar — PR-4 (destructive/creative yönetimi: reklam silme + kreatif oluştur/bağla)
+
+> Not: Meta Reklamlar modülünün PR-1/2/3'ü (salt-okunur reklam listesi, Genel
+> Bakış, reklam durumu/reklam seti bütçesi write'ları) henüz README'de belgeli
+> değildi — bu bölüm yalnızca PR-4'ün eklediklerini kapsıyor; geriye dönük
+> PR-1/2/3 dokümantasyonu bu PR'ın kapsamı dışında bırakıldı.
+
+Mimari (PR-1'den değişmedi): `Browser → /api/meta-ads/* → src/lib/meta-connect.js → Buzsu Meta Ads MCP → Meta Graph API`. Tarayıcı hiçbir zaman MCP'ye veya Meta Graph API'ye doğrudan konuşmaz.
+
+**Reklam silme** — `POST /api/meta-ads/ad-delete`, body `{ad_id, confirm:true}`.
+Admin-only, kalıcı ve geri alınamaz. Asıl güvenlik sınırı `ads_delete_ad`
+MCP tool'unun kendisidir: ad_id'nin durumunu ÖNCE kendi okur, yalnızca
+PAUSED ise siler (ACTIVE reddedilir, effective_status'a bakılmaz — sadece
+kampanya/reklam seti duraklatılmış görünen bir reklam yine reddedilir);
+DELETED/ARCHIVED için idempotent başarı döner. Dashboard'daki "yalnız PAUSED
+ise buton görünür" kontrolü SADECE UX katmanıdır. Meta genelde hard-delete
+yerine arşivliyor — sonuç `deletion_semantics` (`hard_delete`/`archived`/
+`still_present`/`unconfirmed`) ve `deleted` (bilinmiyorsa `null`, uydurulmaz)
+alanlarıyla döner.
+
+**Kreatif oluştur ve reklama bağla** — `POST /api/meta-ads/ad-creative-update`,
+body `{ad_id, name, message, headline, description?, link, call_to_action_type, image_hash, confirm:true}`.
+Admin-only. Sunucu (`createAndBindAdCreative`) üç adımı sırayla yapar: (1)
+reklamın MEVCUT `creative_id`'sini okur (rollback bilgisi), (2)
+`ads_create_ad_creative` ile yeni, tekil-görsel bir link creative oluşturur
+(bu adım hiçbir reklamı etkilemez/harcama başlatmaz), (3) `ads_update_ad` ile
+yeni creative'i reklama bağlar. **`image_hash` zorunludur, `image_url` bu
+route'ta hiç kabul edilmez** — ilk sürüm yalnızca reklamın zaten sahip olduğu
+bir görseli (`ads_get_ad_creative_assets`'ten gelen `cards[].image_hash`)
+yeniden kullanır; Meta'nın geçici CDN `image_url`'i asla yeni bir creative'e
+girdi olarak geri verilmez. (2) başarılı ama (3) (bağlama) başarısız olursa,
+oluşturulan (bağlanmamış, zararsız) `creative_id` `error.new_creative_id`
+alanında kaybolmadan döner. Yeni görsel yükleme (`upload_ad_image`) ve
+carousel/WhatsApp creative araçları bu ilk sürümün kapsamı dışında.
+
+Her iki route da PR-3'teki (`ad-status`/`adset-budget`) İLE BİREBİR AYNI
+güvenlik sözleşmesini izler: session yoksa 401, Admin değilse 403, istemci
+yalnızca `confirm:true` gönderir (Social Publisher'ın kendi HTTP niyet
+sinyali) — `confirmed` alanı istemciden HİÇ okunmaz; MCP'ye gönderilen
+`confirmed:true` her zaman sunucuda (`src/lib/meta-connect.js`) sabitlenir.
+Hatalar her zaman `{ok:false, error:{code, message}}` şekline normalize
+edilir, `META_CONNECT_MCP_PATH_SECRET` hiçbir hata mesajında ham görünmez.
+
+**Test kapsamı doğrulanamayan bir şey:** bu PR gerçek bir Meta hesabına karşı
+canlı bir silme veya kreatif-oluşturma denemesi YAPMADI — tüm testler MCP
+JSON-RPC katmanı mock'lanarak (`node --test`) doğrulandı. Gerçek bir deneme
+yapılacaksa yalnızca geçici, PAUSED bir yardımcı reklamla yapılmalı; ACTIVE
+veya gerçek üretim reklamı üzerinde delete testi YAPILMAMALI.
+
+**Playwright ile ilgili not:** bu depoda Playwright (veya jsdom gibi bir DOM
+kütüphanesi) hiç kurulu değil — `dashboard-meta-ads.js` PR-1'den beri gerçek
+bir tarayıcıda/DOM'da hiç çalıştırılmadan, kaynak metnine karşı regex
+assertion'larıyla test ediliyor (bkz. `test/dashboard-meta-ads.test.js`).
+PR-4 Admin/Editor UI ayrımını ve "Editor'da write butonu yok" gereksinimini
+AYNI teknikle doğruladı; kapsamı büyütmemek için yeni bir Playwright
+bağımlılığı EKLENMEDİ. Gerçek bir tarayıcıyla uçtan uca doğrulama istenirse
+bu ayrı bir görev olmalı.
+
 ## Sonraki adım
 
 Dry-run doğru çalıştıktan sonra Meta API için ayrı gönderim scripti eklenir. O aşamada da önce test modu, sonra tek kayıtla kontrollü canlı paylaşım yapılmalıdır.
