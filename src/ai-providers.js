@@ -49,7 +49,10 @@ export function availableProviders(env = process.env) {
     env.ANTHROPIC_API_KEY && "anthropic",
     env.GEMINI_API_KEY && "gemini",
     env.FAL_KEY && "fal",
-    env.GEMINI_API_KEY && "veo"
+    env.GEMINI_API_KEY && "veo",
+    // Omni, Veo ile AYNI GEMINI_API_KEY'i kullanır (bkz. src/omni-video.js) —
+    // ayrı bir anahtar/hesap gerekmez.
+    env.GEMINI_API_KEY && "omni"
   ].filter(Boolean);
 }
 

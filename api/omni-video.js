@@ -35,6 +35,16 @@ export default async function handler(request, response) {
         job = { ...job, downloadNote: "BLOB_READ_WRITE_TOKEN tanımlı olmadığı için video kalıcı bir bağlantı alamadı." };
       }
     }
+    // UI/status senkronizasyon garantisi: video zaten indirilip herkese açık
+    // bir videoUrl aldıysa (yani gerçekten önizlenebilir/indirilebilir hale
+    // geldiyse) yanıtın status alanı HER ZAMAN "COMPLETED" olmalı — bu satır
+    // üstteki bloğun "COMPLETED" durumunda ÇALIŞMIŞ olmasıyla zaten aynı
+    // sonucu verir, ama ileride bu iki alanın herhangi bir sebeple
+    // (gelecekteki bir değişiklik, beklenmeyen bir dal) birbirinden
+    // sapmasına karşı savunmacı bir garanti — dashboard status metnini
+    // "OUTPUT_PROCESSING" gösterirken video önizlemesini AYNI ANDA
+    // göstermemeli; bu iki alan burada kesin olarak tutarlı hale getirilir.
+    if (job.videoUrl && job.status !== "COMPLETED") job = { ...job, status: "COMPLETED" };
     return response.status(200).json({ ok: true, omni: job });
   } catch (error) {
     console.error(error);

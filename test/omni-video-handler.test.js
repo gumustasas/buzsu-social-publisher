@@ -231,6 +231,33 @@ test("omni-video handler: 429/REGION_UNAVAILABLE dışındaki bir hata eskisi gi
   }
 });
 
+// UI/status senkronizasyon düzeltmesi: yanıtta zaten bir videoUrl varsa
+// (video gerçekten indirilip herkese açık bir bağlantı almışsa) status
+// alanı HER ZAMAN "COMPLETED" olmalı — hiçbir koşulda dashboard'a
+// "OUTPUT_PROCESSING" yazısıyla BİRLİKTE önizlenebilir bir video
+// gösterilmemeli. Bu, job.outputFileId bilinen bir job'ın (client zaten
+// önceden tamamlanmış bir işi TEKRAR sorguladığında, bkz. dashboard.html
+// omniJobIsReady) Files API'nin bir sonraki okumada "PROCESSING" dönmesi
+// gibi uç bir durumda bile status/videoUrl'in ASLA çelişmemesini garanti
+// eder.
+test("omni-video handler: yanıtta videoUrl varsa status ASLA 'OUTPUT_PROCESSING' kalmaz, COMPLETED'e normalize edilir", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, json: async () => ({ name: `files/${OUTPUT_FILE_ID}`, state: "PROCESSING" }) });
+  try {
+    const req = makeRequest({
+      action: "status",
+      job: { interactionId: "v1_xyz", model: "gemini-omni-1.1-flash", outputFileId: OUTPUT_FILE_ID, videoUrl: "https://example.com/already-downloaded.mp4" }
+    });
+    const res = makeResponse();
+    await handler(req, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.payload.omni.status, "COMPLETED");
+    assert.equal(res.payload.omni.videoUrl, "https://example.com/already-downloaded.mp4");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("omni-video handler: model_output var ama video parçası yoksa (örn. metinle reddetme) 500 + açık hata döner, sessizce IN_PROGRESS'e düşmez", async () => {
   const originalFetch = global.fetch;
   global.fetch = baseMockFetch({

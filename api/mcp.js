@@ -10,7 +10,7 @@ import { composeBrandedPost } from "../src/post-branding.js";
 import { runPublisher } from "../src/publish-approved.js";
 import { MUSIC_CATEGORIES } from "../src/lib/music-catalog.js";
 import { submitVeoVideo, veoVideoStatus, downloadVeoVideo } from "../src/veo-video.js";
-import { submitOmniVideoEdit, omniInteractionStatus, downloadOmniVideo, OMNI_MODEL } from "../src/omni-video.js";
+import { submitOmniVideoEdit, submitOmniVideoGeneration, omniInteractionStatus, downloadOmniVideo, OMNI_MODEL } from "../src/omni-video.js";
 import { getAutopilotEnabled, setAutopilotEnabled } from "../src/lib/settings.js";
 import { AIRTABLE_BASE_ID as baseId, AIRTABLE_TABLE_ID as tableId } from "../src/lib/config.js";
 import { fetchPublicImage, decodeImageBase64, imageExtensionFor, extractDriveFileId, normalizeDriveUrl, normalizeImageForMeta } from "../src/lib/upload-media.js";
@@ -270,7 +270,7 @@ const TOOLS = [
         aspectRatio: { type: "string", description: "En-boy oranı (varsayılan '9:16', Reels için)" },
         durationSeconds: { type: "number", description: "Video süresi, saniye (isteğe bağlı — verilmezse modelin varsayılanı kullanılır; Google'ın kabul ettiği değerler modele göre değişir, örn. 4/6/8)" },
         resolution: { type: "string", enum: ["720p", "1080p"], description: "Çözünürlük (isteğe bağlı, varsayılan model varsayılanı — genelde 720p). 1080p daha yüksek maliyetlidir." },
-        model: { type: "string", description: "Veo model/tier seçimi (isteğe bağlı). Ya bir tier adı — 'economy' (Lite, en ucuz), 'fast' (varsayılan davranış, orta), 'quality' (veo-3.1-generate-preview, en pahalı/yavaş), 'auto' (VEO_DEFAULT_TIER'a, o da yoksa economy'ye düşer) — ya da doğrudan tam model adı (ör. 'veo-3.1-generate-preview', geriye dönük uyumluluk için hâlâ kabul edilir). Verilmezse VEO_VIDEO_MODEL/VEO_DEFAULT_TIER env değişkenlerine, onlar da yoksa economy'ye düşülür. Seçilen model 429 (kota) hatası verirse yanıttaki 'alternatives' alanında önerilen diğer tier'lar listelenir — bu tool onlara ASLA otomatik geçmez, açıkça yeni bir model ile confirmed:true göndermeniz gerekir." },
+        model: { type: "string", description: "Veo model/tier seçimi (isteğe bağlı). AKTİF/tek çağrılabilir aile Veo 3.1 (Preview)'dir: 'economy'/'veo-3.1-lite' (Lite, en ucuz — varsayılan), 'fast'/'veo-3.1-fast', 'quality'/'veo-3.1-generate' (en pahalı/yavaş, en yüksek kalite). ÖNEMLİ — Veo 3 (GA): 'veo-3-generate'/'veo-3-fast'/'veo-3-lite' ve ham 'veo-3.0-generate-001'/'veo-3.0-fast-generate-001' ID'leri Google tarafından 30 Haziran 2026'da KAPATILDI — bu isimler artık aktif bir modele çözülmez, seçilirse hangi Veo 3.1 alias'ının kullanılması gerektiğini söyleyen açık bir hata döner (AI Studio UI'da hâlâ \"Veo 3 Generate/Fast/Lite\" görünse bile, arka planda çağrılan gerçek model her zaman Veo 3.1'dir). 'auto' (VEO_DEFAULT_TIER'a, o da yoksa economy'ye düşer) veya doğrudan tam bir Veo 3.1 model adı (ör. 'veo-3.1-generate-preview') da kabul edilir. Verilmezse VEO_VIDEO_MODEL/VEO_DEFAULT_TIER env değişkenlerine, onlar da yoksa economy'ye düşülür. Seçilen model/tier ASLA başka birine sessizce düşürülmez — geçersiz/kapanmış bir isim hemen hata verir. Seçilen model 429 (kota) hatası verirse yanıttaki 'alternatives' alanında diğer Veo 3.1 tier'ları listelenir — bu tool onlara ASLA otomatik geçmez, açıkça yeni bir model ile confirmed:true göndermeniz gerekir." },
         title: { type: "string", description: "Görüntüleme amaçlı ürün/klip adı (isteğe bağlı)" },
         confirmed: { type: "boolean", description: "true olmadan hiçbir API çağrısı yapılmaz/ücret alınmaz — gerçek harcamayı bilerek onayladığınızı belirtir" }
       },
@@ -372,6 +372,34 @@ const TOOLS = [
         interactionId: { type: "string", description: "generate_omni_video_edit yanıtındaki interactionId." },
         outputFileId: { type: "string", description: "İsteğe bağlı — önceki bir get_omni_video_status/generate_omni_video_edit yanıtında outputFileId doluysa (status OUTPUT_PROCESSING olduğunda), bu çağrıya aynen aktarın. Verilirse durum sorgusu GET /interactions/{id} yerine doğrudan Files API'yi (GET /v1beta/files/{outputFileId}) sorgular." },
         model: { type: "string", description: "generate_omni_video_edit yanıtındaki model (isteğe bağlı, günlükleme amaçlı)." }
+      },
+      required: ["interactionId"]
+    }
+  },
+  {
+    name: "generate_gemini_video",
+    description: `Google Gemini Omni 1.1 Flash (${OMNI_MODEL}) ile SIFIRDAN (zero-shot) yeni bir video üretir — generate_omni_video_edit'in aksine mevcut bir video GEREKMEZ, yalnızca bir metin prompt'u (ve isteğe bağlı bir referans görseli) yeterlidir. GERÇEK PARA HARCAR (360p en ucuz seçenektir). Async çalışır: bu tool işi başlatıp bir interactionId döner (bazen anında bir outputFileId de dönebilir); sonucu get_gemini_video_status ile sorgulayın. Google, bu özelliğin her bölgede/hesapta desteklenmediğini belirtiyor (EEA/İsviçre/UK ve bazı ABD eyaletleri dokümante edilmiş kısıtlar); desteklenmiyorsa REGION_UNAVAILABLE hatası döner, ASLA otomatik tekrar denenmez ve BAŞKA BİR PROVIDER'A (Veo/fal.ai) SESSİZCE GEÇİLMEZ — farklı bir provider denemek isterseniz açıkça o tool'u çağırın. confirmed:true verilmezse hiçbir API çağrısı/harcama yapılmaz. Model ${OMNI_MODEL} ile sabittir, başka bir model kabul edilmez. Dokümante edilmiş bir "süre" (duration) parametresi yoktur — süre modelin kendi varsayılanına bırakılır.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "Üretilecek videonun doğal dilde açıklaması (sahne, hareket, kamera vb.)." },
+        referenceImageUrl: { type: "string", description: "İsteğe bağlı — videoda korunması istenen bir ürün/nesnenin herkese açık HTTPS görsel URL'si (image-to-video referansı)." },
+        aspectRatio: { type: "string", enum: ["9:16", "16:9", "1:1"], description: "En-boy oranı (varsayılan '9:16')." },
+        resolution: { type: "string", enum: ["360p", "720p", "1080p", "4k"], description: "Çıktı çözünürlüğü (varsayılan '360p' — en ucuz, taslak/deneme için önerilir)." },
+        confirmed: { type: "boolean", description: "true olmadan hiçbir API çağrısı yapılmaz/ücret alınmaz." }
+      },
+      required: ["prompt", "confirmed"]
+    }
+  },
+  {
+    name: "get_gemini_video_status",
+    description: "generate_gemini_video ile başlatılmış bir Omni interaction'ın (veya çıktı dosyasının) durumunu sorgular — get_omni_video_status ile AYNI Interactions API durum mekanizmasını kullanır (yalnızca sıfırdan üretim akışı için ayrı adlandırılmıştır). Tamamlandıysa (COMPLETED) videoyu indirip Vercel Blob'a yükler ve herkese açık videoUrl döner; henüz bitmediyse (IN_PROGRESS/OUTPUT_PROCESSING) tüm durum alanlarını (outputFileId dahil) olduğu gibi geri döner — BİR SONRAKİ ÇAĞRIDA outputFileId'yi bu yanıttan aynen aktarın.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        interactionId: { type: "string", description: "generate_gemini_video yanıtındaki interactionId." },
+        outputFileId: { type: "string", description: "İsteğe bağlı — önceki bir get_gemini_video_status/generate_gemini_video yanıtında outputFileId doluysa, bu çağrıya aynen aktarın." },
+        model: { type: "string", description: "generate_gemini_video yanıtındaki model (isteğe bağlı, günlükleme amaçlı)." }
       },
       required: ["interactionId"]
     }
@@ -825,6 +853,30 @@ export async function callTool(name, args) {
         videoUrl = blob.url;
       }
       return JSON.stringify({ ok: true, status: "COMPLETED", videoUrl }, null, 2);
+    }
+    case "generate_gemini_video": {
+      if (args.confirmed !== true) throw new Error("Bu işlem gerçek API kredisi harcar. Onaylamak için confirmed:true gönderin.");
+      if (!String(args.prompt || "").trim()) throw new Error("prompt boş olamaz.");
+      const job = await submitOmniVideoGeneration(args.prompt, process.env, {
+        referenceImageUrl: args.referenceImageUrl,
+        aspectRatio: args.aspectRatio || "9:16",
+        resolution: args.resolution || "360p",
+        confirmed: true
+      });
+      return JSON.stringify({ ok: true, ...job }, null, 2);
+    }
+    case "get_gemini_video_status": {
+      if (!String(args.interactionId || "").trim()) throw new Error("interactionId gerekli.");
+      const status = await omniInteractionStatus({ interactionId: args.interactionId, outputFileId: args.outputFileId || null, model: args.model || OMNI_MODEL }, process.env);
+      if (status.status !== "COMPLETED") return JSON.stringify({ ok: true, ...status }, null, 2);
+      const videoBuffer = status.videoBase64 ? Buffer.from(status.videoBase64, "base64") : await downloadOmniVideo(status.fileUri, process.env);
+      let geminiVideoUrl = null;
+      if (process.env.BLOB_READ_WRITE_TOKEN) {
+        const safeName = String(args.interactionId).replace(/[^a-zA-Z0-9_-]/g, "_").slice(-80);
+        const blob = await put(`ai-omni/${safeName}-${Date.now()}.mp4`, videoBuffer, { access: "public", contentType: status.videoMimeType || "video/mp4" });
+        geminiVideoUrl = blob.url;
+      }
+      return JSON.stringify({ ok: true, status: "COMPLETED", videoUrl: geminiVideoUrl }, null, 2);
     }
     case "get_buzsu_product_context": {
       const result = await getBuzsuProductContext({ productId: args.productId, productUrl: args.productUrl, refresh: args.refresh === true });

@@ -44,6 +44,80 @@ test("resolveVeoModel rejects an unknown tier/model name, listing the valid opti
   assert.throws(() => resolveVeoModel("bogus-model", {}), /auto, economy, fast, quality/);
 });
 
+// DÜZELTME (2. tur): Google'ın resmi deprecation dokümanına göre
+// veo-3.0-generate-001/veo-3.0-fast-generate-001, 30 Haziran 2026'da
+// KAPANDI. Bu yüzden "veo-3-generate"/"veo-3-fast"/"veo-3-lite" (ve ham
+// veo-3.0-* ID'leri) artık AKTİF bir modele çözülmez — ne kapanmış ID'ye
+// istek atılır ne de sessizce Veo 3.1'e düşülür; açık, yönlendirici bir
+// hata döner. Tek AKTİF/çağrılabilir aile Veo 3.1 (Preview)'dir.
+test("resolveVeoModel: deprecated Veo 3 (GA) aliases throw a clear 'shut down' error instead of resolving to the dead IDs or silently falling back to Veo 3.1", () => {
+  for (const candidate of ["veo-3-generate", "veo-3-fast", "veo-3-lite", "veo-3.0-generate-001", "veo-3.0-fast-generate-001"]) {
+    assert.throws(() => resolveVeoModel(candidate, {}), /30 Haziran 2026/);
+  }
+});
+
+test("resolveVeoModel: deprecated Veo 3 aliases point to the correct Veo 3.1 replacement in the error message", () => {
+  assert.throws(() => resolveVeoModel("veo-3-generate", {}), /veo-3\.1-generate/);
+  assert.throws(() => resolveVeoModel("veo-3-fast", {}), /veo-3\.1-fast/);
+  assert.throws(() => resolveVeoModel("veo-3-lite", {}), /veo-3\.1-lite/);
+});
+
+test("resolveVeoModel: 'veo-3.1-lite'/'veo-3.1-fast'/'veo-3.1-generate' resolve to the existing, ACTIVE Veo 3.1 Preview tiers", () => {
+  assert.equal(resolveVeoModel("veo-3.1-lite", {}), VEO_MODEL_TIERS.economy);
+  assert.equal(resolveVeoModel("veo-3.1-fast", {}), VEO_MODEL_TIERS.fast);
+  assert.equal(resolveVeoModel("veo-3.1-generate", {}), VEO_MODEL_TIERS.quality);
+  assert.equal(VEO_MODEL_TIERS.quality, "veo-3.1-generate-preview");
+  assert.equal(VEO_MODEL_TIERS.fast, "veo-3.1-fast-generate-preview");
+  assert.equal(VEO_MODEL_TIERS.economy, "veo-3.1-lite-generate-preview");
+});
+
+// Sessiz fallback YOK: seçilen model/tier geçersizse (ör. bir yazım hatası
+// veya erişimi olmayan bir model) HEMEN hata fırlatılır — asla başka bir
+// tier'a (örn. economy) sessizce düşülmez.
+test("resolveVeoModel never silently falls back to another tier when an invalid model/tier is explicitly given", () => {
+  assert.throws(() => resolveVeoModel("veo-3-generate-preview", {}), /Desteklenmeyen Veo/);
+  assert.throws(() => resolveVeoModel("Veo-Fast", {}), /Desteklenmeyen Veo/);
+});
+
+// Kapanmış Veo 3 (GA) ID'lerine ASLA gerçek bir ağ isteği atılmaz — hata
+// resolveVeoModel seviyesinde, görsel indirilmeden/Google'a hiçbir istek
+// gitmeden fırlatılır.
+test("submitVeoVideo rejects a deprecated Veo 3 (GA) model before any network call, never reaching a dead veo-3.0 URL", async () => {
+  const originalFetch = global.fetch;
+  let calls = 0;
+  global.fetch = async () => { calls++; throw new Error("fetch should not be called for a deprecated model"); };
+  try {
+    await assert.rejects(
+      () => submitVeoVideo({ imageUrl: "https://example.com/x.jpg", title: "t" }, { GEMINI_API_KEY: "test" }, { finalizedPrompt: "p", model: "veo-3-generate" }),
+      /30 Haziran 2026/
+    );
+    assert.equal(calls, 0);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("submitVeoVideo calls the exact Veo 3.1 (Preview) model URL when 'veo-3.1-generate' is selected, never a Veo 3 (GA)/veo-3.0 URL", async () => {
+  const originalFetch = global.fetch;
+  const calledUrls = [];
+  global.fetch = async (url, options) => {
+    const href = String(url);
+    calledUrls.push(href);
+    if (!options) return { ok: true, headers: { get: () => "image/jpeg" }, arrayBuffer: async () => new Uint8Array([1]).buffer };
+    return { ok: true, json: async () => ({ name: "operations/op-v31" }) };
+  };
+  try {
+    const job = await submitVeoVideo({ imageUrl: "https://example.com/x.jpg", title: "t" }, { GEMINI_API_KEY: "test" }, { finalizedPrompt: "p", model: "veo-3.1-generate" });
+    assert.equal(job.model, "veo-3.1-generate-preview");
+    const predictCalls = calledUrls.filter((u) => u.includes(":predictLongRunning"));
+    assert.equal(predictCalls.length, 1);
+    assert.ok(predictCalls[0].includes("/models/veo-3.1-generate-preview:predictLongRunning"));
+    assert.ok(!predictCalls[0].includes("veo-3.0"));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("resolveVeoModel rejects an unknown VEO_VIDEO_MODEL env value the same way", () => {
   assert.throws(() => resolveVeoModel(undefined, { VEO_VIDEO_MODEL: "bogus-model" }), /Desteklenmeyen Veo modeli/);
 });
