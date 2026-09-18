@@ -105,6 +105,40 @@
     return `${escapeHtml(label)}: ${formatNumber(signal.value)} / eşik ${formatNumber(signal.threshold)}`;
   }
 
+  // status = reklamın kendi configured on/off anahtarı (ACTIVE/PAUSED), effective_status =
+  // kampanya/reklam seti/inceleme durumunu da hesaba katan FİİLİ yayın durumu. Bir reklam
+  // status:"ACTIVE" olsa da effective_status CAMPAIGN_PAUSED/ADSET_PAUSED/WITH_ISSUES ise
+  // gerçekte yayın YAPMIYOR — bu yüzden "Aktif" filtresi SADECE effective_status'a bakar.
+  // Backend'in /api/meta-ads/ads route'u (ad.status === status || ad.effective_status === status)
+  // gevşek filtresi hâlâ mevcut ama artık status query param'ı hiç gönderilmediği için
+  // (bkz. loadAds) devreye girmiyor — filtreleme tamamen burada, istemci tarafında yapılıyor.
+  function matchesStatusFilter(ad, filter) {
+    if (!filter) return true;
+    if (filter === "ACTIVE") return ad.effective_status === "ACTIVE";
+    if (filter === "PAUSED") return ad.status === "PAUSED" || ad.effective_status === "PAUSED";
+    if (filter === "CAMPAIGN_PAUSED") return ad.effective_status === "CAMPAIGN_PAUSED";
+    if (filter === "ADSET_PAUSED") return ad.effective_status === "ADSET_PAUSED";
+    if (filter === "WITH_ISSUES") return ad.effective_status === "WITH_ISSUES";
+    return ad.effective_status === filter;
+  }
+
+  function getVisibleAds() {
+    const filter = byId("meta-ads-status-filter").value;
+    return state.ads.filter((ad) => matchesStatusFilter(ad, filter));
+  }
+
+  // Yalnız kullanıcının bu ekranda gerçekten görebileceği ham değerler için rozet çevirisi —
+  // Meta'nın döndürebileceği diğer effective_status değerleri (DELETED, PENDING_REVIEW, vb.)
+  // uydurulmadan ham haliyle gösterilir.
+  const STATUS_LABELS = {
+    ACTIVE: "Aktif",
+    PAUSED: "Durdurulmuş",
+    CAMPAIGN_PAUSED: "Kampanya Durdurulmuş",
+    ADSET_PAUSED: "Reklam Seti Durdurulmuş",
+    WITH_ISSUES: "Sorunlu"
+  };
+  const statusLabel = (value) => STATUS_LABELS[value] || value;
+
   function setListMessage(text, isError) {
     const el = byId("meta-ads-list-message");
     el.textContent = text || "";
@@ -123,21 +157,22 @@
 
   function renderTable() {
     const wrap = byId("meta-ads-table-wrap");
-    if (!state.ads.length) {
+    const visibleAds = getVisibleAds();
+    if (!visibleAds.length) {
       wrap.innerHTML = "";
       return;
     }
     wrap.innerHTML = `<table style="width:100%;border-collapse:collapse">
       <thead><tr style="text-align:left;border-bottom:1px solid #dfe5e9">
-        <th style="padding:8px">Reklam</th><th style="padding:8px">Durum</th><th style="padding:8px">Effective</th>
+        <th style="padding:8px">Reklam</th><th style="padding:8px">Durum</th><th style="padding:8px">Gerçek Durum</th>
         <th style="padding:8px">Kampanya</th><th style="padding:8px">Reklam Seti</th><th style="padding:8px"></th>
       </tr></thead>
-      <tbody>${state.ads
+      <tbody>${visibleAds
         .map(
           (ad) => `<tr style="border-bottom:1px solid #edf0f2">
           <td style="padding:8px">${escapeHtml(ad.name || ad.id)}<br><span class="hint">${escapeHtml(ad.id)}</span></td>
-          <td style="padding:8px">${escapeHtml(ad.status)}</td>
-          <td style="padding:8px">${escapeHtml(ad.effective_status)}</td>
+          <td style="padding:8px">${escapeHtml(statusLabel(ad.status))}</td>
+          <td style="padding:8px">${escapeHtml(statusLabel(ad.effective_status))}</td>
           <td style="padding:8px">${escapeHtml(ad.campaign_name || ad.campaign_id)}${ad.campaign_name ? `<br><span class="hint">${escapeHtml(ad.campaign_id)}</span>` : ""}</td>
           <td style="padding:8px">${escapeHtml(ad.adset_name || ad.adset_id)}${ad.adset_name ? `<br><span class="hint">${escapeHtml(ad.adset_id)}</span>` : ""}</td>
           <td style="padding:8px"><button type="button" class="secondary" data-open-ad="${escapeHtml(ad.id)}">İncele</button></td>
@@ -241,18 +276,22 @@
     setListMessage("Yükleniyor...", false);
     byId("meta-ads-table-wrap").innerHTML = "";
     try {
+      // status artık backend'e query param olarak GÖNDERİLMİYOR — /api/meta-ads/ads route'unun
+      // kendi filtresi (ad.status === status || ad.effective_status === status) gevşek: bir
+      // reklamın status'u ACTIVE olsa da effective_status'u CAMPAIGN_PAUSED/ADSET_PAUSED/
+      // WITH_ISSUES olabilir ve o zaman fiilen yayında değildir. Route/MCP davranışı
+      // değiştirilmeden, doğru 6-durumlu filtre semantiği (matchesStatusFilter) tamamen
+      // istemci tarafında, tüm reklamlar üzerinde uygulanıyor (bkz. renderTable/getVisibleAds).
       const params = new URLSearchParams();
-      const status = byId("meta-ads-status-filter").value;
       const search = byId("meta-ads-search").value.trim();
-      if (status) params.set("status", status);
       if (search) params.set("q", search);
       const query = params.toString();
       const res = await mAdsApi(`/api/meta-ads/ads${query ? `?${query}` : ""}`);
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data?.error?.message || "Reklamlar yüklenemedi.");
       state.ads = data.ads;
-      setListMessage(state.ads.length ? "" : "Filtreye uyan reklam bulunamadı.", false);
       renderTable();
+      setListMessage(getVisibleAds().length ? "" : "Filtreye uyan reklam bulunamadı.", false);
     } catch (error) {
       state.ads = [];
       renderTable();
@@ -670,7 +709,13 @@
   }
 
   function wireEvents() {
-    byId("meta-ads-status-filter").addEventListener("change", loadAds);
+    // Durum filtresi artık tamamen istemci tarafında uygulandığı için (bkz.
+    // matchesStatusFilter/getVisibleAds) filtre değişince backend'e yeniden istek atmaya
+    // gerek yok — sadece halihazırda yüklü reklamlar yeniden render edilir.
+    byId("meta-ads-status-filter").addEventListener("change", () => {
+      renderTable();
+      setListMessage(getVisibleAds().length ? "" : "Filtreye uyan reklam bulunamadı.", false);
+    });
     byId("meta-ads-search").addEventListener("input", debouncedLoadAds);
     byId("meta-ads-refresh").addEventListener("click", loadAds);
     byId("meta-ads-back").addEventListener("click", showListView);
