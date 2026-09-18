@@ -19,7 +19,7 @@
   </style>
 </head>
 <body>
-  <aside class="brand-rail" aria-label="Ana menü"><h2>Buzsu</h2><p>Sosyal Otomasyon</p><nav><button type="button" data-tab="overview">Genel Bakış</button><button type="button" data-tab="queue">İçerik Kuyruğu</button><button type="button" data-tab="composer" class="active">İçerik Üret (AI)</button><button type="button" data-tab="seo">SEO İçerik (AI)</button><button type="button" data-tab="reels">Reels / Video</button><button type="button" data-tab="analytics">Analitik</button><button type="button" data-tab="platform">Platform Bağlantıları</button><button type="button" data-tab="admin">Kullanıcılar</button><button type="button" data-tab="settings">Ayarlar</button></nav></aside>
+  <aside class="brand-rail" aria-label="Ana menü"><h2>Buzsu</h2><p>Sosyal Otomasyon</p><nav><button type="button" data-tab="overview">Genel Bakış</button><button type="button" data-tab="queue">İçerik Kuyruğu</button><button type="button" data-tab="composer" class="active">İçerik Üret (AI)</button><button type="button" data-tab="seo">SEO İçerik (AI)</button><button type="button" data-tab="reels">Reels / Video</button><button type="button" data-tab="analytics">Analitik</button><button type="button" data-tab="meta-ads">Meta Reklamlar</button><button type="button" data-tab="platform">Platform Bağlantıları</button><button type="button" data-tab="admin">Kullanıcılar</button><button type="button" data-tab="settings">Ayarlar</button></nav></aside>
   <header><div><h1>İçerik Üret (AI)</h1><span id="session-label" class="meta">Oturum açılmadı</span></div><input id="overview-search" class="dashboard-search" type="search" placeholder="İçerik, ürün veya kayıt ara..." aria-label="İçerik ara"><div class="header-actions"><button type="button" id="new-content">+ Yeni içerik</button></div></header>
   <section id="auth" class="panel">
     <h2>Panel girişi</h2>
@@ -251,6 +251,28 @@
     <div id="view-grid" class="hidden"><p class="hint">Görseli olan, arşivlenmemiş/silinmemiş kayıtlar yayın zamanına göre sıralanır (Instagram profil ızgarası önizlemesi gibi — gerçek yayın sırasını garanti etmez).</p><div id="grid-board" class="grid-board"></div></div>
     <section class="panel week-calendar hidden" id="week-calendar"><div class="week-calendar-head"><h2>Haftalık takvim</h2><div class="week-calendar-nav"><button type="button" id="week-prev" class="secondary">◀ Önceki hafta</button><span id="week-range" class="week-calendar-range"></span><button type="button" id="week-next" class="secondary">Sonraki hafta ▶</button><button type="button" id="week-today" class="secondary">Bu hafta</button></div></div><p class="hint">Yayın zamanı atanmış tüm kayıtlar (taslak/onaylı/arşiv) haftanın gününe göre gösterilir; çöp kutusundakiler hariç.</p><div id="week-grid" class="week-grid"></div></section>
     </div>
+    <section id="meta-ads" class="panel tab-panel tab-hidden" data-tab="meta-ads">
+      <h2>Meta Reklamlar</h2>
+      <p class="hint">Salt okunur — burada hiçbir reklam durumu, bütçesi veya kreatifi değiştirilmez.</p>
+      <div id="meta-ads-list-view">
+        <div class="toolbar">
+          <select id="meta-ads-status-filter">
+            <option value="">Tüm durumlar</option>
+            <option value="ACTIVE">ACTIVE</option>
+            <option value="PAUSED">PAUSED</option>
+            <option value="WITH_ISSUES">WITH_ISSUES</option>
+          </select>
+          <input id="meta-ads-search" type="search" placeholder="Reklam adı veya ID ara...">
+          <button type="button" id="meta-ads-refresh" class="secondary">Yenile</button>
+        </div>
+        <p id="meta-ads-list-message" class="hint"></p>
+        <div id="meta-ads-table-wrap"></div>
+      </div>
+      <div id="meta-ads-detail-view" class="hidden">
+        <button type="button" id="meta-ads-back" class="secondary">← Reklamlara dön</button>
+        <div id="meta-ads-detail-content"></div>
+      </div>
+    </section>
   </section>
   <script>
     const list=document.querySelector('#list'),msg=document.querySelector('#message'),authMessage=document.querySelector('#auth-message'); let records=[],lastDraft=null;
@@ -805,5 +827,6 @@ document.querySelector('#product-imageurl').addEventListener('input',()=>{const 
     (async()=>{const res=await api('/api/auth');const data=await res.json();if(data.user)enter(data.user);})();
   </script>
   <script src="/dashboard-reels-v2.js"></script>
+  <script src="/dashboard-meta-ads.js"></script>
 </body>
 </html>
