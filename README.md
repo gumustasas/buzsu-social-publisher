@@ -292,6 +292,24 @@ yazması yapılır — yalnızca doğrulama sonucu döner. `productId` +
 `updateProductImage:true` verilmedikçe ürünün Airtable'daki ana `Görsel URL`
 alanı hiçbir zaman değişmez.
 
+## Hikâye (Story) yayınlama — video öncelikli
+
+`format: "Hikâye"` bir kayıtta hem `Görsel URL` hem `Video URL` doluysa
+(ör. `create_draft`'a ikisi de verilmişse), yayın anında (`src/publish-
+approved.js:publishInstagram`/`publishFacebook`) **`Video URL` her zaman
+önceliklidir**: Instagram ve Facebook Story doğrudan bu videoyu kullanır —
+`storyImageUrl()`'ün ürettiği otomatik bilgi kartı/bant/overlay
+(`api/story-image.js`) bu durumda TAMAMEN atlanır, `Görsel URL` hiç
+okunmaz. `Video URL` boşsa mevcut görsel-story yolu (kart/overlay dahil)
+değişmeden çalışır. Bu, Reel/Gönderi/Carousel'in medya seçimini
+ETKİLEMEZ — onlar zaten kendi format-özel mantıklarını kullanıyordu.
+
+Facebook video story, mevcut Facebook Reel yayınlamasıyla (`video_reels`)
+AYNI üç adımlı `upload_phase` desenini kullanır, yalnızca uç nokta
+`video_stories`'e değişir; bu depodan canlı bir Meta hesabına karşı
+DOĞRULANAMADI (sandbox'ta gerçek Meta erişimi yok) — ilk denemeden önce
+kontrollü, tek kayıtlı bir test önerilir.
+
 ## MCP: ürün görsellerinden ücretsiz Reels/Shorts videosu (compose_product_video)
 
 **`compose_product_video`**, 2-10 ürün görselinden, ücretli bir video API'si

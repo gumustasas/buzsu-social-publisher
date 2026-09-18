@@ -195,9 +195,28 @@ async function publishInstagramCarousel(fields) {
   return published.id;
 }
 
+// Video story — "Video URL" doluysa ÖNCELİKLİDİR (bkz. publishInstagram).
+// Görsel-story yolundaki storyImageUrl()/otomatik bilgi kartı/overlay
+// (api/story-image.js) burada KESİNLİKLE kullanılmaz — Instagram'ın Stories
+// container'ı image_url yerine video_url'i de kabul eder, video olduğu
+// gibi (markasız/overlay'siz) yayınlanır. Video işleme fotoğraftan çok
+// daha uzun sürebileceğinden Reel'deki gibi uzun timeout kullanılır.
+async function publishInstagramVideoStory(fields) {
+  requireHttpsUrl(fields["Video URL"], "Video URL");
+  const container = await graphPost(`${process.env.META_INSTAGRAM_ACCOUNT_ID}/media`, { media_type: "STORIES", video_url: fields["Video URL"] });
+  await waitForInstagramContainer(container.id, { attempts: 60, intervalMs: 5000 });
+  const published = await graphPost(`${process.env.META_INSTAGRAM_ACCOUNT_ID}/media_publish`, { creation_id: container.id });
+  return published.id;
+}
+
 export async function publishInstagram(fields, format) {
   if (format === "Reel") return publishInstagramReel(fields);
   if (format === "Carousel") return publishInstagramCarousel(fields);
+  // "Video URL" doluysa video story ÖNCELİKLİDİR — imageUrl/otomatik bilgi
+  // kartı/overlay tamamen atlanır (bkz. publishInstagramVideoStory). Daha
+  // önce Hikâye her zaman Görsel URL + storyImageUrl kartını kullanıyordu,
+  // "Video URL" alanı bu formatta hiç okunmuyordu bile.
+  if (format === "Hikâye" && fields["Video URL"]) return publishInstagramVideoStory(fields);
   requireHttpsUrl(fields["Görsel URL"], "Görsel URL");
   const params = { image_url: format === "Hikâye" ? storyImageUrl(fields["Görsel URL"], fields) : fields["Görsel URL"] };
   if (format === "Hikâye") params.media_type = "STORIES";
@@ -268,17 +287,49 @@ async function publishFacebookCarousel(fields) {
   return published.id;
 }
 
+// Facebook video story — publishFacebookReel'deki (video_reels) İLE AYNI
+// üç adımlı upload_phase deseni (start → rupload.facebook.com'a file_url ile
+// yükleme → finish); yalnızca uç nokta /video_stories'e değişir. Meta'nın
+// video_reels/video_stories uç noktaları aynı upload_phase yapısını
+// paylaşır (resmi doküman). "Video URL" doluysa Hikâye'de bu yol ÖNCELİKLİDİR
+// — storyImageUrl()/otomatik bilgi kartı/overlay burada KESİNLİKLE kullanılmaz.
+async function publishFacebookVideoStory(fields) {
+  requireHttpsUrl(fields["Video URL"], "Video URL");
+  const token = process.env.META_FACEBOOK_PAGE_ACCESS_TOKEN;
+  const pageId = process.env.META_FACEBOOK_PAGE_ID;
+
+  const started = await graphPost(`${pageId}/video_stories`, { upload_phase: "start" }, token);
+  if (!started.video_id) throw new Error("Facebook Story video_id alınamadı.");
+
+  const uploadResponse = await fetch(`https://rupload.facebook.com/video-upload/${graphVersion}/${started.video_id}`, {
+    method: "POST",
+    headers: { Authorization: `OAuth ${token}`, file_url: fields["Video URL"], "Content-Type": "application/octet-stream" }
+  });
+  const uploadData = await uploadResponse.json().catch(() => ({}));
+  if (!uploadResponse.ok || uploadData.success === false) throw new Error(`Facebook Story video yüklenemedi: ${uploadData.error?.message || `HTTP ${uploadResponse.status}`}`);
+
+  const finished = await graphPost(`${pageId}/video_stories`, { upload_phase: "finish", video_id: started.video_id }, token);
+  if (finished.success === false) throw new Error("Facebook Story yayınlanamadı.");
+  return started.video_id;
+}
+
 export async function publishFacebook(fields, format) {
   if (format === "Reel") return publishFacebookReel(fields);
   if (format === "Carousel") return publishFacebookCarousel(fields);
-  requireHttpsUrl(fields["Görsel URL"], "Görsel URL");
   const token = process.env.META_FACEBOOK_PAGE_ACCESS_TOKEN;
   if (format === "Hikâye") {
     if (!facebookStoriesEnabled) return null;
+    // "Video URL" doluysa video story ÖNCELİKLİDİR — imageUrl/otomatik bilgi
+    // kartı/overlay tamamen atlanır (bkz. publishFacebookVideoStory). Daha
+    // önce Hikâye her zaman Görsel URL + storyImageUrl kartını kullanıyordu,
+    // "Video URL" alanı bu formatta hiç okunmuyordu bile.
+    if (fields["Video URL"]) return publishFacebookVideoStory(fields);
+    requireHttpsUrl(fields["Görsel URL"], "Görsel URL");
     const uploaded = await graphPost(`${process.env.META_FACEBOOK_PAGE_ID}/photos`, { url: storyImageUrl(fields["Görsel URL"], fields), published: "false" }, token);
     const story = await graphPost(`${process.env.META_FACEBOOK_PAGE_ID}/photo_stories`, { photo_id: uploaded.id }, token);
     return story.post_id || story.id;
   }
+  requireHttpsUrl(fields["Görsel URL"], "Görsel URL");
   const trackedUrl = withUtm(fields["Kaynak URL"], { source: "facebook", title: fields["Başlık"] });
   const message = joinText(fields["Facebook Metni"], fields["Hashtagler"], trackedUrl);
   if (!message) throw new Error("Facebook metni boş.");
