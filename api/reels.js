@@ -48,14 +48,27 @@ export default async function handler(request, response) {
       // Omni sıfırdan (zero-shot) üretim: serbest metin promptu doluysa ve
       // hiçbir productId verilmemişse ürün çözümlemesi TAMAMEN atlanır —
       // freePrompt zaten birebir/olduğu gibi gönderiliyor (aşağıdaki
-      // "if (freePrompt)" dalı), ürün başlığına hiç ihtiyaç yok. fal.ai/Veo
-      // için bu istisna YOKTUR (ikisi de image-to-video, ürün/görsel şart).
+      // "if (freePrompt)" dalı), ürün başlığına hiç ihtiyaç yok.
       const skipProductForOmni = body.provider === "omni" && Boolean(freePrompt) && !body.productId;
+      // Nano Banana 2 (veya başka bir dış kaynaktan) üretilip kullanıcı
+      // tarafından AÇIKÇA seçilmiş bir sahne görseli (sceneImageUrl) varsa,
+      // provider veo/fal için de artık bir ÜRÜN ZORUNLU DEĞİLDİR — burada
+      // yalnızca şablon promptu için jenerik bir başlık kullanılır,
+      // submitVeoVideo/submitFalVideo zaten yalnızca imageUrl'e ihtiyaç
+      // duyar (bkz. aşağıdaki generate akışındaki skipProductForExternalScene
+      // ile birebir aynı mantık). DAHA ÖNCE bu istisna yalnızca Omni'nin
+      // freePrompt zero-shot'una aitti; bu yüzden Nano Banana + Veo akışında
+      // productId olmadan preview çağrısı "Ürün bulunamadı." ile başarısız
+      // oluyordu.
+      const hasExternalScene = typeof body.sceneImageUrl === "string" && /^https:\/\//i.test(body.sceneImageUrl);
+      const skipProductForExternalScene = !body.productId && hasExternalScene && (body.provider === "veo" || body.provider === "fal");
       let title = "";
-      if (!skipProductForOmni) {
+      if (!skipProductForOmni && !skipProductForExternalScene) {
         const previewProduct = await resolveProduct(body.productId);
         if (!previewProduct) return response.status(400).json({ error: "Ürün bulunamadı." });
         title = previewProduct.title;
+      } else if (skipProductForExternalScene) {
+        title = "Buzsu ürünü";
       }
       let motion = typeof body.motion === "string" ? body.motion.trim() : "";
       let motionSource = "user";
@@ -102,11 +115,25 @@ export default async function handler(request, response) {
     // Omni sıfırdan (zero-shot) üretim: productId verilmemiş VE bir sahne
     // görseli de istenmemişse ürün çözümlemesi/görsel zorunluluğu TAMAMEN
     // atlanır — submitOmniVideoGeneration referenceImageUrl'siz de çalışır
-    // (bkz. src/omni-video.js). fal.ai/Veo için bu istisna YOKTUR (ikisi de
-    // image-to-video, ürün/görsel her zaman şart).
+    // (bkz. src/omni-video.js).
     const skipProductForOmni = body.provider === "omni" && !body.productId && !sceneImageUrl;
+    // Nano Banana 2 (veya başka bir dış kaynaktan) üretilip kullanıcı
+    // tarafından AÇIKÇA seçilmiş (dashboard: "Bu görseli kullan") bir
+    // sceneImageUrl varsa, Veo/fal.ai için de artık BİR ÜRÜN (Airtable/
+    // katalog kaydı, başlık, Kaynak URL) ZORUNLU DEĞİLDİR —
+    // submitVeoVideo/submitFalVideo yalnızca product.imageUrl'i okur,
+    // product.url/title'a hiç ihtiyaç duymaz (title yalnızca finalizedPrompt
+    // boşsa kullanılan bir fallback, ki bu akışta finalizedPrompt her zaman
+    // doludur). DAHA ÖNCE bu durumda resolveProduct(undefined) çağrılıp
+    // "Ürün bulunamadı." ile HİÇBİR ağ isteği atılmadan reddediliyordu —
+    // Nano Banana 2'nin zero-shot çıktısını Veo'ya vermenin tek yolunu
+    // (productId olmadan) engelliyordu. productId verilmişse davranış
+    // birebir eskisi gibi kalır (bu dal hiç girilmez).
+    const skipProductForExternalScene = !body.productId && Boolean(sceneImageUrl) && (body.provider === "veo" || body.provider === "fal");
     let product = null;
-    if (!skipProductForOmni) {
+    if (skipProductForExternalScene) {
+      product = { title: "Buzsu ürünü", url: "", imageUrl: sceneImageUrl };
+    } else if (!skipProductForOmni) {
       const resolvedProduct = await resolveProduct(body.productId);
       if (!resolvedProduct || !resolvedProduct.url) return response.status(400).json({ error: "Ürün URL bilgisi eksik." });
       const imageUrl = sceneImageUrl || resolvedProduct.imageUrl;
