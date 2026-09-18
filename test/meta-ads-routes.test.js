@@ -870,6 +870,35 @@ test("POST /api/meta-ads/ad-creative-update: bind (ads_update_ad) reddedilirse 5
   assert.equal(res.payload.error.new_creative_id, "new_1");
 });
 
+// İncelemede istenen ek kapsam: create adımının kendisi (ads_create_ad_creative)
+// başarısız olursa ads_update_ad'a HİÇ gidilmediğini ROUTE seviyesinde de (yalnız
+// meta-connect.js birim testinde değil) doğrula — reklamın mevcut creative'i bu
+// durumda kesin olarak dokunulmamış kalır, çünkü bağlama adımı hiç denenmez.
+test("POST /api/meta-ads/ad-creative-update: create (ads_create_ad_creative) adımı başarısız olursa ads_update_ad HİÇ çağrılmaz, 502 döner ve new_creative_id yoktur", async () => {
+  const calledTools = [];
+  const res = makeResponse();
+  await withMockedFetch(
+    withStandardHandshake(
+      creativeToolHandlers({
+        ads_create_ad_creative: () =>
+          fakeFetchResponse({
+            headers: { "content-type": "application/json" },
+            bodyText: JSON.stringify({ jsonrpc: "2.0", id: "call", result: { isError: true, content: [{ type: "text", text: "create reddedildi" }] } })
+          })
+      }),
+      calledTools
+    ),
+    async () => {
+      await adCreativeUpdateHandler(makeRequest({ method: "POST", role: "Admin", body: VALID_CREATIVE_BODY }), res);
+    }
+  );
+  assert.equal(res.statusCode, 502);
+  assert.equal(res.payload.ok, false);
+  assert.match(res.payload.error.message, /create reddedildi/);
+  assert.ok(!("new_creative_id" in res.payload.error), "create hiç oluşmadıysa new_creative_id olmamalı");
+  assert.deepEqual(calledTools, ["ads_get_ad_creative_assets", "ads_create_ad_creative"]);
+});
+
 test("POST /api/meta-ads/ad-creative-update: description/instagram_user_id verilmezse MCP çağrısına HİÇ eklenmez (undefined alan olarak sızmaz)", async () => {
   let capturedCreateArgs;
   const res = makeResponse();

@@ -167,6 +167,17 @@ test("PR-4: kreatif bağlama sonrası previous_creative_id ve new_creative_id (r
   assert.match(fn, /new_creative_id/);
 });
 
+// İncelemede istenen ek kapsam: create başarılı/bind başarısız (partial success)
+// senaryosu genel bir "başarısız" mesajına yutulmamalı — client, hata yanıtındaki
+// error.new_creative_id'yi OKUYUP kullanıcıya "oluşturuldu ama bağlanamadı" gibi
+// AYRI bir bilgi olarak göstermeli (bkz. api/meta-ads/ad-creative-update.js +
+// src/lib/meta-connect.js:createAndBindAdCreative → error.new_creative_id).
+test("PR-4: create başarılı/bind başarısız (partial success) durumu client'ta genel hataya yutulmaz — error.new_creative_id okunup ayrıca gösterilir", () => {
+  const fn = client.match(/async function performCreativeUpdate\(\) \{[\s\S]*?\n  \}/)[0];
+  assert.match(fn, /data\?\.error\?\.new_creative_id/);
+  assert.match(fn, /oluşturuldu ama bağlanamadı/);
+});
+
 test("PR-3: durum değişikliği ve bütçe güncellemesi iki tıklamalı onay ister (ilk tık arm eder, süresi dolunca sıfırlanır)", () => {
   assert.match(client, /function handleStatusToggleClick/);
   assert.match(client, /function handleBudgetSubmitClick/);
