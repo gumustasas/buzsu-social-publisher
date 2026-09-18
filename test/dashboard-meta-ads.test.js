@@ -36,10 +36,25 @@ test("null (ölçülmedi) ile 0 (ölçüldü ve sıfır) UI'da ayrı gösterilir
   assert.match(fn, /"Veri yok"/);
 });
 
-test("low_volume.signals[] gösterilir; value null ise 'Veri yok', threshold her zaman gösterilir", () => {
-  assert.match(client, /function renderLowVolumeSignal/);
-  assert.match(client, /Sonuç hacmi düşük/);
-  assert.match(client, /lowVolume\?\.flagged/);
+test("low_volume rozeti sunucunun genel flagged'ına değil, HER sinyalin kendi eşiğine bakar — results:null bir sinyali flagged saymaz", () => {
+  const fn = client.match(/function isLowVolumeSignalFlagged\([\s\S]*?\n  \}/)[0];
+  assert.match(fn, /signal\.value !== null && signal\.value < signal\.threshold/);
+  // renderOverview artık lowVolume.flagged'ı DOĞRUDAN göstermiyor; her sinyali kendi
+  // filtresinden geçiriyor — aksi halde results:null+impressions-flagged durumunda
+  // "Sonuç hacmi düşük" gibi yanlış bir başlık çıkardı (önceki production hatası).
+  assert.match(client, /flaggedSignals = lowVolume \? lowVolume\.signals\.filter\(isLowVolumeSignalFlagged\) : \[\]/);
+  assert.doesNotMatch(client, /lowVolume\?\.flagged\s*\n?\s*\?/);
+});
+
+test("low_volume metni sinyale özgü: results için 'Sonuç hacmi düşük (<metrik>)', impressions için 'Gösterim hacmi düşük' — birbirine karışmaz", () => {
+  const fn = client.match(/function renderLowVolumeSignal\([\s\S]*?\n  \}/)[0];
+  assert.match(fn, /"Gösterim hacmi düşük"/);
+  assert.match(fn, /Sonuç hacmi düşük \(/);
+});
+
+test("purchase_roas === 0, null'dan ayrı: formatNullable yalnız null/undefined'ı 'Veri yok' sayar, 0'ı formatter'a geçirir (!value gibi 0'ı da yakalayan gevşek bir kontrol DEĞİL)", () => {
+  const fn = client.match(/const formatNullable = \([\s\S]*?\);/)[0];
+  assert.match(fn, /value === null \|\| value === undefined \? "Veri yok" : formatter\(value\)/);
 });
 
 test("Reklamlar tablosu artık campaign_name/adset_name gösterir (ID'yi tamamen basmaz)", () => {

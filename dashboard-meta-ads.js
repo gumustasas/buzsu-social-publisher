@@ -41,10 +41,20 @@
     messaging_conversations_started: "Mesajlaşma Başlangıçları"
   };
 
+  // lowVolumeReport() "flagged"ı sinyallerin OR'u olarak hesaplıyor — yani flagged:true
+  // olsa da hangi sinyalin gerçekten eşiğin altında olduğu ayrıca belirlenmeli. results
+  // sinyali value:null ise (o dönem için izlenen bir dönüşüm eylemi yok, örn. trafik
+  // kampanyası) bu "eşiğin altında" DEĞİLDİR — bilinmiyor demektir, düşük değil. Bu
+  // yüzden "yalnız bu iki koşuldan biri true'ysa flagged" kuralı istemci tarafında da
+  // birebir uygulanıyor; sunucunun flagged:true'sunu doğrudan görüntülemiyoruz.
+  function isLowVolumeSignalFlagged(signal) {
+    return signal.value !== null && signal.value < signal.threshold;
+  }
+
   function renderLowVolumeSignal(signal) {
-    const label = signal.basis === "impressions" ? "Gösterim" : LOW_VOLUME_METRIC_LABELS[signal.metric] || signal.metric || "Sonuç";
-    const value = formatNullable(signal.value, (v) => formatNumber(v));
-    return `${escapeHtml(label)}: ${value} / eşik ${formatNumber(signal.threshold)}`;
+    const label =
+      signal.basis === "impressions" ? "Gösterim hacmi düşük" : `Sonuç hacmi düşük (${LOW_VOLUME_METRIC_LABELS[signal.metric] || signal.metric || "bilinmeyen metrik"})`;
+    return `${escapeHtml(label)}: ${formatNumber(signal.value)} / eşik ${formatNumber(signal.threshold)}`;
   }
 
   function setListMessage(text, isError) {
@@ -153,8 +163,9 @@
     }
 
     const lowVolume = overview.last7d?.low_volume;
-    const lowVolumeHtml = lowVolume?.flagged
-      ? `<div class="card" style="margin-top:12px"><p class="error">⚠ Sonuç hacmi düşük (7 gün)</p><ul style="margin:8px 0 0;padding-left:20px">${lowVolume.signals
+    const flaggedSignals = lowVolume ? lowVolume.signals.filter(isLowVolumeSignalFlagged) : [];
+    const lowVolumeHtml = flaggedSignals.length
+      ? `<div class="card" style="margin-top:12px"><p class="error">⚠ Düşük hacim uyarısı (7 gün)</p><ul style="margin:8px 0 0;padding-left:20px">${flaggedSignals
           .map((signal) => `<li class="hint">${renderLowVolumeSignal(signal)}</li>`)
           .join("")}</ul></div>`
       : "";
