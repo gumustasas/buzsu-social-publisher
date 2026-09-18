@@ -42,6 +42,14 @@ const checks = [
     fallback: DEFAULT_META_GRAPH_VERSION
   },
   {
+    name: "META_CONNECT_URL",
+    requiredFor: "Meta Reklamlar paneli (/api/meta-ads/*) — Meta Ads MCP servisinin kök adresi"
+  },
+  {
+    name: "META_CONNECT_MCP_PATH_SECRET",
+    requiredFor: "Meta Reklamlar paneli (/api/meta-ads/*) — MCP servisiyle aynı path secret'ı"
+  },
+  {
     name: "SOCIAL_POST_LIMIT",
     requiredFor: "Tek seferde işlenecek kayıt sayısı",
     fallback: "1"
