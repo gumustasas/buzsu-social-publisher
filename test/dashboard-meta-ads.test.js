@@ -300,3 +300,45 @@ test("PR-5: ham effective_status değerleri (CAMPAIGN_PAUSED, ADSET_PAUSED, WITH
   assert.match(labelsBlock, /WITH_ISSUES:\s*"Sorunlu"/);
   assert.match(client, /const statusLabel = \(value\) => STATUS_LABELS\[value\] \|\| value;/);
 });
+
+// PR-7: label-only düzeltme — "Tümü" → "Tüm Durumlar" ve tüm status label
+// eşlemesinin (dropdown + tablo) istenen tam metinlerle eşleştiğini doğrular.
+// matchesStatusFilter'ın internal value'ları (ACTIVE/PAUSED/CAMPAIGN_PAUSED/
+// ADSET_PAUSED/WITH_ISSUES/"") HİÇ değişmedi — bu testler yalnız görünen
+// Türkçe etiketleri kilitliyor, filtre mantığını değil (o hâlâ PR-5
+// testlerindeki matchesStatusFilter davranış testleriyle korunuyor).
+test("PR-7: durum filtresi dropdown'ındaki her seçeneğin internal value'su AYNI kalıp, görünen etiketi istenen Türkçe metinle eşleşiyor", () => {
+  const selectBlock = dashboard.match(/<select id="meta-ads-status-filter">[\s\S]*?<\/select>/)[0];
+  assert.match(selectBlock, /<option value="">Tüm Durumlar<\/option>/);
+  assert.match(selectBlock, /<option value="ACTIVE">Aktif<\/option>/);
+  assert.match(selectBlock, /<option value="PAUSED">Durdurulmuş<\/option>/);
+  assert.match(selectBlock, /<option value="CAMPAIGN_PAUSED">Kampanya Durdurulmuş<\/option>/);
+  assert.match(selectBlock, /<option value="ADSET_PAUSED">Reklam Seti Durdurulmuş<\/option>/);
+  assert.match(selectBlock, /<option value="WITH_ISSUES">Sorunlu<\/option>/);
+});
+
+test("PR-7: STATUS_LABELS haritası (Durum + Gerçek Durum sütunlarında kullanılan) tam olarak istenen 5 eşlemeyi içeriyor", () => {
+  const labelsBlock = client.match(/const STATUS_LABELS = \{[\s\S]*?\n  \};/)[0];
+  assert.match(labelsBlock, /ACTIVE:\s*"Aktif"/);
+  assert.match(labelsBlock, /PAUSED:\s*"Durdurulmuş"/);
+  assert.match(labelsBlock, /CAMPAIGN_PAUSED:\s*"Kampanya Durdurulmuş"/);
+  assert.match(labelsBlock, /ADSET_PAUSED:\s*"Reklam Seti Durdurulmuş"/);
+  assert.match(labelsBlock, /WITH_ISSUES:\s*"Sorunlu"/);
+});
+
+test("PR-7: label değişikliği matchesStatusFilter()'ın internal value'larla çalışan mantığını bozmadı — ACTIVE/PAUSED/CAMPAIGN_PAUSED/ADSET_PAUSED/WITH_ISSUES/boş filtre hâlâ ham İngilizce değerlerle karşılaştırılıyor", () => {
+  const fn = client.match(/function matchesStatusFilter\([\s\S]*?\n  \}/)[0];
+  assert.match(fn, /filter === "ACTIVE"/);
+  assert.match(fn, /filter === "PAUSED"/);
+  assert.match(fn, /filter === "CAMPAIGN_PAUSED"/);
+  assert.match(fn, /filter === "ADSET_PAUSED"/);
+  assert.match(fn, /filter === "WITH_ISSUES"/);
+  assert.doesNotMatch(fn, /"Aktif"|"Durdurulmuş"|"Sorunlu"|"Kampanya Durdurulmuş"|"Reklam Seti Durdurulmuş"/);
+  const matchesStatusFilter = new Function(`"use strict"; ${fn}; return matchesStatusFilter;`)();
+  assert.equal(matchesStatusFilter({ status: "ACTIVE", effective_status: "ACTIVE" }, "ACTIVE"), true);
+  assert.equal(matchesStatusFilter({ status: "ACTIVE", effective_status: "CAMPAIGN_PAUSED" }, "ACTIVE"), false);
+  assert.equal(matchesStatusFilter({ status: "PAUSED", effective_status: "PAUSED" }, "PAUSED"), true);
+  assert.equal(matchesStatusFilter({ status: "ACTIVE", effective_status: "ADSET_PAUSED" }, "ADSET_PAUSED"), true);
+  assert.equal(matchesStatusFilter({ status: "ACTIVE", effective_status: "WITH_ISSUES" }, "WITH_ISSUES"), true);
+  assert.equal(matchesStatusFilter({ status: "ACTIVE", effective_status: "CAMPAIGN_PAUSED" }, ""), true);
+});
