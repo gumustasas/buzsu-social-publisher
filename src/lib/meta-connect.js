@@ -264,6 +264,22 @@ export async function getAdCreativeAssets(adId) {
   };
 }
 
+// PR-3: tersinir yazma işlemleri (durum + bütçe). confirmed HER ZAMAN burada
+// sunucu tarafında true gönderilir — istemciden bir "confirmed" alanı ASLA
+// kabul edilmez/geçirilmez. Bu route'a ulaşmak zaten Admin-only oturum
+// kontrolünden ve frontend'in iki tıklamalı onay akışından geçmiş olmayı
+// gerektirir; MCP'nin confirmed=true şartı bir AI ajanının kazara yazma
+// yapmasına karşı asıl güvenlik sınırı olarak kalır (bkz. requireConfirmation).
+export async function setAdStatus(adId, status) {
+  const data = await callTool("ads_set_ad_status", { ad_id: adId, status, confirmed: true });
+  return { success: Boolean(data?.success) };
+}
+
+export async function updateAdSetBudget(adSetId, dailyBudgetTry) {
+  const data = await callTool("ads_update_adset_budget", { adset_id: adSetId, daily_budget_try: dailyBudgetTry, confirmed: true });
+  return { success: Boolean(data?.success) };
+}
+
 // Route'ların UI'ya döndürdüğü hata her zaman bu sabit sözleşmeye normalize
 // edilir; MCP/JSON-RPC'nin ham hata biçimi asla UI'ya sızmaz.
 export function errorToApiShape(error) {

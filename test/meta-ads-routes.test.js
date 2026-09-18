@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import adsHandler from "../api/meta-ads/ads.js";
 import adCreativeHandler from "../api/meta-ads/ad-creative.js";
 import overviewHandler from "../api/meta-ads/overview.js";
+import adStatusHandler from "../api/meta-ads/ad-status.js";
+import adsetBudgetHandler from "../api/meta-ads/adset-budget.js";
 import { setSession } from "../src/auth.js";
 
 process.env.SESSION_SECRET = process.env.SESSION_SECRET || "test-secret-for-meta-ads-routes";
@@ -18,8 +20,8 @@ function sessionCookie(user = { id: "u1", username: "test", role: "Editor" }) {
   return String(headers["Set-Cookie"]).split(";")[0];
 }
 
-function makeRequest({ method = "GET", url = "", query = {}, authorized = true } = {}) {
-  return { method, url, query, headers: authorized ? { cookie: sessionCookie() } : {} };
+function makeRequest({ method = "GET", url = "", query = {}, body, authorized = true, role = "Editor" } = {}) {
+  return { method, url, query, body, headers: authorized ? { cookie: sessionCookie({ id: "u1", username: "test", role }) } : {} };
 }
 
 function makeResponse() {
@@ -360,17 +362,22 @@ test("GET /api/meta-ads/overview: pixel_get başarısız olursa yalnız pixel b�
   assert.equal(res.payload.overview.today.spend, 10);
 });
 
-test("Bu PR'da hiçbir write tool çağrılmaz — yalnız read-only tool'lar kullanılır", async () => {
+test("Yalnız izin verilen tool'lar çağrılır — PR-1/2 read-only'ler + PR-3'ün iki tersinir write'ı, başka hiçbiri", async () => {
   const calledTools = [];
   await withMockedFetch(
-    withStandardHandshake({}, calledTools),
+    withStandardHandshake(
+      { ads_set_ad_status: () => toolCallSuccessResponse({ success: true }), ads_update_adset_budget: () => toolCallSuccessResponse({ success: true }) },
+      calledTools
+    ),
     async () => {
       await adsHandler(makeRequest(), makeResponse());
       await adCreativeHandler(makeRequest({ query: { ad_id: "ad_1" } }), makeResponse());
       await overviewHandler(makeRequest(), makeResponse());
+      await adStatusHandler(makeRequest({ method: "POST", role: "Admin", body: { ad_id: "ad_1", status: "PAUSED" } }), makeResponse());
+      await adsetBudgetHandler(makeRequest({ method: "POST", role: "Admin", body: { adset_id: "adset_1", daily_budget_try: 100 } }), makeResponse());
     }
   );
-  const READ_ONLY_TOOLS = new Set([
+  const ALLOWED_TOOLS = new Set([
     "ads_list_ads",
     "ads_list_campaigns",
     "ads_list_adsets",
@@ -378,7 +385,126 @@ test("Bu PR'da hiçbir write tool çağrılmaz — yalnız read-only tool'lar ku
     "ads_get_account",
     "ads_get_performance_summary",
     "ads_compare_performance",
-    "pixel_get"
+    "pixel_get",
+    "ads_set_ad_status",
+    "ads_update_adset_budget"
   ]);
-  assert.ok(calledTools.every((name) => READ_ONLY_TOOLS.has(name)), `read-only olmayan tool çağrıldı: ${calledTools}`);
+  assert.ok(calledTools.every((name) => ALLOWED_TOOLS.has(name)), `izin verilmeyen tool çağrıldı: ${calledTools}`);
+  // delete/create/catalog/creative-update tool'ları asla çağrılmamalı (PR-4 kapsamı).
+  assert.ok(!calledTools.some((name) => /delete|create|catalog/i.test(name)), `PR-4 kapsamındaki bir tool çağrıldı: ${calledTools}`);
+});
+
+test("POST /api/meta-ads/ad-status: oturum yoksa 401 döner", async () => {
+  const res = makeResponse();
+  await adStatusHandler(makeRequest({ method: "POST", authorized: false, body: { ad_id: "ad_1", status: "PAUSED" } }), res);
+  assert.equal(res.statusCode, 401);
+});
+
+test("POST /api/meta-ads/ad-status: Editor rolü 403 döner — Admin-only", async () => {
+  const res = makeResponse();
+  await adStatusHandler(makeRequest({ method: "POST", role: "Editor", body: { ad_id: "ad_1", status: "PAUSED" } }), res);
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.payload.error.code, "FORBIDDEN");
+});
+
+test("GET /api/meta-ads/ad-status: yalnız POST desteklenir, 405 döner", async () => {
+  const res = makeResponse();
+  await adStatusHandler(makeRequest({ method: "GET", role: "Admin" }), res);
+  assert.equal(res.statusCode, 405);
+});
+
+test("POST /api/meta-ads/ad-status: ad_id eksikse 400 döner", async () => {
+  const res = makeResponse();
+  await adStatusHandler(makeRequest({ method: "POST", role: "Admin", body: { status: "PAUSED" } }), res);
+  assert.equal(res.statusCode, 400);
+});
+
+test("POST /api/meta-ads/ad-status: status ACTIVE/PAUSED dışındaysa (örn. DELETED) 400 döner ve tool hiç çağrılmaz", async () => {
+  const calledTools = [];
+  const res = makeResponse();
+  await withMockedFetch(withStandardHandshake({}, calledTools), async () => {
+    await adStatusHandler(makeRequest({ method: "POST", role: "Admin", body: { ad_id: "ad_1", status: "DELETED" } }), res);
+  });
+  assert.equal(res.statusCode, 400);
+  assert.deepEqual(calledTools, []);
+});
+
+test("POST /api/meta-ads/ad-status: Admin + geçerli body → ads_set_ad_status confirmed:true ile çağrılır, 200 döner", async () => {
+  let capturedArgs;
+  const res = makeResponse();
+  await withMockedFetch(
+    withStandardHandshake({
+      ads_set_ad_status: (message) => {
+        capturedArgs = message.params.arguments;
+        return toolCallSuccessResponse({ success: true });
+      }
+    }),
+    async () => {
+      await adStatusHandler(makeRequest({ method: "POST", role: "Admin", body: { ad_id: "ad_42", status: "ACTIVE" } }), res);
+    }
+  );
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.ok, true);
+  assert.equal(res.payload.success, true);
+  assert.deepEqual(capturedArgs, { ad_id: "ad_42", status: "ACTIVE", confirmed: true });
+});
+
+test("POST /api/meta-ads/ad-status: MCP guard'ı reddederse (örn. connector kısıtı) sabit hata sözleşmesiyle 502 döner", async () => {
+  const res = makeResponse();
+  await withMockedFetch(
+    withStandardHandshake({
+      ads_set_ad_status: () =>
+        fakeFetchResponse({
+          headers: { "content-type": "application/json" },
+          bodyText: JSON.stringify({ jsonrpc: "2.0", id: "call", result: { isError: true, content: [{ type: "text", text: "reddedildi" }] } })
+        })
+    }),
+    async () => {
+      await adStatusHandler(makeRequest({ method: "POST", role: "Admin", body: { ad_id: "ad_1", status: "PAUSED" } }), res);
+    }
+  );
+  assert.equal(res.statusCode, 502);
+  assert.equal(res.payload.ok, false);
+});
+
+test("POST /api/meta-ads/adset-budget: oturum yoksa 401, Editor ise 403 döner", async () => {
+  const unauthorized = makeResponse();
+  await adsetBudgetHandler(makeRequest({ method: "POST", authorized: false, body: { adset_id: "adset_1", daily_budget_try: 100 } }), unauthorized);
+  assert.equal(unauthorized.statusCode, 401);
+
+  const forbidden = makeResponse();
+  await adsetBudgetHandler(makeRequest({ method: "POST", role: "Editor", body: { adset_id: "adset_1", daily_budget_try: 100 } }), forbidden);
+  assert.equal(forbidden.statusCode, 403);
+});
+
+test("POST /api/meta-ads/adset-budget: daily_budget_try aralık dışıysa (0 veya 100001) 400 döner ve tool hiç çağrılmaz", async () => {
+  const calledTools = [];
+  const tooLow = makeResponse();
+  const tooHigh = makeResponse();
+  await withMockedFetch(withStandardHandshake({}, calledTools), async () => {
+    await adsetBudgetHandler(makeRequest({ method: "POST", role: "Admin", body: { adset_id: "adset_1", daily_budget_try: 0 } }), tooLow);
+    await adsetBudgetHandler(makeRequest({ method: "POST", role: "Admin", body: { adset_id: "adset_1", daily_budget_try: 100001 } }), tooHigh);
+  });
+  assert.equal(tooLow.statusCode, 400);
+  assert.equal(tooHigh.statusCode, 400);
+  assert.deepEqual(calledTools, []);
+});
+
+test("POST /api/meta-ads/adset-budget: Admin + geçerli body → ads_update_adset_budget confirmed:true ile çağrılır, 200 döner", async () => {
+  let capturedArgs;
+  const res = makeResponse();
+  await withMockedFetch(
+    withStandardHandshake({
+      ads_update_adset_budget: (message) => {
+        capturedArgs = message.params.arguments;
+        return toolCallSuccessResponse({ success: true });
+      }
+    }),
+    async () => {
+      await adsetBudgetHandler(makeRequest({ method: "POST", role: "Admin", body: { adset_id: "adset_9", daily_budget_try: 350.5 } }), res);
+    }
+  );
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.ok, true);
+  assert.deepEqual(capturedArgs, { adset_id: "adset_9", daily_budget_try: 350.5, confirmed: true });
 });
