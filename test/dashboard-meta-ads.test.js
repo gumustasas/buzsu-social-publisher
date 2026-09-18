@@ -19,9 +19,12 @@ test("Modül credentials: same-origin ile mevcut oturum cookie'sini kullanır; k
   assert.doesNotMatch(client, /mcp-session-id/i);
 });
 
-test("Yalnız /api/meta-ads/ads, /api/meta-ads/ad-creative ve /api/meta-ads/overview çağrılır; başka bir Meta/MCP ucuna dokunulmaz", () => {
-  const apiPaths = [...client.matchAll(/mAdsApi\(`?"?(\/api\/meta-ads\/[a-z-]+)/g)].map((match) => match[1]);
-  assert.deepEqual([...new Set(apiPaths)].sort(), ["/api/meta-ads/ad-creative", "/api/meta-ads/ads", "/api/meta-ads/overview"]);
+test("Yalnız bilinen /api/meta-ads/* uçları ve /api/auth çağrılır; başka bir Meta/MCP ucuna dokunulmaz", () => {
+  const apiPaths = [...client.matchAll(/mAdsApi\(`?"?(\/api\/[a-z-]+(?:\/[a-z-]+)?)/g)].map((match) => match[1]);
+  assert.deepEqual(
+    [...new Set(apiPaths)].sort(),
+    ["/api/auth", "/api/meta-ads/ad-creative", "/api/meta-ads/ad-status", "/api/meta-ads/ads", "/api/meta-ads/adset-budget", "/api/meta-ads/overview"]
+  );
 });
 
 test("Genel Bakış varsayılan sekme, Reklamlar ikinci sekme olarak sub-nav'da yer alır", () => {
@@ -66,8 +69,51 @@ test("Reklamlar listesi Genel Bakış'tan bağımsız olarak lazy — ancak 'Rek
   assert.match(client, /if \(!state\.adsLoaded\) \{\s*state\.adsLoaded = true;\s*loadAds\(\);/);
 });
 
-test("Bu PR'da hiçbir yazma/onay butonu yok — pause/resume/delete/budget/confirmed ifadesi geçmez", () => {
-  assert.doesNotMatch(client, /pause|resume|delete|budget|confirmed\s*:\s*true/i);
+test("PR-3: silme/oluşturma/katalog/kreatif-güncelleme gibi kapsam dışı write işlemleri yok — yalnız durum + bütçe", () => {
+  assert.doesNotMatch(client, /delete|create|catalog|creative.{0,20}update/i);
+});
+
+test("PR-3: 'confirmed' alanı istemciden ASLA gönderilmez — sunucu her zaman kendi confirmed:true'sunu ekler", () => {
+  // Client, MCP'nin confirmed şartını taklit edip kendi body'sine confirmed koymamalı;
+  // bu sadece backend'in (meta-connect.js) sorumluluğu — bir tasarım-notu yorumunda
+  // "confirmed" kelimesi geçebilir, ama hiçbir JSON.stringify(...) request body'sinde
+  // bu alan olmamalı.
+  const requestBodies = [...client.matchAll(/JSON\.stringify\((\{[^}]*\})\)/g)].map((match) => match[1]);
+  assert.ok(requestBodies.length >= 2, "beklenen POST body'leri bulunamadı");
+  requestBodies.forEach((body) => assert.doesNotMatch(body, /confirmed/i));
+});
+
+test("PR-3: iki tıklamalı onay sonrası GERÇEK gönderilen istek, Social Publisher'ın kendi 'confirm:true' niyet sinyalini taşır", () => {
+  // Bu 'confirm' (MCP'nin 'confirmed'inden farklı) — backend'de body.confirm !== true
+  // ise 400 döner; route'a doğrudan curl ile confirm göndermeden gidilirse artık
+  // sessizce yazma yapılmaz.
+  const requestBodies = [...client.matchAll(/JSON\.stringify\((\{[^}]*\})\)/g)].map((match) => match[1]);
+  const writeBodies = requestBodies.filter((body) => /ad_id|adset_id/.test(body));
+  assert.ok(writeBodies.length >= 2, "ad-status ve adset-budget body'leri bulunamadı");
+  writeBodies.forEach((body) => assert.match(body, /confirm:\s*true/));
+});
+
+test("PR-3: Admin-only kontrolü var — write kontrolleri isAdmin false ise gösterilmez", () => {
+  assert.match(client, /state\.isAdmin/);
+  assert.match(client, /if \(!state\.isAdmin\) \{/);
+  assert.match(client, /data\?\.user\?\.role === "Admin"/);
+});
+
+test("PR-3: durum değişikliği ve bütçe güncellemesi iki tıklamalı onay ister (ilk tık arm eder, süresi dolunca sıfırlanır)", () => {
+  assert.match(client, /function handleStatusToggleClick/);
+  assert.match(client, /function handleBudgetSubmitClick/);
+  assert.match(client, /statusConfirmArmed = true/);
+  assert.match(client, /budgetConfirmArmed = true/);
+  assert.match(client, /CONFIRM_ARM_MS/);
+});
+
+test("PR-3: bütçe girdisi 1-100000 TRY dışında bir değerle onay akışına hiç girmeden reddedilir", () => {
+  const fn = client.match(/function handleBudgetSubmitClick\(\) \{[\s\S]*?\n  \}/)[0];
+  assert.match(fn, /value < 1 \|\| value > 100000/);
+});
+
+test("PR-3: bütçe değeri değişince (onaylanmışsa) onay sıfırlanır — eski onay yeni bir değere sirayet etmez", () => {
+  assert.match(client, /if \(writeState\.budgetConfirmArmed\) \{\s*resetBudgetConfirm\(\);/);
 });
 
 test("Reklam listesi lazy-init ile yüklenir: nav tıklaması ve #workspace görünürlüğü initialize'ı tetikler", () => {

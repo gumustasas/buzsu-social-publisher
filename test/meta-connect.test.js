@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { callTool, listAllAds, getAdCreativeAssets, errorToApiShape } from "../src/lib/meta-connect.js";
+import { callTool, listAllAds, getAdCreativeAssets, setAdStatus, updateAdSetBudget, errorToApiShape } from "../src/lib/meta-connect.js";
 
 // Gitleaks'in gerçek bir secret sanmaması için açıkça sahte bir değer kullanılıyor.
 process.env.META_CONNECT_URL = process.env.META_CONNECT_URL || "https://buzsu-social-connect.example.test";
@@ -390,4 +390,51 @@ test("errorToApiShape MCP_TIMEOUT kodunu korur, diğer hatalar için MCP_UPSTREA
   assert.ok(!timeoutShape.message.includes(secret));
   assert.equal(genericShape.code, "MCP_UPSTREAM_ERROR");
   assert.ok(!genericShape.message.includes(secret));
+});
+
+test("setAdStatus, ads_set_ad_status'u doğru argümanlarla çağırır ve confirmed:true'yu sunucu tarafında sabit gönderir", async () => {
+  let capturedArgs;
+  await withMockedFetch(
+    withStandardHandshake((message) => {
+      capturedArgs = message.params.arguments;
+      return toolCallSuccessResponse({ success: true });
+    }),
+    async () => {
+      const result = await setAdStatus("ad_1", "PAUSED");
+      assert.deepEqual(result, { success: true });
+    }
+  );
+  assert.deepEqual(capturedArgs, { ad_id: "ad_1", status: "PAUSED", confirmed: true });
+});
+
+test("updateAdSetBudget, ads_update_adset_budget'ı doğru argümanlarla çağırır ve confirmed:true'yu sunucu tarafında sabit gönderir", async () => {
+  let capturedArgs;
+  let capturedName;
+  await withMockedFetch(
+    withStandardHandshake((message) => {
+      capturedName = message.params.name;
+      capturedArgs = message.params.arguments;
+      return toolCallSuccessResponse({ success: true });
+    }),
+    async () => {
+      const result = await updateAdSetBudget("adset_1", 250);
+      assert.deepEqual(result, { success: true });
+    }
+  );
+  assert.equal(capturedName, "ads_update_adset_budget");
+  assert.deepEqual(capturedArgs, { adset_id: "adset_1", daily_budget_try: 250, confirmed: true });
+});
+
+test("setAdStatus, MCP guard'ı hata döndürürse (örn. connector tarafında bir kısıt) hatayı olduğu gibi fırlatır", async () => {
+  await withMockedFetch(
+    withStandardHandshake(() =>
+      fakeResponse({
+        headers: { "content-type": "application/json" },
+        bodyText: JSON.stringify({ jsonrpc: "2.0", id: "call", result: { isError: true, content: [{ type: "text", text: "Bilinmeyen ad_id" }] } })
+      })
+    ),
+    async () => {
+      await assert.rejects(() => setAdStatus("ad_bad", "ACTIVE"), /Bilinmeyen ad_id/);
+    }
+  );
 });

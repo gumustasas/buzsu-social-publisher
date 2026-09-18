@@ -1,13 +1,33 @@
 /* META REKLAMLAR — PR-1 (salt-okunur reklam listesi + kreatif analizi) + PR-2
    (Genel Bakış: bugün/7 gün performansı, low_volume uyarısı, aktif kampanya
-   sayısı, Pixel durumu, reklam listesinde campaign/adset isim çözümlemesi).
-   Hiçbir write çağrısı yapılmaz. */
+   sayısı, Pixel durumu, reklam listesinde campaign/adset isim çözümlemesi) +
+   PR-3 (tersinir yazma işlemleri: reklam durumu pause/resume + reklam seti
+   günlük bütçesi — Admin-only, iki tıklamalı onay; asıl güvenlik sınırı
+   backend'in Admin-only kontrolü ve MCP'nin confirmed=true şartıdır). */
 (function () {
   "use strict";
 
-  const state = { ads: [], loading: false, adsLoaded: false, currency: "TRY" };
+  const state = { ads: [], loading: false, adsLoaded: false, currency: "TRY", isAdmin: false };
   let initialized = false;
   let searchDebounceTimer = null;
+
+  const CONFIRM_ARM_MS = 6000;
+  const writeState = {
+    adId: null,
+    adStatus: null,
+    adsetId: null,
+    statusConfirmArmed: false,
+    statusConfirmTimer: null,
+    statusBusy: false,
+    statusMessage: "",
+    statusError: false,
+    budgetValue: "",
+    budgetConfirmArmed: false,
+    budgetConfirmTimer: null,
+    budgetBusy: false,
+    budgetMessage: "",
+    budgetError: false
+  };
 
   const byId = (id) => document.getElementById(id);
   const escapeHtml = (value) =>
@@ -268,14 +288,155 @@
     `;
   }
 
+  function resetStatusConfirm() {
+    clearTimeout(writeState.statusConfirmTimer);
+    writeState.statusConfirmArmed = false;
+  }
+
+  function resetBudgetConfirm() {
+    clearTimeout(writeState.budgetConfirmTimer);
+    writeState.budgetConfirmArmed = false;
+  }
+
+  function renderWriteControls() {
+    const container = byId("meta-ads-write-controls");
+    if (!container) return;
+    if (!state.isAdmin) {
+      container.innerHTML = '<p class="hint" style="margin-top:12px">Durum ve bütçe değişikliği yalnız Admin rolündeki kullanıcılara açıktır.</p>';
+      return;
+    }
+    const targetStatus = writeState.adStatus === "ACTIVE" ? "PAUSED" : "ACTIVE";
+    const statusLabel = writeState.statusConfirmArmed
+      ? `Emin misiniz? Tekrar tıklayın — ${targetStatus === "PAUSED" ? "Duraklat" : "Etkinleştir"}`
+      : targetStatus === "PAUSED"
+        ? "Reklamı Duraklat"
+        : "Reklamı Etkinleştir";
+
+    container.innerHTML = `
+      <div class="card" style="margin-top:12px">
+        <strong>Durum Değişikliği</strong>
+        <p class="hint">Mevcut durum: ${escapeHtml(writeState.adStatus || "—")}</p>
+        <button type="button" id="meta-ads-status-toggle" class="${writeState.statusConfirmArmed ? "danger" : "secondary"}"${writeState.statusBusy ? " disabled" : ""}>${escapeHtml(statusLabel)}</button>
+        ${writeState.statusMessage ? `<p class="${writeState.statusError ? "error" : "hint"}" style="margin-top:8px">${escapeHtml(writeState.statusMessage)}</p>` : ""}
+      </div>
+      <div class="card" style="margin-top:12px">
+        <strong>Reklam Seti Günlük Bütçesi (TRY)</strong>
+        <p class="hint">Ad Set ID: ${escapeHtml(writeState.adsetId || "—")} — bütçe reklam SETİ seviyesinde değişir, yalnız bu reklamı etkilemez.</p>
+        <div class="toolbar">
+          <input type="number" id="meta-ads-budget-input" min="1" max="100000" step="0.01" style="flex:1" value="${escapeHtml(writeState.budgetValue)}" placeholder="Günlük bütçe (TRY)">
+          <button type="button" id="meta-ads-budget-submit" class="${writeState.budgetConfirmArmed ? "danger" : ""}"${writeState.budgetBusy ? " disabled" : ""}>${writeState.budgetConfirmArmed ? "Emin misiniz? Tekrar tıklayın" : "Bütçeyi Güncelle"}</button>
+        </div>
+        ${writeState.budgetMessage ? `<p class="${writeState.budgetError ? "error" : "hint"}" style="margin-top:8px">${escapeHtml(writeState.budgetMessage)}</p>` : ""}
+      </div>
+    `;
+  }
+
+  async function performStatusChange(targetStatus) {
+    writeState.statusBusy = true;
+    writeState.statusMessage = "Gönderiliyor...";
+    writeState.statusError = false;
+    renderWriteControls();
+    try {
+      const res = await mAdsApi("/api/meta-ads/ad-status", { method: "POST", body: JSON.stringify({ ad_id: writeState.adId, status: targetStatus, confirm: true }) });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data?.error?.message || "Durum güncellenemedi.");
+      writeState.adStatus = targetStatus;
+      writeState.statusMessage = `Durum güncellendi: ${targetStatus}`;
+      const adInList = state.ads.find((ad) => ad.id === writeState.adId);
+      if (adInList) {
+        adInList.status = targetStatus;
+        adInList.effective_status = targetStatus;
+        renderTable();
+      }
+    } catch (error) {
+      writeState.statusMessage = error.message;
+      writeState.statusError = true;
+    } finally {
+      writeState.statusBusy = false;
+      renderWriteControls();
+    }
+  }
+
+  function handleStatusToggleClick() {
+    if (writeState.statusBusy) return;
+    const targetStatus = writeState.adStatus === "ACTIVE" ? "PAUSED" : "ACTIVE";
+    if (!writeState.statusConfirmArmed) {
+      writeState.statusConfirmArmed = true;
+      writeState.statusMessage = "";
+      clearTimeout(writeState.statusConfirmTimer);
+      writeState.statusConfirmTimer = setTimeout(() => {
+        writeState.statusConfirmArmed = false;
+        renderWriteControls();
+      }, CONFIRM_ARM_MS);
+      renderWriteControls();
+      return;
+    }
+    resetStatusConfirm();
+    performStatusChange(targetStatus);
+  }
+
+  async function performBudgetChange(value) {
+    writeState.budgetBusy = true;
+    writeState.budgetMessage = "Gönderiliyor...";
+    writeState.budgetError = false;
+    renderWriteControls();
+    try {
+      const res = await mAdsApi("/api/meta-ads/adset-budget", { method: "POST", body: JSON.stringify({ adset_id: writeState.adsetId, daily_budget_try: value, confirm: true }) });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data?.error?.message || "Bütçe güncellenemedi.");
+      writeState.budgetMessage = `Bütçe güncellendi: ${formatMoney(value)}`;
+    } catch (error) {
+      writeState.budgetMessage = error.message;
+      writeState.budgetError = true;
+    } finally {
+      writeState.budgetBusy = false;
+      renderWriteControls();
+    }
+  }
+
+  function handleBudgetSubmitClick() {
+    if (writeState.budgetBusy) return;
+    const value = Number(writeState.budgetValue);
+    if (!Number.isFinite(value) || value < 1 || value > 100000) {
+      writeState.budgetMessage = "Geçerli bir bütçe girin (TRY, 1-100000).";
+      writeState.budgetError = true;
+      renderWriteControls();
+      return;
+    }
+    if (!writeState.budgetConfirmArmed) {
+      writeState.budgetConfirmArmed = true;
+      writeState.budgetMessage = "";
+      clearTimeout(writeState.budgetConfirmTimer);
+      writeState.budgetConfirmTimer = setTimeout(() => {
+        writeState.budgetConfirmArmed = false;
+        renderWriteControls();
+      }, CONFIRM_ARM_MS);
+      renderWriteControls();
+      return;
+    }
+    resetBudgetConfirm();
+    performBudgetChange(value);
+  }
+
   async function openAdDetail(adId) {
     showDetailView();
     byId("meta-ads-detail-content").innerHTML = '<p class="hint">Yükleniyor...</p>';
+    byId("meta-ads-write-controls").innerHTML = "";
+    resetStatusConfirm();
+    resetBudgetConfirm();
+    writeState.adId = adId;
+    writeState.adStatus = state.ads.find((ad) => ad.id === adId)?.status || null;
+    writeState.adsetId = null;
+    writeState.budgetValue = "";
+    writeState.statusMessage = "";
+    writeState.budgetMessage = "";
     try {
       const res = await mAdsApi(`/api/meta-ads/ad-creative?ad_id=${encodeURIComponent(adId)}`);
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data?.error?.message || "Kreatif bilgisi yüklenemedi.");
       renderDetail(data.creative);
+      writeState.adsetId = data.creative.adset_id || null;
+      renderWriteControls();
     } catch (error) {
       byId("meta-ads-detail-content").innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
     }
@@ -299,12 +460,39 @@
     document.querySelectorAll("[data-meta-ads-view]").forEach((button) =>
       button.addEventListener("click", () => (button.dataset.metaAdsView === "overview" ? showOverviewView() : showAdsListView()))
     );
+    byId("meta-ads-detail-view").addEventListener("click", (event) => {
+      if (event.target.id === "meta-ads-status-toggle") handleStatusToggleClick();
+      if (event.target.id === "meta-ads-budget-submit") handleBudgetSubmitClick();
+    });
+    byId("meta-ads-detail-view").addEventListener("input", (event) => {
+      if (event.target.id !== "meta-ads-budget-input") return;
+      writeState.budgetValue = event.target.value;
+      if (writeState.budgetConfirmArmed) {
+        resetBudgetConfirm();
+        const button = byId("meta-ads-budget-submit");
+        if (button) {
+          button.textContent = "Bütçeyi Güncelle";
+          button.className = "";
+        }
+      }
+    });
+  }
+
+  async function loadCurrentUserRole() {
+    try {
+      const res = await mAdsApi("/api/auth");
+      const data = await res.json();
+      state.isAdmin = Boolean(data?.user?.role === "Admin");
+    } catch {
+      state.isAdmin = false;
+    }
   }
 
   async function initialize() {
     if (initialized) return;
     initialized = true;
     wireEvents();
+    await loadCurrentUserRole();
     await loadOverview();
   }
 
