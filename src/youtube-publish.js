@@ -7,13 +7,18 @@
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const UPLOAD_INIT_URL = "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status";
 
-function assertYouTubeConfigured(env) {
+export function assertYouTubeConfigured(env) {
   const required = ["YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REFRESH_TOKEN"];
   const missing = required.filter((name) => !env[name]);
   if (missing.length) throw new Error(`YouTube için eksik ortam değişkenleri: ${missing.join(", ")}`);
 }
 
-async function getAccessToken(env) {
+// api/youtube-status.js tarafından da kullanılır — dashboard'daki "Bağlı
+// değil" göstergesinin YENİDEN bir OAuth çağrısı yazmak yerine BUNU
+// çağırması için export edildi (aynı hata mesajı/davranış — bkz.
+// uploadShort). Access token hiçbir yerde saklanmaz, döndürülmez; yalnızca
+// refresh_token'ın hâlâ geçerli olup olmadığını doğrulamak için kullanılır.
+export async function getAccessToken(env) {
   const response = await fetch(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },

@@ -54,6 +54,18 @@ const checks = [
   {
     name: "CRON_SECRET",
     requiredFor: "Cron ve önizleme paneli erişimi"
+  },
+  {
+    name: "YOUTUBE_CLIENT_ID",
+    requiredFor: "YouTube Shorts yükleme (OAuth Client) — bkz. /api/youtube-auth"
+  },
+  {
+    name: "YOUTUBE_CLIENT_SECRET",
+    requiredFor: "YouTube Shorts yükleme (OAuth Client)"
+  },
+  {
+    name: "YOUTUBE_REFRESH_TOKEN",
+    requiredFor: "YouTube Shorts yükleme — /api/youtube-auth ile alınır, süresi dolarsa/iptal olursa yenilenmesi gerekir"
   }
 ];
 
