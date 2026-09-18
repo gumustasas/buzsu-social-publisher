@@ -183,20 +183,20 @@ export async function callTool(name, args = {}, { timeoutMs = DEFAULT_CALL_TIMEO
 }
 
 /**
- * ads_list_ads için Meta'nın kendi cursor pagination'ını (paging.cursors.after)
- * tüketir — MCP protokolünün ayrı bir pagination'ı yok, sayfalama tamamen
- * tool argümanı/tool sonucu seviyesinde. Filtre uygulanmadan önce tüm
- * sayfalar toplanır.
+ * ads_list_ads/ads_list_campaigns/ads_list_adsets üçü de aynı şekilde Meta'nın
+ * kendi cursor pagination'ını (paging.cursors.after) döndürür — MCP
+ * protokolünün ayrı bir pagination'ı yok, sayfalama tamamen tool argümanı/tool
+ * sonucu seviyesinde. Filtre uygulanmadan önce tüm sayfalar toplanır.
  */
-export async function listAllAds({ adAccountId, limit = 100 } = {}) {
-  const ads = [];
+async function paginateTool(toolName, { adAccountId, limit = 100 } = {}) {
+  const rows = [];
   const seenCursors = new Set();
   let after;
 
   for (let page = 0; page < MAX_AD_PAGES; page += 1) {
-    const data = await callTool("ads_list_ads", { ad_account_id: adAccountId, limit, after });
-    const rows = Array.isArray(data?.data) ? data.data : [];
-    ads.push(...rows);
+    const data = await callTool(toolName, { ad_account_id: adAccountId, limit, after });
+    const pageRows = Array.isArray(data?.data) ? data.data : [];
+    rows.push(...pageRows);
 
     const nextAfter = data?.paging?.cursors?.after;
     if (!nextAfter || seenCursors.has(nextAfter)) break; // cursor yok veya tekrar geldi -> tamamlandı
@@ -204,7 +204,19 @@ export async function listAllAds({ adAccountId, limit = 100 } = {}) {
     after = nextAfter;
   }
 
-  return ads;
+  return rows;
+}
+
+export function listAllAds(options) {
+  return paginateTool("ads_list_ads", options);
+}
+
+export function listAllCampaigns(options) {
+  return paginateTool("ads_list_campaigns", options);
+}
+
+export function listAllAdSets(options) {
+  return paginateTool("ads_list_adsets", options);
 }
 
 /**
@@ -258,5 +270,98 @@ export function errorToApiShape(error) {
   return {
     code: error?.code || "MCP_UPSTREAM_ERROR",
     message: redact(error?.message || "Meta bağlantı servisiyle iletişimde beklenmeyen bir hata oluştu.")
+  };
+}
+
+function todaySummaryFields(row) {
+  if (!row) return { spend: 0, impressions: 0, clicks: 0, ctr: 0, cpc: 0 };
+  return {
+    spend: row.spend ?? 0,
+    impressions: row.impressions ?? 0,
+    clicks: row.clicks ?? 0,
+    ctr: row.ctr ?? 0,
+    cpc: row.cpc ?? 0
+  };
+}
+
+// current.spend/impressions/clicks/ctr/cpc Meta Insights'ta hiçbir zaman null
+// değildir (aksiyon yoksa 0'dır) — ama purchase_roas ve messaging_conversations_started
+// gibi türetilmiş alanlar null olabilir ("ölçülmedi", 0 "ölçüldü ve sıfır" değil).
+// Bu ayrım burada bozulmadan taşınır; "0" haline getirip UI'ya öyle vermeyiz.
+function last7dSummaryFields(comparison) {
+  if (!comparison) return null;
+  const current = comparison.current || {};
+  return {
+    spend: current.spend ?? 0,
+    impressions: current.impressions ?? 0,
+    clicks: current.clicks ?? 0,
+    ctr: current.ctr ?? 0,
+    cpc: current.cpc ?? 0,
+    messaging_conversations_started: current.messaging_conversations_started ?? 0,
+    purchase_roas: current.purchase_roas ?? null,
+    deltas: comparison.deltas ?? null,
+    low_volume: comparison.low_volume ?? null
+  };
+}
+
+/**
+ * Genel Bakış ekranı için hesap kimliği + bugünkü/7 günlük performans +
+ * aktif kampanya sayısı + Pixel durumunu TEK cevapta toplar. Her alt çağrı
+ * kendi MCP session'ını paralel açar (Promise.allSettled) — biri (örn.
+ * Pixel yapılandırılmamışsa) başarısız olsa bile diğer bölümler etkilenmez;
+ * hangi bölümün neden eksik olduğu *_error alanında ayrıca döner.
+ *
+ * amount_spent/balance/spend_cap (ads_get_account) kasıtlı olarak burada
+ * KULLANILMAZ: bu alanların minor/major para birimi biriminde mi döndüğü
+ * instagram-Facebook-connect kodunda doğrulanamadı. Harcama rakamları
+ * yalnızca ads_get_performance_summary/ads_compare_performance'ın (kodda
+ * `currency_note: "Amounts use the Meta ad account currency."` ile
+ * belgelenen, major-unit) `spend` alanından alınır.
+ */
+export async function getOverview({ adAccountId } = {}) {
+  const [accountSettled, todaySettled, compareSettled, campaignsSettled, pixelSettled] = await Promise.allSettled([
+    callTool("ads_get_account", { ad_account_id: adAccountId }),
+    callTool("ads_get_performance_summary", { ad_account_id: adAccountId, level: "account", days: 1 }),
+    callTool("ads_compare_performance", { ad_account_id: adAccountId, level: "account", period_days: 7 }),
+    listAllCampaigns({ adAccountId }),
+    callTool("pixel_get", {})
+  ]);
+
+  const account =
+    accountSettled.status === "fulfilled"
+      ? {
+          id: accountSettled.value.id ?? null,
+          name: accountSettled.value.name ?? null,
+          currency: accountSettled.value.currency ?? null,
+          account_status: accountSettled.value.account_status ?? null
+        }
+      : null;
+
+  const today = todaySettled.status === "fulfilled" ? todaySummaryFields(todaySettled.value.data?.[0]) : null;
+
+  const comparison = compareSettled.status === "fulfilled" ? compareSettled.value.comparisons?.[0] ?? null : null;
+  const last7d = compareSettled.status === "fulfilled" ? last7dSummaryFields(comparison) : null;
+
+  const activeCampaignCount =
+    campaignsSettled.status === "fulfilled"
+      ? campaignsSettled.value.filter((campaign) => campaign.status === "ACTIVE" || campaign.effective_status === "ACTIVE").length
+      : null;
+
+  const pixel =
+    pixelSettled.status === "fulfilled"
+      ? { id: pixelSettled.value.id ?? null, name: pixelSettled.value.name ?? null, last_fired_time: pixelSettled.value.last_fired_time ?? null }
+      : null;
+
+  return {
+    account,
+    account_error: accountSettled.status === "rejected" ? errorToApiShape(accountSettled.reason) : null,
+    today,
+    today_error: todaySettled.status === "rejected" ? errorToApiShape(todaySettled.reason) : null,
+    last7d,
+    last7d_error: compareSettled.status === "rejected" ? errorToApiShape(compareSettled.reason) : null,
+    active_campaign_count: activeCampaignCount,
+    campaigns_error: campaignsSettled.status === "rejected" ? errorToApiShape(campaignsSettled.reason) : null,
+    pixel,
+    pixel_error: pixelSettled.status === "rejected" ? errorToApiShape(pixelSettled.reason) : null
   };
 }

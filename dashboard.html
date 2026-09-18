@@ -254,7 +254,15 @@
     <section id="meta-ads" class="panel tab-panel tab-hidden" data-tab="meta-ads">
       <h2>Meta Reklamlar</h2>
       <p class="hint">Salt okunur — burada hiçbir reklam durumu, bütçesi veya kreatifi değiştirilmez.</p>
-      <div id="meta-ads-list-view">
+      <div class="toolbar">
+        <button type="button" class="secondary active" data-meta-ads-view="overview">Genel Bakış</button>
+        <button type="button" class="secondary" data-meta-ads-view="list">Reklamlar</button>
+      </div>
+      <div id="meta-ads-overview-view">
+        <p id="meta-ads-overview-message" class="hint"></p>
+        <div id="meta-ads-overview-content"></div>
+      </div>
+      <div id="meta-ads-list-view" class="hidden">
         <div class="toolbar">
           <select id="meta-ads-status-filter">
             <option value="">Tüm durumlar</option>

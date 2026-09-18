@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { getSession } from "../../src/auth.js";
-import { listAllAds, errorToApiShape } from "../../src/lib/meta-connect.js";
+import { listAllAds, listAllCampaigns, listAllAdSets, errorToApiShape } from "../../src/lib/meta-connect.js";
 
 function authorized(request) {
   return Boolean(getSession(request));
@@ -20,15 +20,32 @@ export default async function handler(request, response) {
 
     // Meta/MCP tarafında server-side bir status/arama filtresi yok — bu yüzden
     // tüm sayfalar önce eksiksiz toplanır, filtre en son ve tam veri üzerinde uygulanır.
-    const rawAds = await listAllAds();
-    const ads = rawAds
+    // Reklam listesi zorunlu veri; campaign/adset isimleri "nice to have" — biri
+    // başarısız olursa reklam listesini boş isimle gösteririz, tamamen düşürmeyiz.
+    const [adsSettled, campaignsSettled, adsetsSettled] = await Promise.allSettled([
+      listAllAds(),
+      listAllCampaigns(),
+      listAllAdSets()
+    ]);
+    if (adsSettled.status === "rejected") throw adsSettled.reason;
+
+    const campaignNameById = new Map(
+      (campaignsSettled.status === "fulfilled" ? campaignsSettled.value : []).map((campaign) => [campaign.id, campaign.name ?? ""])
+    );
+    const adsetNameById = new Map(
+      (adsetsSettled.status === "fulfilled" ? adsetsSettled.value : []).map((adset) => [adset.id, adset.name ?? ""])
+    );
+
+    const ads = adsSettled.value
       .map((ad) => ({
         id: ad.id ?? "",
         name: ad.name ?? "",
         status: ad.status ?? "",
         effective_status: ad.effective_status ?? "",
         campaign_id: ad.campaign_id ?? "",
+        campaign_name: campaignNameById.get(ad.campaign_id) ?? "",
         adset_id: ad.adset_id ?? "",
+        adset_name: adsetNameById.get(ad.adset_id) ?? "",
         creative_id: ad.creative?.id ?? ""
       }))
       .filter((ad) => !status || ad.status === status || ad.effective_status === status)

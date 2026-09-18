@@ -19,9 +19,51 @@ test("Modül credentials: same-origin ile mevcut oturum cookie'sini kullanır; k
   assert.doesNotMatch(client, /mcp-session-id/i);
 });
 
-test("Yalnız /api/meta-ads/ads ve /api/meta-ads/ad-creative çağrılır; başka bir Meta/MCP ucuna dokunulmaz", () => {
+test("Yalnız /api/meta-ads/ads, /api/meta-ads/ad-creative ve /api/meta-ads/overview çağrılır; başka bir Meta/MCP ucuna dokunulmaz", () => {
   const apiPaths = [...client.matchAll(/mAdsApi\(`?"?(\/api\/meta-ads\/[a-z-]+)/g)].map((match) => match[1]);
-  assert.deepEqual([...new Set(apiPaths)].sort(), ["/api/meta-ads/ad-creative", "/api/meta-ads/ads"]);
+  assert.deepEqual([...new Set(apiPaths)].sort(), ["/api/meta-ads/ad-creative", "/api/meta-ads/ads", "/api/meta-ads/overview"]);
+});
+
+test("Genel Bakış varsayılan sekme, Reklamlar ikinci sekme olarak sub-nav'da yer alır", () => {
+  assert.match(dashboard, /data-meta-ads-view="overview">Genel Bakış<\/button>/);
+  assert.match(dashboard, /data-meta-ads-view="list">Reklamlar<\/button>/);
+  assert.match(client, /async function initialize\(\) \{[\s\S]*?await loadOverview\(\);/);
+});
+
+test("null (ölçülmedi) ile 0 (ölçüldü ve sıfır) UI'da ayrı gösterilir — null her zaman 'Veri yok' render eder", () => {
+  assert.match(client, /formatNullable/);
+  const fn = client.match(/const formatNullable = \([\s\S]*?\);/)[0];
+  assert.match(fn, /"Veri yok"/);
+});
+
+test("low_volume rozeti sunucunun genel flagged'ına değil, HER sinyalin kendi eşiğine bakar — results:null bir sinyali flagged saymaz", () => {
+  const fn = client.match(/function isLowVolumeSignalFlagged\([\s\S]*?\n  \}/)[0];
+  assert.match(fn, /signal\.value !== null && signal\.value < signal\.threshold/);
+  // renderOverview artık lowVolume.flagged'ı DOĞRUDAN göstermiyor; her sinyali kendi
+  // filtresinden geçiriyor — aksi halde results:null+impressions-flagged durumunda
+  // "Sonuç hacmi düşük" gibi yanlış bir başlık çıkardı (önceki production hatası).
+  assert.match(client, /flaggedSignals = lowVolume \? lowVolume\.signals\.filter\(isLowVolumeSignalFlagged\) : \[\]/);
+  assert.doesNotMatch(client, /lowVolume\?\.flagged\s*\n?\s*\?/);
+});
+
+test("low_volume metni sinyale özgü: results için 'Sonuç hacmi düşük (<metrik>)', impressions için 'Gösterim hacmi düşük' — birbirine karışmaz", () => {
+  const fn = client.match(/function renderLowVolumeSignal\([\s\S]*?\n  \}/)[0];
+  assert.match(fn, /"Gösterim hacmi düşük"/);
+  assert.match(fn, /Sonuç hacmi düşük \(/);
+});
+
+test("purchase_roas === 0, null'dan ayrı: formatNullable yalnız null/undefined'ı 'Veri yok' sayar, 0'ı formatter'a geçirir (!value gibi 0'ı da yakalayan gevşek bir kontrol DEĞİL)", () => {
+  const fn = client.match(/const formatNullable = \([\s\S]*?\);/)[0];
+  assert.match(fn, /value === null \|\| value === undefined \? "Veri yok" : formatter\(value\)/);
+});
+
+test("Reklamlar tablosu artık campaign_name/adset_name gösterir (ID'yi tamamen basmaz)", () => {
+  assert.match(client, /ad\.campaign_name \|\| ad\.campaign_id/);
+  assert.match(client, /ad\.adset_name \|\| ad\.adset_id/);
+});
+
+test("Reklamlar listesi Genel Bakış'tan bağımsız olarak lazy — ancak 'Reklamlar' sekmesine ilk geçişte yüklenir", () => {
+  assert.match(client, /if \(!state\.adsLoaded\) \{\s*state\.adsLoaded = true;\s*loadAds\(\);/);
 });
 
 test("Bu PR'da hiçbir yazma/onay butonu yok — pause/resume/delete/budget/confirmed ifadesi geçmez", () => {
