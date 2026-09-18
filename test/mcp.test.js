@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import sharp from "sharp";
 import { callTool, handleMessage } from "../api/mcp.js";
 
 process.env.GEMINI_API_KEY = process.env.GEMINI_API_KEY || "test-gemini-key";
@@ -611,5 +612,81 @@ test("tools/call: RATE_LIMITED olmayan ama yine de .code taşıyan sıradan bir 
     assert.throws(() => JSON.parse(response.result.content[0].text));
   } finally {
     global.fetch = originalFetch;
+  }
+});
+
+// generate_nano_banana_scene: Nano Banana 2 + Veo iki-aşamalı akışın 1.
+// aşaması. Bu tool YALNIZCA görsel üretir; Veo/Omni'ye hiçbir koşulda
+// otomatik geçmez (bkz. src/nano-banana-scene.js).
+test("generate_nano_banana_scene: confirmed:false rejects before any network call", async () => {
+  const originalFetch = global.fetch;
+  let called = false;
+  global.fetch = async () => { called = true; throw new Error("must not be called"); };
+  try {
+    await assert.rejects(
+      () => callTool("generate_nano_banana_scene", { prompt: "mutfak sahnesi", confirmed: false }),
+      /confirmed:true/
+    );
+    assert.equal(called, false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generate_nano_banana_scene: zero-shot (no productId) calls exactly the Nano Banana 2 model and never a Veo/Omni endpoint", async () => {
+  const originalFetch = global.fetch;
+  const calledUrls = [];
+  global.fetch = async (url) => {
+    const href = String(url);
+    calledUrls.push(href);
+    return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { data: "AAAA" } }] } }] }) };
+  };
+  try {
+    const text = await callTool("generate_nano_banana_scene", { prompt: "sıfırdan modern bir mutfak sahnesi", aspectRatio: "9:16", confirmed: true });
+    const parsed = JSON.parse(text);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.mode, "zero-shot");
+    assert.equal(parsed.model, "gemini-3.1-flash-image");
+    assert.equal(parsed.provider, "nano-banana-2");
+    assert.equal(parsed.needsReview, false);
+    assert.equal(calledUrls.length, 1);
+    assert.ok(calledUrls[0].includes("models/gemini-3.1-flash-image:generateContent"));
+    for (const url of calledUrls) {
+      assert.ok(!url.includes("predictLongRunning"), `unexpected Veo call: ${url}`);
+      assert.ok(!/interactions/i.test(url), `unexpected Omni call: ${url}`);
+    }
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generate_nano_banana_scene: product-reference mode (productId given) resolves the product, calls Nano Banana 2, and surfaces needsReview from the existing scene-validation system", async () => {
+  process.env.AIRTABLE_TOKEN = "test-token";
+  const originalFetch = global.fetch;
+  const tinyPng = await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer();
+  global.fetch = async (url, options) => {
+    const href = String(url);
+    if (href.includes("api.airtable.com")) {
+      return { ok: true, json: async () => ({ records: [{ id: "recTEST123", fields: { "Başlık": "Buzsu Ultramag", "Görsel URL": "https://example.com/photo.png" } }] }) };
+    }
+    if (href.includes("example.com")) {
+      return { ok: true, arrayBuffer: async () => tinyPng };
+    }
+    const body = JSON.parse(options.body);
+    if (body.generationConfig?.responseMimeType === "application/json") {
+      return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ failedChecks: ["fabricated_signage"], notes: "uydurma tabela" }) }] } }] }) };
+    }
+    return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { data: "AAAA" } }] } }] }) };
+  };
+  try {
+    const text = await callTool("generate_nano_banana_scene", { productId: "recTEST123", prompt: "dış cephe montajı", confirmed: true });
+    const parsed = JSON.parse(text);
+    assert.equal(parsed.mode, "product-reference");
+    assert.equal(parsed.model, "gemini-3.1-flash-image");
+    assert.equal(parsed.needsReview, true);
+    assert.deepEqual(parsed.failedChecks, ["fabricated_signage"]);
+  } finally {
+    global.fetch = originalFetch;
+    delete process.env.AIRTABLE_TOKEN;
   }
 });

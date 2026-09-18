@@ -599,27 +599,103 @@ secret/token içermez — yalnızca `available`/`models` alanları döner:
 {
   "ok": true,
   "google": {
-    "omni": { "available": true, "models": ["gemini-omni-1.1-flash"] },
-    "veo": { "available": true, "models": ["veo-3.1-lite-generate-preview", "veo-3.1-fast-generate-preview", "veo-3.1-generate-preview"] }
+    "omni": { "available": true, "models": ["gemini-omni-1.1-flash"], "label": "Gemini Omni 1.1 Flash" },
+    "veo": {
+      "available": true,
+      "models": ["veo-3.1-lite-generate-preview", "veo-3.1-fast-generate-preview", "veo-3.1-generate-preview"],
+      "tiers": [
+        { "tier": "economy", "model": "veo-3.1-lite-generate-preview", "label": "Veo 3.1 Lite", "available": true },
+        { "tier": "fast", "model": "veo-3.1-fast-generate-preview", "label": "Veo 3.1 Fast", "available": true },
+        { "tier": "quality", "model": "veo-3.1-generate-preview", "label": "Veo 3.1 Quality", "available": true }
+      ]
+    },
+    "image": {
+      "nanoBanana2": { "available": true, "model": "gemini-3.1-flash-image", "label": "Nano Banana 2" },
+      "nanoBanana2Lite": { "available": true, "model": "gemini-3.1-flash-lite-image", "label": "Nano Banana 2 Lite" }
+    }
   },
   "fal": { "available": true }
 }
 ```
 Dashboard bu uç noktayı sayfa yüklenirken çağırır ve erişilemeyen seçenekleri
-(`#reel-provider`'daki "omni", `#veo-model-tier`'daki üç Veo 3.1 tier'ı)
-devre dışı bırakıp " — kullanılamıyor" etiketiyle işaretler; uç nokta henüz
-deploy edilmemişse veya hata dönerse sessizce yok sayılır, seçenekler
-`availableProviders()`'ın (anahtar varlığına dayalı) filtrelediği hâliyle
-kalır.
+(`#reel-provider`'daki "omni", `#veo-model-tier`'daki üç Veo 3.1 tier'ı,
+`#nb2-generate` butonu) devre dışı bırakıp " — kullanılamıyor" etiketiyle
+işaretler; uç nokta henüz deploy edilmemişse veya hata dönerse sessizce yok
+sayılır, seçenekler `availableProviders()`'ın (anahtar varlığına dayalı)
+filtrelediği hâliyle kalır. `google.veo.tiers[].label` ve `google.omni.label`,
+kullanıcıya gösterilen (Lite/Fast/Quality, "Gemini Omni 1.1 Flash") metinleri
+taşır — **backend'de her zaman gerçek canonical model ID'si** (`model` alanı)
+kullanılır, etiket yalnızca görüntüleme metnidir (bkz. `src/lib/video-model-labels.js`).
 
 **Hangi model hangi kullanım için uygun**:
 
 | Sağlayıcı/model | Ne için uygun |
 | --- | --- |
-| Omni (`gemini-omni-1.1-flash`) | Esnek video üretimi (sıfırdan veya mevcut videoyu düzeltme) — tier kavramı yok, tek model |
-| Veo 3.1 Lite (`veo-3.1-lite`/`economy`) | En ekonomik seçenek, yüksek hacimli deneme |
-| Veo 3.1 Fast (`veo-3.1-fast`/`fast`) | Hızlı denemeler, orta maliyet |
-| Veo 3.1 Generate (`veo-3.1-generate`/`quality`) | Daha kaliteli final denemeleri, en pahalı/yavaş |
+| Omni (`gemini-omni-1.1-flash`, UI: "Gemini Omni 1.1 Flash") | Esnek video üretimi (sıfırdan veya mevcut videoyu düzeltme) — tier kavramı yok, tek model |
+| Veo 3.1 Lite (`veo-3.1-lite`/`economy`, UI: "Veo 3.1 Lite") | En ekonomik seçenek, yüksek hacimli deneme |
+| Veo 3.1 Fast (`veo-3.1-fast`/`fast`, UI: "Veo 3.1 Fast") | Hızlı denemeler, orta maliyet |
+| Veo 3.1 Generate (`veo-3.1-generate`/`quality`, UI: "Veo 3.1 Quality") | Daha kaliteli final denemeleri, en pahalı/yavaş |
+
+## Nano Banana 2 + Veo 3.1 — iki aşamalı sahne→video pipeline (generate_nano_banana_scene)
+
+**Nano Banana 2 bir video modeli DEĞİLDİR** — Google'ın Gemini API'deki
+canonical image modelidir (`gemini-3.1-flash-image`, bkz.
+`src/scene-image.js:NANO_BANANA_2_MODEL`). Bu depoda üç ayrı Gemini image
+modeli vardır ve birbirine ASLA karıştırılmamalı:
+
+| Kullanıcıya gösterilen ad | Canonical model ID | Bu PR'daki rolü |
+| --- | --- | --- |
+| Nano Banana 2 | `gemini-3.1-flash-image` | Bu pipeline'ın ana image modeli |
+| Nano Banana 2 Lite | `gemini-3.1-flash-lite-image` | Mevcut `#scene-provider` → "gemini" akışının varsayılanı (`GEMINI_SCENE_MODEL`), değişmedi |
+| Nano Banana Pro | `gemini-3-pro-image` | Bu depoda kullanılmıyor |
+
+**Neden iki aşamalı (image → onay → video)?** Nano Banana 2 sahneyi
+hazırlar, Veo/Omni SADECE onaylanan sahneyi hareketlendirir. Bu hem
+maliyeti (video üretimi, görsel üretiminden çok daha pahalıdır — yanlış bir
+sahneyi videoya dönüştürüp o parayı boşa harcamak istemezsiniz) hem de
+ürünün yanlış/bozuk oluşma riskini (mevcut `scene-validation.js` otomatik
+kontrolü needsReview:true dönebilir) ciddi biçimde azaltır.
+
+**Akış**:
+1. `generate_nano_banana_scene` (MCP) veya `POST /api/nano-banana-scene`
+   (dashboard) çağrılır — `productId` verilirse ürünün gerçek fotoğrafı
+   referans alınır (mevcut maskeli-düzenleme mimarisi, bkz.
+   `generateSceneImage(..., { provider: "nano-banana-2" })`), verilmezse
+   tamamen sıfırdan/zero-shot bir görsel üretilir (`callGeminiTextToImage`).
+   **Yalnızca görsel üretir; hiçbir koşulda Veo/Omni'yi kendiliğinden
+   tetiklemez.**
+2. Ürün-referanslı üretimde sonuç, mevcut otomatik inceleme sistemi
+   (`src/lib/scene-validation.js`) ile aynen kontrol edilir —
+   `needsReview`/`failedChecks`/`reviewNotes` döner. Zero-shot modda
+   kontrol edilecek bir "ürün kimliği" olmadığı için bu kontrol atlanır.
+3. Kullanıcı görseli inceler. Dashboard'da `needsReview:true` iken "Bu
+   görseli kullan" butonu ayrı, açık bir ikinci onay ister (iki tıklamalı
+   "Emin misin?" deseni — mevcut danger-button konvansiyonuyla aynı).
+4. Onaylandıktan SONRA, kullanıcı AYRI ve AÇIK bir ikinci adımla video
+   üretir: dashboard'da mevcut "AI Reels (video)" panelinden Veo/Omni
+   seçip "Sahneyi baz alarak video üret" kutusunu işaretler (Nano Banana
+   2'nin ürettiği görsel URL'i, mevcut `currentSceneImageUrl` akışına
+   aynen enjekte edilir — **video için ayrı/yeni bir kod yolu YAZILMADI**,
+   mevcut Veo/Omni mimarisi (`submitVeoVideo`/`submitOmniVideoGeneration`,
+   `generate_video_clip`/`generate_omni_video_edit`) olduğu gibi tekrar
+   kullanıldı); MCP tarafında ise Claude, dönen `imageUrl`'i ayrı bir
+   `generate_video_clip`/`generate_omni_video_edit` çağrısına kendisi verir.
+
+**confirmed:true zorunluluğu** — `generate_nano_banana_scene`/
+`POST /api/nano-banana-scene`, `confirmed:true` gönderilmeden **hiçbir ağ
+isteği** (Gemini görsel çağrısı dahil) yapmaz; bu, `generate_video_clip`/
+`generate_omni_video_edit` ile aynı, bu depoda yerleşik konvansiyondur.
+Görsel ve video aşamaları TAMAMEN ayrı `confirmed` onaylarına tabidir —
+görsel onayı asla video için de geçerli sayılmaz.
+
+**Fallback yok**: seçilen model (Nano Banana 2, veya sonraki adımda
+seçilen Veo tier'ı/Omni) her zaman aynen çağrılır; başarısız olursa başka
+bir modele sessizce geçilmez, açık bir hata döner (mevcut Veo/Omni
+davranışıyla birebir tutarlı).
+
+**Google'ın "Flow" uygulaması bu depoya entegre EDİLMEDİ** — yalnızca
+Flow'un iki-aşamalı mantığı (görsel üret → onayla → hareketlendir) bu
+depodaki mevcut mimari üzerinde yeniden uygulandı.
 
 ## AI Reels V2 — Creative Provider abstraction + model registry (src/creative-providers/)
 

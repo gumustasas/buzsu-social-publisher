@@ -3,15 +3,57 @@ import assert from "node:assert/strict";
 import { getVideoProviderCapabilities } from "../src/lib/video-provider-capabilities.js";
 import { OMNI_MODEL } from "../src/omni-video.js";
 import { VEO_MODEL_TIERS } from "../src/veo-video.js";
+import { NANO_BANANA_2_MODEL } from "../src/scene-image.js";
+import { VEO_TIER_UI_LABELS, OMNI_UI_LABEL, NANO_BANANA_2_UI_LABEL, NANO_BANANA_2_LITE_UI_LABEL } from "../src/lib/video-model-labels.js";
 
 const DEPRECATED_VEO_3_0_IDS = ["veo-3.0-generate-001", "veo-3.0-fast-generate-001"];
 
 test("getVideoProviderCapabilities reports everything unavailable when no keys are configured", async () => {
   const capabilities = await getVideoProviderCapabilities({});
   assert.deepEqual(capabilities, {
-    google: { omni: { available: false, models: [] }, veo: { available: false, models: [] } },
+    google: {
+      omni: { available: false, models: [], label: OMNI_UI_LABEL },
+      veo: {
+        available: false,
+        models: [],
+        tiers: [
+          { tier: "economy", model: VEO_MODEL_TIERS.economy, label: VEO_TIER_UI_LABELS.economy, available: false },
+          { tier: "fast", model: VEO_MODEL_TIERS.fast, label: VEO_TIER_UI_LABELS.fast, available: false },
+          { tier: "quality", model: VEO_MODEL_TIERS.quality, label: VEO_TIER_UI_LABELS.quality, available: false }
+        ]
+      },
+      image: {
+        nanoBanana2: { available: false, model: NANO_BANANA_2_MODEL, label: NANO_BANANA_2_UI_LABEL },
+        nanoBanana2Lite: { available: false, model: "gemini-3.1-flash-lite-image", label: NANO_BANANA_2_LITE_UI_LABEL }
+      }
+    },
     fal: { available: false }
   });
+});
+
+// HEDEF: kullanıcıya gösterilen etiket ("Veo 3.1 Quality") backend canonical
+// ID'yi ("veo-3.1-generate-preview") HİÇBİR ŞEKİLDE değiştirmez — yalnızca
+// görüntüleme metnidir. "Generate" kelimesi UI etiketinde YOKTUR.
+test("getVideoProviderCapabilities: Veo tier UI labels use Lite/Fast/Quality wording while canonical model IDs stay unchanged", async () => {
+  const capabilities = await getVideoProviderCapabilities({ GEMINI_API_KEY: "test" });
+  const byTier = Object.fromEntries(capabilities.google.veo.tiers.map((entry) => [entry.tier, entry]));
+  assert.equal(byTier.economy.label, "Veo 3.1 Lite");
+  assert.equal(byTier.economy.model, "veo-3.1-lite-generate-preview");
+  assert.equal(byTier.fast.label, "Veo 3.1 Fast");
+  assert.equal(byTier.fast.model, "veo-3.1-fast-generate-preview");
+  assert.equal(byTier.quality.label, "Veo 3.1 Quality");
+  assert.equal(byTier.quality.model, "veo-3.1-generate-preview");
+  assert.ok(!byTier.quality.label.includes("Generate"));
+});
+
+// HEDEF: Nano Banana 2, bu PR'ın ana image modeli olarak capability'de ayrı
+// raporlanır — Nano Banana 2 Lite (mevcut GEMINI_SCENE_MODEL varsayılanı)
+// ile ASLA karıştırılmaz, iki ayrı model/iki ayrı alan.
+test("getVideoProviderCapabilities reports Nano Banana 2 and Nano Banana 2 Lite as distinct image models", async () => {
+  const capabilities = await getVideoProviderCapabilities({ GEMINI_API_KEY: "test" });
+  assert.equal(capabilities.google.image.nanoBanana2.model, "gemini-3.1-flash-image");
+  assert.equal(capabilities.google.image.nanoBanana2Lite.model, "gemini-3.1-flash-lite-image");
+  assert.notEqual(capabilities.google.image.nanoBanana2.model, capabilities.google.image.nanoBanana2Lite.model);
 });
 
 test("getVideoProviderCapabilities: fal availability is derived purely from FAL_KEY presence", async () => {
@@ -120,6 +162,10 @@ test("getVideoProviderCapabilities excludes a tier not present in discovery from
     assert.ok(capabilities.google.veo.models.includes(VEO_MODEL_TIERS.quality));
     assert.ok(!capabilities.google.veo.models.includes(VEO_MODEL_TIERS.fast));
     assert.ok(!capabilities.google.veo.models.includes(VEO_MODEL_TIERS.economy));
+    const byTier = Object.fromEntries(capabilities.google.veo.tiers.map((entry) => [entry.tier, entry]));
+    assert.equal(byTier.quality.available, true);
+    assert.equal(byTier.fast.available, false);
+    assert.equal(byTier.economy.available, false);
   } finally {
     global.fetch = originalFetch;
   }

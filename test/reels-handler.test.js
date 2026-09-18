@@ -79,6 +79,38 @@ test("reels handler: body.profile, body.model'in eşanlamlısı olarak kabul edi
   );
 });
 
+test("reels handler: body.resolution ('720p'/'1080p') Veo isteğinin parameters alanına aktarılır", async () => {
+  await withMockedFetch(
+    () => ({ ok: true, json: async () => ({ name: "operations/test" }) }),
+    async (veoCalls) => {
+      const prompt = "REFERENCE:\ntest\n\nMOTION:\ntest";
+      const req = makeRequest({ provider: "veo", productId: PRODUCT_ID, finalizedPrompt: prompt, promptId: hashVideoPrompt(prompt), model: "economy", resolution: "1080p" });
+      const res = makeResponse();
+      await handler(req, res);
+      assert.equal(res.statusCode, 200);
+      const predictCall = veoCalls.find((c) => c.url.includes("predictLongRunning"));
+      const body = JSON.parse(predictCall.options.body);
+      assert.equal(body.parameters.resolution, "1080p");
+    }
+  );
+});
+
+test("reels handler: geçersiz/beklenmeyen bir body.resolution değeri (allowlist dışı) sessizce yok sayılır, model varsayılanına düşülür", async () => {
+  await withMockedFetch(
+    () => ({ ok: true, json: async () => ({ name: "operations/test" }) }),
+    async (veoCalls) => {
+      const prompt = "REFERENCE:\ntest\n\nMOTION:\ntest";
+      const req = makeRequest({ provider: "veo", productId: PRODUCT_ID, finalizedPrompt: prompt, promptId: hashVideoPrompt(prompt), model: "economy", resolution: "4k" });
+      const res = makeResponse();
+      await handler(req, res);
+      assert.equal(res.statusCode, 200);
+      const predictCall = veoCalls.find((c) => c.url.includes("predictLongRunning"));
+      const body = JSON.parse(predictCall.options.body);
+      assert.equal("resolution" in body.parameters, false);
+    }
+  );
+});
+
 test("reels handler: model belirtilmezse (undefined) resolver zincirine düşer — economy varsayılanı kullanılır", async () => {
   await withMockedFetch(
     () => ({ ok: true, json: async () => ({ name: "operations/test" }) }),
@@ -245,6 +277,100 @@ test("reels handler: Omni + productId VERİLDİYSE referenceImageUrl olarak ür�
   } finally {
     global.fetch = originalFetch;
   }
+});
+
+// Nano Banana 2 (veya başka bir dış kaynaktan) üretilip "Bu görseli kullan"
+// ile seçilmiş bir sceneImageUrl varsa, Veo için artık productId ZORUNLU
+// DEĞİLDİR — bkz. api/reels.js:skipProductForExternalScene. Önceki hâlde bu
+// akış, hiçbir ağ isteği atılmadan "Ürün bulunamadı."/"Ürün URL bilgisi
+// eksik." ile 400/500 dönüyordu.
+const NANO_BANANA_SCENE_URL = "https://blob.example.com/nano-banana-scene.png";
+
+function withMockedFetchNoProduct(veoResponder, run) {
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (url, options) => {
+    const urlStr = String(url);
+    calls.push({ url: urlStr, options });
+    if (urlStr.includes("api.airtable.com")) throw new Error("Airtable'a hiç dokunulmamalıydı (ürün yok, sceneImageUrl var)");
+    if (urlStr === NANO_BANANA_SCENE_URL) return { ok: true, headers: { get: () => "image/png" }, arrayBuffer: async () => new Uint8Array([9, 9, 9]).buffer };
+    return veoResponder(urlStr, options);
+  };
+  return run(calls).finally(() => { global.fetch = originalFetch; });
+}
+
+test("reels handler: Veo + seçilmiş Nano Banana sceneImageUrl + productId YOK → istek gönderilir, Ürün seçin/bulunamadı hatası vermez", async () => {
+  await withMockedFetchNoProduct(
+    () => ({ ok: true, json: async () => ({ name: "operations/nano-banana" }) }),
+    async (calls) => {
+      const prompt = "REFERENCE:\ntest\n\nMOTION:\ntest";
+      const req = makeRequest({ provider: "veo", productId: undefined, sceneImageUrl: NANO_BANANA_SCENE_URL, finalizedPrompt: prompt, promptId: hashVideoPrompt(prompt), model: "economy" });
+      const res = makeResponse();
+      await handler(req, res);
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.payload.ok, true);
+      assert.ok(res.payload.veo);
+      // imageUrl olarak birebir seçilen Nano Banana sahnesi kullanıldı —
+      // ürünün (olmayan) kayıtlı görseline asla düşülmedi.
+      assert.equal(res.payload.veo.imageUrl, NANO_BANANA_SCENE_URL);
+      assert.ok(calls.some((c) => c.url === NANO_BANANA_SCENE_URL));
+    }
+  );
+});
+
+test("reels handler: Veo + seçilmiş Nano Banana sceneImageUrl akışında image-to-video referansı gerçekten seçilen sceneImageUrl'den indirilir", async () => {
+  await withMockedFetchNoProduct(
+    () => ({ ok: true, json: async () => ({ name: "operations/nano-banana" }) }),
+    async (calls) => {
+      const prompt = "REFERENCE:\ntest\n\nMOTION:\ntest";
+      const req = makeRequest({ provider: "veo", sceneImageUrl: NANO_BANANA_SCENE_URL, finalizedPrompt: prompt, promptId: hashVideoPrompt(prompt) });
+      const res = makeResponse();
+      await handler(req, res);
+      assert.equal(res.statusCode, 200);
+      const imageDownloadCall = calls.find((c) => c.url === NANO_BANANA_SCENE_URL);
+      assert.ok(imageDownloadCall, "sceneImageUrl indirilmedi");
+      const predictCall = calls.find((c) => c.url.includes("predictLongRunning"));
+      assert.ok(predictCall);
+    }
+  );
+});
+
+test("reels handler: action:'preview', provider:'veo', sceneImageUrl var + productId YOK → Ürün bulunamadı hatası vermeden bir prompt önizlemesi döner", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => {
+    if (String(url).includes("api.airtable.com")) throw new Error("Airtable'a hiç dokunulmamalıydı");
+    throw new Error(`Beklenmeyen fetch: ${url}`);
+  };
+  try {
+    const req = makeRequest({ action: "preview", provider: "veo", sceneImageUrl: NANO_BANANA_SCENE_URL, motion: "kamera yavaşça yaklaşsın" });
+    const res = makeResponse();
+    await handler(req, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.payload.ok, true);
+    assert.ok(res.payload.preview.promptId);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("reels handler: sceneImageUrl YOK ve productId de YOK ise Veo hâlâ eski validasyonla reddedilir (regresyon yok)", async () => {
+  await withMockedFetchNoProduct(
+    () => { throw new Error("Veo'ya hiç istek atılmamalıydı"); },
+    async (calls) => {
+      const prompt = "REFERENCE:\ntest\n\nMOTION:\ntest";
+      const req = makeRequest({ provider: "veo", finalizedPrompt: prompt, promptId: hashVideoPrompt(prompt) });
+      const res = makeResponse();
+      global.fetch = async (url) => {
+        // Bu testte Airtable'a dokunulması BEKLENİR (productId yok ama
+        // resolveProduct(undefined) yine de çağrılır, kayıt bulunamaz).
+        if (String(url).includes("api.airtable.com")) return { ok: true, json: async () => ({ records: [] }) };
+        throw new Error(`Beklenmeyen fetch: ${url}`);
+      };
+      await handler(req, res);
+      assert.equal(res.statusCode, 400);
+      assert.match(res.payload.error, /Ürün URL bilgisi eksik/);
+    }
+  );
 });
 
 test("reels handler: prompt hash doğrulaması model parametresinden etkilenmiyor — model değişse de aynı prompt/promptId kabul edilir", async () => {

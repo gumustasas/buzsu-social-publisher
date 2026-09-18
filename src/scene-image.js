@@ -138,15 +138,32 @@ async function buildMaskBuffer(sourceBuffer, { removeFaucet = false } = {}) {
   return { basePng, maskPng };
 }
 
-async function callGeminiImageEdit({ basePng, referencePngs = [], prompt }, env) {
+// "Nano Banana 2" — Google'ın Gemini API'deki (generativelanguage.googleapis.com)
+// canonical image modeli. Bu depodaki mevcut varsayılan ("gemini-3.1-flash-lite-image",
+// bkz. GEMINI_SCENE_MODEL altında) "Nano Banana 2 LITE"dır — AYRI, daha ucuz/hafif
+// bir modeldir, bu ikisi ASLA birbirinin yerine kullanılmamalı. Doğrulama: Google'ın
+// resmi blog duyurusu ("Build with Nano Banana 2") + Gemini API/AI Studio model
+// dokümantasyonu, "gemini-3.1-flash-image" = Nano Banana 2 (orta/tam katman),
+// "gemini-3.1-flash-lite-image" = Nano Banana 2 Lite, "gemini-3-pro-image" =
+// Nano Banana Pro (bu depoda kullanılmıyor) olduğunu doğruluyor. Bu SADECE bir
+// görsel modelidir — video üretimi için ASLA kullanılmaz (video için Veo/Omni, bkz.
+// src/veo-video.js, src/omni-video.js).
+export const NANO_BANANA_2_MODEL = "gemini-3.1-flash-image";
+
+function imageConfigFor(aspectRatio) {
+  const value = String(aspectRatio || "").trim();
+  return value ? { imageConfig: { aspectRatio: value } } : {};
+}
+
+async function callGeminiImageEdit({ basePng, referencePngs = [], prompt, model: modelOverride, aspectRatio }, env) {
   if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY Vercel Production ortamında tanımlı değil.");
-  const model = env.GEMINI_SCENE_MODEL || "gemini-3.1-flash-lite-image";
+  const model = modelOverride || env.GEMINI_SCENE_MODEL || "gemini-3.1-flash-lite-image";
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: "POST",
     headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json" },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }, ...[basePng, ...referencePngs].map((buffer) => ({ inlineData: { mimeType: "image/png", data: buffer.toString("base64") } }))] }],
-      generationConfig: { responseModalities: ["IMAGE"] }
+      generationConfig: { responseModalities: ["IMAGE"], ...imageConfigFor(aspectRatio) }
     })
   });
   const data = await response.json();
@@ -155,6 +172,31 @@ async function callGeminiImageEdit({ basePng, referencePngs = [], prompt }, env)
   const imagePart = parts.find((part) => part.inlineData?.data);
   if (!imagePart) throw new Error("Gemini görsel yanıtı boş döndü.");
   return imagePart.inlineData.data;
+}
+
+// Zero-shot (ürünsüz) sahne üretimi — SADECE Nano Banana 2 akışı için. Mevcut
+// generateSceneImage/callGeminiImageEdit her zaman bir ürün fotoğrafından
+// maskelenmiş bir taban görsel (basePng) gerektirir; burada hiç ürün yok,
+// Gemini'ye yalnızca metin promptu + (varsa) aspectRatio verilir. Ürün
+// referansı olmadığı için scene-validation.js'in ürün kimliği kontrolleri
+// (bkz. src/nano-banana-scene.js) bu modda uygulanmaz.
+export async function callGeminiTextToImage({ prompt, model: modelOverride, aspectRatio }, env) {
+  if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY Vercel Production ortamında tanımlı değil.");
+  const model = modelOverride || NANO_BANANA_2_MODEL;
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+    method: "POST",
+    headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { responseModalities: ["IMAGE"], ...imageConfigFor(aspectRatio) }
+    })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error?.message || `Gemini HTTP ${response.status}`);
+  const parts = data.candidates?.[0]?.content?.parts || [];
+  const imagePart = parts.find((part) => part.inlineData?.data);
+  if (!imagePart) throw new Error("Gemini görsel yanıtı boş döndü.");
+  return { imageBase64: imagePart.inlineData.data, model };
 }
 
 // Görsel üretimi ve metin üretimi (başlık/sahne planı, bkz. src/ai-providers.js)
@@ -199,6 +241,12 @@ async function callOpenAIImageEdit({ basePng, referencePngs = [], maskPng, promp
 export function availableSceneProviders(env = process.env) {
   return [
     env.GEMINI_API_KEY && "gemini",
+    // "nano-banana-2": aynı maskeli-düzenleme (edit) mimarisini "gemini"
+    // sağlayıcısıyla PAYLAŞIR, tek fark hangi Gemini image modelinin
+    // çağrıldığıdır (bkz. NANO_BANANA_2_MODEL) — "gemini" varsayılanı Nano
+    // Banana 2 LITE'a (GEMINI_SCENE_MODEL) düşer, bu seçenek her zaman tam
+    // Nano Banana 2'yi hedefler.
+    env.GEMINI_API_KEY && "nano-banana-2",
     openaiImageApiKey(env) && "openai",
     openaiImageApiKey(env) && "openai-low",
     // "composite": ürünü gerçek fotoğraftan piksel birebir kesip AI sadece
@@ -208,7 +256,7 @@ export function availableSceneProviders(env = process.env) {
   ].filter(Boolean);
 }
 
-export async function generateSceneImage(product, sceneDescription, env = process.env, { removeFaucet = false, provider = "gemini" } = {}) {
+export async function generateSceneImage(product, sceneDescription, env = process.env, { removeFaucet = false, provider = "gemini", aspectRatio } = {}) {
   const imageUrls = [...new Set((Array.isArray(product?.imageUrls) ? product.imageUrls : [product?.imageUrl]).map((url) => String(url || "").trim()).filter((url) => /^https:\/\//i.test(url)))].slice(0, 4);
   const imageUrl = imageUrls[0] || "";
   if (!/^https:\/\//i.test(imageUrl)) throw new Error("Ürün görseli herkese açık HTTPS URL olmalı.");
@@ -227,10 +275,12 @@ export async function generateSceneImage(product, sceneDescription, env = proces
   }
 
   let b64, model, prompt;
-  if (provider === "gemini") {
+  if (provider === "gemini" || provider === "nano-banana-2") {
     prompt = geminiScenePrompt(sceneDescription, { removeFaucet, referenceCount: imageUrls.length });
-    model = env.GEMINI_SCENE_MODEL || "gemini-3.1-flash-lite-image";
-    b64 = await callGeminiImageEdit({ basePng, referencePngs, prompt }, env);
+    model = provider === "nano-banana-2"
+      ? (env.GEMINI_NANO_BANANA_2_MODEL || NANO_BANANA_2_MODEL)
+      : (env.GEMINI_SCENE_MODEL || "gemini-3.1-flash-lite-image");
+    b64 = await callGeminiImageEdit({ basePng, referencePngs, prompt, model, aspectRatio }, env);
   } else if (provider === "openai" || provider === "openai-low") {
     prompt = `${sceneEditPrompt(sceneDescription, { removeFaucet })} ${imageUrls.length > 1 ? "Ek referans görselleri aynı ürünün farklı açılarıdır; tüm gerçek parçaları koru ve yeni model icat etme." : ""}`;
     model = env.OPENAI_SCENE_MODEL || "gpt-image-2";

@@ -5,7 +5,8 @@ import { generateCaption, generateHashtags, generateScenePlan, generateSeoArticl
 import { baseProductTitle } from "../src/lib/product-title.js";
 import { findCatalogProduct, isCatalogProductId } from "../src/lib/product-catalog.js";
 import { buildDraft } from "../src/content-worker.js";
-import { availableSceneProviders, generateSceneImage } from "../src/scene-image.js";
+import { availableSceneProviders, generateSceneImage, NANO_BANANA_2_MODEL } from "../src/scene-image.js";
+import { generateNanoBananaScene } from "../src/nano-banana-scene.js";
 import { composeBrandedPost } from "../src/post-branding.js";
 import { runPublisher } from "../src/publish-approved.js";
 import { MUSIC_CATEGORIES } from "../src/lib/music-catalog.js";
@@ -166,6 +167,20 @@ const TOOLS = [
         provider: { type: "string", enum: ["gemini", "openai", "openai-low"], description: "AI görsel sağlayıcısı (varsayılan: mevcut olanlardan ilki, genelde gemini). Bir sağlayıcı sahnede istenmeyen bir öğeyi (ör. fazladan gösterge/panel) ısrarla üretmeye devam ederse diğerini deneyin." }
       },
       required: ["productId", "sceneDescription"]
+    }
+  },
+  {
+    name: "generate_nano_banana_scene",
+    description: `Nano Banana 2 (Gemini görsel modeli "${NANO_BANANA_2_MODEL}") ile SADECE bir sahne görseli üretir — bu bir video modeli DEĞİLDİR, video üretmez ve hiçbir şekilde Veo/Omni'yi otomatik tetiklemez. İki-aşamalı akışın 1. aşamasıdır: burada üretilen imageUrl'i kullanıcı inceleyip onayladıktan SONRA, siz (veya kullanıcı) AYRI ve AÇIK bir ikinci çağrıyla generate_video_clip (Veo 3.1 Lite/Fast/Quality) veya generate_omni_video_edit'e verirsiniz — bu tool bunu KENDİLİĞİNDEN yapmaz. productId verilirse ürünün gerçek fotoğrafı referans alınıp kimliği/logosu/parçaları korunur (üründe kullanılan mevcut maskeli-düzenleme mimarisi ile, bkz. generate_scene_image) ve sonuç otomatik ürün-kimliği kontrolünden (needsReview/failedChecks/reviewNotes) geçirilir — needsReview:true dönerse video aşamasına geçmeden önce kullanıcıdan ayrıca açık onay isteyin. productId verilmezse tamamen sıfırdan (zero-shot, promptan) bir sahne üretilir — bu modda ürün kimliği kontrolü uygulanmaz (kontrol edilecek bir ürün yok). GERÇEK PARA HARCAR — confirmed:true verilmezse hiçbir API çağrısı yapılmaz.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        productId: { type: "string", description: "İsteğe bağlı — verilirse ürünün gerçek fotoğrafı referans alınır (product-reference modu, ürün kimliği korunur). Verilmezse sıfırdan/zero-shot bir sahne üretilir." },
+        prompt: { type: "string", description: "Sahnenin açıklaması (Türkçe olabilir) — productId verilmişse bu, mevcut geminiScenePrompt/generate_scene_image ile aynı 'sahne açıklaması' rolündedir; verilmemişse görselin tamamını tarif eden bağımsız bir prompt olmalıdır." },
+        aspectRatio: { type: "string", enum: ["9:16", "1:1", "16:9"], description: "En-boy oranı (varsayılan '9:16', Reels için). productId verilmiş bir üretimde (maskeli-düzenleme) bu yalnızca bir tercih sinyalidir — model girdi görselinin kanvas geometrisini koruma eğiliminde olabilir; zero-shot modda tam olarak uygulanır." },
+        confirmed: { type: "boolean", description: "true olmadan hiçbir API çağrısı yapılmaz/ücret alınmaz." }
+      },
+      required: ["prompt", "confirmed"]
     }
   },
   {
@@ -643,6 +658,15 @@ export async function callTool(name, args) {
       const validation = await validateSceneImage(rawBuffer, { sceneDescription: args.sceneDescription, productTitle: product.title }, process.env);
 
       return JSON.stringify({ ok: true, imageUrl, provider: scene.provider, prompt: scene.prompt, needsReview: validation.needsReview, failedChecks: validation.failedChecks, reviewNotes: validation.notes }, null, 2);
+    }
+    case "generate_nano_banana_scene": {
+      // confirmed kontrolü generateNanoBananaScene İÇİNDE, herhangi bir ağ
+      // isteğinden (ürün çözümleme dahil) ÖNCE yapılır — burada tekrar
+      // erkenden kontrol etmiyoruz, aksi halde iki farklı hata mesajı yolu
+      // oluşurdu. productId boşsa resolveProduct HİÇ çağrılmaz (zero-shot).
+      const product = String(args.productId || "").trim() ? await resolveProduct(args.productId) : null;
+      const scene = await generateNanoBananaScene({ product, prompt: args.prompt, aspectRatio: args.aspectRatio, confirmed: args.confirmed === true }, process.env);
+      return JSON.stringify({ ok: true, model: scene.model, provider: scene.provider, mode: scene.mode, imageUrl: scene.imageUrl, productId: args.productId || null, prompt: scene.prompt, aspectRatio: scene.aspectRatio, needsReview: scene.needsReview, failedChecks: scene.failedChecks, reviewNotes: scene.reviewNotes }, null, 2);
     }
     case "create_draft": {
       const allProducts = await listProducts();

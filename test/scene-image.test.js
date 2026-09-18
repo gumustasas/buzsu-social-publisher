@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import { floodFillBackgroundMask, sceneEditPrompt, geminiScenePrompt, applyRemoveBox, availableSceneProviders, generateSceneImage } from "../src/scene-image.js";
+import { floodFillBackgroundMask, sceneEditPrompt, geminiScenePrompt, applyRemoveBox, availableSceneProviders, generateSceneImage, NANO_BANANA_2_MODEL, callGeminiTextToImage } from "../src/scene-image.js";
 
 test("floodFillBackgroundMask marks border-connected near-white pixels as background", () => {
   const width = 4, height = 4, channels = 3;
@@ -121,10 +121,91 @@ test("geminiScenePrompt forbids fabricated signage/plaques with made-up text on 
   assert.match(prompt, /gerçek olmayan, üzerinde yazı\/marka adı bulunan pleksi, metal veya plastik bir tabela/);
 });
 
-test("availableSceneProviders lists gemini, openai, openai-low, then the experimental composite variant, only when keys are present", () => {
-  assert.deepEqual(availableSceneProviders({ GEMINI_API_KEY: "g", OPENAI_API_KEY: "o" }), ["gemini", "openai", "openai-low", "composite"]);
+test("availableSceneProviders lists gemini, nano-banana-2, openai, openai-low, then the experimental composite variant, only when keys are present", () => {
+  assert.deepEqual(availableSceneProviders({ GEMINI_API_KEY: "g", OPENAI_API_KEY: "o" }), ["gemini", "nano-banana-2", "openai", "openai-low", "composite"]);
   assert.deepEqual(availableSceneProviders({ OPENAI_API_KEY: "o" }), ["openai", "openai-low"]);
   assert.deepEqual(availableSceneProviders({}), []);
+});
+
+test("generateSceneImage provider 'nano-banana-2' calls the Nano Banana 2 model (gemini-3.1-flash-image), distinct from the default 'gemini' (Nano Banana 2 Lite)", async () => {
+  const originalFetch = global.fetch;
+  let calledUrls = [];
+  const tinyPng = await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer();
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("example.com")) return { ok: true, arrayBuffer: async () => tinyPng };
+    if (u.includes("generativelanguage.googleapis.com")) {
+      calledUrls.push(u);
+      return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { data: "AAAA" } }] } }] }) };
+    }
+    throw new Error(`unexpected fetch: ${u}`);
+  };
+  try {
+    const nanoBananaResult = await generateSceneImage(
+      { title: "Test Ürün", imageUrl: "https://example.com/photo.png" },
+      "mutfak",
+      { GEMINI_API_KEY: "key" },
+      { provider: "nano-banana-2" }
+    );
+    assert.equal(nanoBananaResult.model, NANO_BANANA_2_MODEL);
+    assert.ok(calledUrls[0].includes(`models/${NANO_BANANA_2_MODEL}:generateContent`));
+
+    calledUrls = [];
+    const liteResult = await generateSceneImage(
+      { title: "Test Ürün", imageUrl: "https://example.com/photo.png" },
+      "mutfak",
+      { GEMINI_API_KEY: "key" },
+      { provider: "gemini" }
+    );
+    assert.equal(liteResult.model, "gemini-3.1-flash-lite-image");
+    assert.ok(calledUrls[0].includes("models/gemini-3.1-flash-lite-image:generateContent"));
+    assert.notEqual(liteResult.model, NANO_BANANA_2_MODEL);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateSceneImage provider 'nano-banana-2' honors an explicit GEMINI_NANO_BANANA_2_MODEL override without falling back silently", async () => {
+  const originalFetch = global.fetch;
+  let calledUrl = null;
+  const tinyPng = await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer();
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("example.com")) return { ok: true, arrayBuffer: async () => tinyPng };
+    calledUrl = u;
+    return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { data: "AAAA" } }] } }] }) };
+  };
+  try {
+    const result = await generateSceneImage(
+      { title: "Test Ürün", imageUrl: "https://example.com/photo.png" },
+      "mutfak",
+      { GEMINI_API_KEY: "key", GEMINI_NANO_BANANA_2_MODEL: "gemini-custom-override" },
+      { provider: "nano-banana-2" }
+    );
+    assert.equal(result.model, "gemini-custom-override");
+    assert.ok(calledUrl.includes("models/gemini-custom-override:generateContent"));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("callGeminiTextToImage (zero-shot, no product) calls Nano Banana 2 with only the text prompt, no base image", async () => {
+  const originalFetch = global.fetch;
+  let capturedBody = null;
+  global.fetch = async (url, options) => {
+    capturedBody = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { data: "AAAA" } }] } }] }) };
+  };
+  try {
+    const result = await callGeminiTextToImage({ prompt: "sıfırdan bir mutfak sahnesi", aspectRatio: "9:16" }, { GEMINI_API_KEY: "key" });
+    assert.equal(result.model, NANO_BANANA_2_MODEL);
+    assert.equal(result.imageBase64, "AAAA");
+    assert.equal(capturedBody.contents[0].parts.length, 1);
+    assert.equal(capturedBody.contents[0].parts[0].text, "sıfırdan bir mutfak sahnesi");
+    assert.equal(capturedBody.generationConfig.imageConfig.aspectRatio, "9:16");
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test("availableSceneProviders offers openai/openai-low from a standalone OPENAI_IMAGE_API_KEY even without OPENAI_API_KEY", () => {
