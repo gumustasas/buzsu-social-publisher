@@ -1,0 +1,22 @@
+task_id: TASK-000
+title: Replace with short task title
+status: READY
+type: code
+assigned_to: claude-code
+review_by:
+  - chatgpt-root
+depends_on: []
+branch: agent/task-000-slug
+repo: https://github.com/gumustasas/buzsu-social-publisher
+goal: >
+  Describe the exact outcome.
+owns: []
+do_not_touch: []
+acceptance:
+  - npm run check passes
+  - no paid API calls in tests
+  - open a PR; do not merge
+deliverables:
+  - pull_request
+  - test_summary
+  - risk_notes
