@@ -1035,7 +1035,17 @@ açıkça çağrılan bir MCP tool'dur.
   throw etmeyen) davranışından FARKLI OLARAK burada hata SESSİZCE
   yutulmaz — API key yoksa veya karşılaştırma başarısız olursa açıkça
   throw eder, çünkü bu birincil, açıkça çağrılan bir tool'dur (ikincil bir
-  otomatik inceleme değil).
+  otomatik inceleme değil). `generationConfig.responseSchema` ile modelin
+  çıktısı sabit `VISUAL_VALIDATION_CHECKS` enum'ına ve `notes:string`'e
+  ZORLANIR (Gemini structured output) — ama bu şema GÜVENİLİP atlanan bir
+  kısayol DEĞİLDİR: yanıt (boş/eksik metin, bozuk JSON, `failedChecks`'in
+  dizi OLMAMASI) yine de KARARDAN ÖNCE ayrıca doğrulanır. **FAIL-CLOSED**
+  (ROOT review, PR #103): bu üç durumdan HİÇBİRİ sessizce
+  `failedChecks:[]`'e (yani `passed:true`'ya) çevrilmez — açık bir hata
+  fırlatılır, çünkü bozuk/anlaşılamayan bir model yanıtı bir ürün görselini
+  ASLA sessizce onaylayamaz. Yalnızca gerçekten geçerli, dizi tipinde bir
+  `failedChecks` (boş dizi dahil) normal `passed`/`needsReview` kararına
+  girer.
 - **`src/visual-validation/index.js`** (`validateProductVisual`): referans
   görseli ve üretilen görseli (URL veya base64, `upload_media` ile aynı
   ikili giriş deseni) `src/lib/upload-media.js`'teki GERÇEK SSRF-güvenli
