@@ -463,9 +463,10 @@ const TOOLS = [
       properties: {
         query: { type: "string", description: "Arama sorgusu/sorusu." },
         provider: { type: "string", enum: ["auto", ...RESEARCH_PROVIDERS], description: "Varsayılan 'auto' — hangi sağlayıcının GERÇEKTEN yapılandırılmış (API key) olduğuna göre sabit bir öncelik sırasıyla (google, sonra openai) seçilir. Başarısızlıkta ASLA diğer sağlayıcıya otomatik geçilmez." },
-        urls: { type: "array", items: { type: "string" }, description: "İsteğe bağlı — içeriği dikkate alınacak en fazla 5 URL (URL Context)." }
+        urls: { type: "array", items: { type: "string" }, description: "İsteğe bağlı — içeriği dikkate alınacak en fazla 5 URL (URL Context)." },
+        confirmed: { type: "boolean", description: "true olmadan ücretli research provider çağrısı yapılmaz." }
       },
-      required: ["query"]
+      required: ["query", "confirmed"]
     }
   },
   {
@@ -945,6 +946,7 @@ export async function callTool(name, args) {
       return JSON.stringify({ ok: true, ...result }, null, 2);
     }
     case "research_web": {
+      if (args.confirmed !== true) throw new Error("Bu işlem gerçek API kredisi harcar. Onaylamak için confirmed:true gönderin.");
       const result = await researchWeb({ query: args.query, provider: args.provider, urls: args.urls }, process.env);
       return JSON.stringify({ ok: true, ...result }, null, 2);
     }
