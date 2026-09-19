@@ -26,6 +26,7 @@ import { getBuzsuProductContext } from "../src/lib/product-intelligence.js";
 import { generateReelScript } from "../src/reel-script.js";
 import { REEL_OBJECTIVES, REEL_ASPECT_RATIOS, REEL_DURATIONS } from "../src/lib/reel-script-schema.js";
 import { researchWeb, RESEARCH_PROVIDERS } from "../src/research/index.js";
+import { transcribeMedia, TRANSCRIPTION_PROVIDERS } from "../src/transcription/index.js";
 import { CREATIVE_TIERS } from "../src/creative-providers/model-registry.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
@@ -467,6 +468,22 @@ const TOOLS = [
         confirmed: { type: "boolean", description: "true olmadan ücretli research provider çağrısı yapılmaz." }
       },
       required: ["query", "confirmed"]
+    }
+  },
+  {
+    name: "transcribe_media",
+    description: "Google Gemini (multimodal, doğrudan video/ses girdisi) veya OpenAI Whisper (/v1/audio/transcriptions) ile bir ses/video dosyasını birebir metne çevirir. Ayrı bir FFmpeg ses-ayıklama adımı YOKTUR — mediaUrl bir video (mp4/mov/webm) olsa bile sağlayıcıya doğrudan verilir, sağlayıcı ses parçasını kendi tarafında işler; dosya ~24MB'ı aşarsa (Vercel fonksiyon sınırları + Whisper API limiti) küçültme YAPILMADAN açık bir hata döner. GERÇEK PARA HARCAR — confirmed:true olmadan hiçbir sağlayıcıya istek atılmaz. provider='auto' hiçbir koşulda diğer sağlayıcıya SESSİZCE düşmez. diarization:true istenirse yalnızca bunu destekleyen sağlayıcı (Google, best-effort/tahmini konuşmacı etiketi) kullanılır — OpenAI Whisper diarization'ı resmi olarak desteklemez; açıkça provider:'openai' + diarization:true verilirse SESSİZCE yok sayılmaz, açık bir hata döner. Zaman damgası doğruluğu sağlayıcıya göre değişir: OpenAI 'exact' (Whisper segment'lerinden), Google 'best_effort' (yapılandırılmış JSON'dan tahmini) — dönen 'timestampAccuracy' alanına bakın. vocabularyHints (ör. 'Buzsu', 'kireç önleyici') Türkçe marka/terim tanımayı iyileştirmek için kullanılır, bir talimat DEĞİLDİR.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        mediaUrl: { type: "string", description: "Herkese açık HTTPS ses/video URL'i." },
+        provider: { type: "string", enum: ["auto", ...TRANSCRIPTION_PROVIDERS], description: "Varsayılan 'auto' — GERÇEKTEN yapılandırılmış (ve diarization isteniyorsa bunu destekleyen) ilk sağlayıcı seçilir. Başarısızlıkta ASLA diğer sağlayıcıya otomatik geçilmez." },
+        languageHint: { type: "string", description: "İsteğe bağlı ISO-639-1 dil ipucu (ör. 'tr'). Verilmezse sağlayıcı otomatik algılar." },
+        vocabularyHints: { type: "array", items: { type: "string" }, description: "İsteğe bağlı — en fazla 20 marka/terim ipucu (ör. ['Buzsu','kireç önleyici']), tanımayı iyileştirir; bir talimat değildir." },
+        diarization: { type: "boolean", description: "true ise konuşmacı ayrımı istenir (yalnız Google, best-effort/tahmini). OpenAI ile birlikte SESSİZCE yok sayılmaz — açık provider:'openai' + diarization:true açık bir hata döner." },
+        confirmed: { type: "boolean", description: "true olmadan ücretli transkripsiyon çağrısı yapılmaz." }
+      },
+      required: ["mediaUrl", "confirmed"]
     }
   },
   {
@@ -948,6 +965,14 @@ export async function callTool(name, args) {
     case "research_web": {
       if (args.confirmed !== true) throw new Error("Bu işlem gerçek API kredisi harcar. Onaylamak için confirmed:true gönderin.");
       const result = await researchWeb({ query: args.query, provider: args.provider, urls: args.urls }, process.env);
+      return JSON.stringify({ ok: true, ...result }, null, 2);
+    }
+    case "transcribe_media": {
+      if (args.confirmed !== true) throw new Error("Bu işlem gerçek API kredisi harcar. Onaylamak için confirmed:true gönderin.");
+      const result = await transcribeMedia(
+        { mediaUrl: args.mediaUrl, provider: args.provider, languageHint: args.languageHint, vocabularyHints: args.vocabularyHints, diarization: args.diarization === true },
+        process.env
+      );
       return JSON.stringify({ ok: true, ...result }, null, 2);
     }
     case "generate_video_narration": {

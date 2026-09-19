@@ -890,6 +890,46 @@ kapatmaktır.
   (zaten çözülmüş `productContext`'ten) kullanılır — uydurma bir değer
   değildir.
 
+## transcribe_media (TASK-002: provider-independent transkripsiyon katmanı)
+
+`src/transcription/` — Google Gemini (multimodal) veya OpenAI Whisper ile
+bir ses/video dosyasını birebir metne çeviren, provider-independent bir
+katman.
+
+- **`src/transcription/media-fetch.js`**: mediaUrl'den ham byte'ları indiren
+  TEK ortak yardımcı. **Ayrı bir FFmpeg ses-ayıklama adımı KASITLI olarak
+  YOKTUR**: Gemini `generateContent` (inlineData) ve OpenAI
+  `/v1/audio/transcriptions` video container'larını (mp4/mov/webm) DOĞRUDAN
+  kabul eder — sağlayıcı ses parçasını kendi tarafında ayıklar. Dosya
+  ~24MB'ı (Vercel fonksiyon sınırları + Whisper'ın API limiti) aşarsa
+  SESSİZCE küçültülmez — açık bir hata döner; bu durumda mevcut GitHub
+  Actions FFmpeg render kuyruğu (`src/lib/ffmpeg-command.js`,
+  `src/reel-audio-compose.js`) yeniden kullanılmalı, yeni bir senkron FFmpeg
+  alt sistemi İCAT EDİLMEMİŞTİR.
+- **`src/transcription/provider.js`**: `resolveTranscriptionProvider` —
+  `research/provider.js` İLE AYNI "sessiz ücretli fallback yok" sözleşmesi,
+  ek olarak bir CAPABILITY filtresi: `diarization:true` istenirse yalnızca
+  bunu destekleyen sağlayıcı adaydır. Capability matrisi (`TRANSCRIPTION_CAPABILITIES`)
+  gerçek bir `/models` discovery çağrısı değildir — Whisper/Gemini'nin
+  belgelenmiş, sabit ürün yetenekleridir: **timestamps** ikisinde de vardır
+  ama doğruluk farklıdır (`timestampAccuracy`: OpenAI `"exact"` — Whisper
+  `verbose_json` segment'lerinden; Google `"best_effort"` — yapılandırılmış
+  JSON'dan tahmini); **diarization** yalnız Google'da vardır (best-effort,
+  prompt tabanlı konuşmacı etiketi) — Whisper API resmi olarak desteklemez.
+  Açık `provider:"openai"` + `diarization:true` verilirse SESSİZCE yok
+  sayılmaz, `diarization_not_supported` hatası döner.
+- **`src/transcription/google-transcribe.js`** / **`openai-transcribe.js`**:
+  aynı `GEMINI_API_KEY`/`OPENAI_API_KEY` reuse edilir. `vocabularyHints`
+  (ör. `["Buzsu","kireç önleyici"]`) bir talimat DEĞİLDİR — Gemini'de prompt'a
+  eklenir, Whisper'da `prompt` alanına (kelime hazinesi ipucu) yazılır.
+  `OPENAI_TRANSCRIBE_MODEL` varsayılan `"whisper-1"`'i override edebilir.
+- **`src/transcription/normalize.js`**: her segmenti `{startSeconds,
+  endSeconds,text,speaker}` şekline indirger; `endSeconds <= startSeconds`
+  olan bozuk segmentler sessizce ATLANIR (uydurma zaman damgası üretilmez).
+- **`transcribe_media` (MCP tool)**: `mediaUrl` ve `confirmed:true` zorunlu;
+  `provider` (`auto`/`google`/`openai`), `languageHint`, `vocabularyHints`
+  (en fazla 20) ve `diarization` isteğe bağlı. **GERÇEK PARA HARCAR.**
+
 ## AI Reels V2 — dashboard sihirbazı (PR-D: Ürün→Senaryo→Sahne Onayı, PR-E: Sahne Videosu, PR-F/G: Ses & Müzik + Final Reel)
 
 Dashboard'da (`dashboard-reels-v2.js` + `dashboard.html`, `data-tab="reels"`

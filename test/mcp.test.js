@@ -793,3 +793,69 @@ test("generate_reel_script: researchMode verilmezse research_web'e istek atmadan
     delete process.env.GOOGLE_CREATIVE_BALANCED_MODEL;
   }
 });
+
+// TASK-002 (transcribe_media): api/mcp.js'e minimum entegrasyon — asıl
+// provider/normalize testleri test/transcription*.test.js'te (owns). Burada
+// yalnız tool'un TOOLS listesinde göründüğü ve callTool'un transcribeMedia'yı
+// gerçekten çağırdığı doğrulanır.
+test("tools/list: transcribe_media tool listesinde 'mediaUrl' + 'confirmed' zorunlu, diğerleri isteğe bağlı olarak yer alır", async () => {
+  const response = await handleMessage({ id: 1, method: "tools/list" });
+  const tool = response.result.tools.find((t) => t.name === "transcribe_media");
+  assert.ok(tool, "transcribe_media tools/list içinde bulunamadı");
+  assert.deepEqual(tool.inputSchema.required, ["mediaUrl", "confirmed"]);
+  assert.deepEqual(tool.inputSchema.properties.provider.enum, ["auto", "google", "openai"]);
+});
+
+test("transcribe_media: confirmed:true olmadan hiçbir sağlayıcıya istek atılmaz", async () => {
+  const originalFetch = global.fetch;
+  let called = false;
+  global.fetch = async () => { called = true; throw new Error("çağrılmamalıydı"); };
+  try {
+    const response = await handleMessage({ id: 1, method: "tools/call", params: { name: "transcribe_media", arguments: { mediaUrl: "https://example.com/a.mp3", provider: "openai" } } });
+    assert.equal(response.result.isError, true);
+    assert.match(response.result.content[0].text, /confirmed:true/);
+    assert.equal(called, false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("transcribe_media: provider='openai' ile transcribeMedia'yı çağırır, normalize edilmiş segments döner", async () => {
+  const originalFetch = global.fetch;
+  const originalOpenAiKey = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "test-openai-key";
+  global.fetch = async (url) => {
+    if (String(url).includes("api.openai.com")) return { ok: true, json: async () => ({ text: "Merhaba dünya.", language: "turkish", segments: [{ start: 0, end: 2, text: "Merhaba dünya." }] }) };
+    return { ok: true, headers: { get: () => "audio/mpeg" }, arrayBuffer: async () => new ArrayBuffer(8) };
+  };
+  try {
+    const text = await callTool("transcribe_media", { mediaUrl: "https://example.com/a.mp3", provider: "openai", confirmed: true });
+    const parsed = JSON.parse(text);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.provider, "openai");
+    assert.equal(parsed.text, "Merhaba dünya.");
+    assert.deepEqual(parsed.segments, [{ startSeconds: 0, endSeconds: 2, text: "Merhaba dünya.", speaker: null }]);
+  } finally {
+    global.fetch = originalFetch;
+    if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = originalOpenAiKey;
+  }
+});
+
+test("transcribe_media: diarization:true + provider='openai' SESSİZCE yok sayılmaz, isError:true ile açık bir hata döner", async () => {
+  const originalFetch = global.fetch;
+  const originalOpenAiKey = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "test-openai-key";
+  let called = false;
+  global.fetch = async () => { called = true; throw new Error("çağrılmamalıydı"); };
+  try {
+    const response = await handleMessage({ id: 1, method: "tools/call", params: { name: "transcribe_media", arguments: { mediaUrl: "https://example.com/a.mp3", provider: "openai", diarization: true, confirmed: true } } });
+    assert.equal(response.result.isError, true);
+    assert.match(response.result.content[0].text, /diarization_not_supported/);
+    assert.equal(called, false);
+  } finally {
+    global.fetch = originalFetch;
+    if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = originalOpenAiKey;
+  }
+});
