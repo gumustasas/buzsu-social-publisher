@@ -1101,3 +1101,80 @@ test("search_product_knowledge: confirmed:true olmadan hiçbir provider çağrı
     global.fetch = originalFetch;
   }
 });
+
+// TASK-007 (run_agent_orchestration): api/mcp.js'e minimum entegrasyon —
+// asıl state machine/registry/validation testleri test/orchestrator*.test.js'te
+// (owns). Burada yalnız tool'un TOOLS listesinde göründüğü, mevcut tool'ları
+// BOZMADIĞI ve callTool'un runOrchestration'ı gerçekten çağırdığı doğrulanır.
+test("tools/list: run_agent_orchestration tool listesinde 'steps' zorunlu olarak yer alır, capability enum'ı sabit TASK-001..006+READ listesidir, ve MEVCUT tool sayısı/adları BOZULMAMIŞTIR", async () => {
+  const response = await handleMessage({ id: 1, method: "tools/list" });
+  const tools = response.result.tools;
+  const tool = tools.find((t) => t.name === "run_agent_orchestration");
+  assert.ok(tool, "run_agent_orchestration tools/list içinde bulunamadı");
+  assert.deepEqual(tool.inputSchema.required, ["steps"]);
+  assert.deepEqual(tool.inputSchema.properties.steps.items.properties.capability.enum, [
+    "list_products",
+    "get_buzsu_product_context",
+    "research_web",
+    "transcribe_media",
+    "generate_scene_image",
+    "validate_product_visual",
+    "generate_image_from_video",
+    "search_product_knowledge"
+  ]);
+  // Mevcut MCP tool'ları (TASK-001..006 dahil) hâlâ hepsi orada — yeni tool
+  // sadece EKLENMİŞ, hiçbiri kaldırılmamış/adı değişmemiş.
+  for (const existingName of ["list_products", "get_draft", "publish_now", "create_draft", "update_status", "set_autopilot", "upload_media", "research_web", "transcribe_media", "generate_scene_image", "validate_product_visual", "generate_image_from_video", "search_product_knowledge"]) {
+    assert.ok(tools.some((t) => t.name === existingName), `${existingName} tools/list'ten kaybolmuş`);
+  }
+});
+
+test("run_agent_orchestration: bilinmeyen/forbidden bir capability (örn. publish_now) hiçbir adım çalışmadan reddedilir (blocked)", async () => {
+  const originalFetch = global.fetch;
+  let called = false;
+  global.fetch = async () => { called = true; throw new Error("çağrılmamalıydı"); };
+  try {
+    const text = await callTool("run_agent_orchestration", { steps: [{ stepId: "s1", capability: "publish_now", args: {} }] });
+    const parsed = JSON.parse(text);
+    assert.equal(parsed.status, "blocked");
+    assert.match(parsed.blockedOrConfirmationReason, /bilinmeyen veya izin verilmeyen capability/);
+    assert.equal(called, false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("run_agent_orchestration: confirmed:true verilmeyen ücretli bir adımda GÜVENLE durur (waiting_for_confirmation), hiçbir API çağrısı yapılmaz", async () => {
+  const originalFetch = global.fetch;
+  let called = false;
+  global.fetch = async () => { called = true; throw new Error("çağrılmamalıydı"); };
+  try {
+    const text = await callTool("run_agent_orchestration", { steps: [{ stepId: "s1", capability: "research_web", args: { query: "buzsu" } }] });
+    const parsed = JSON.parse(text);
+    assert.equal(parsed.status, "waiting_for_confirmation");
+    assert.equal(parsed.currentStep, "s1");
+    assert.equal(called, false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("run_agent_orchestration: confirmed:true ile research_web adımını gerçekten çalıştırır ve tamamlanmış bir run döner (TASK-001 regresyonu bozulmamış)", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => ({ candidates: [{ content: { parts: [{ text: "Cevap metni." }] }, groundingMetadata: { groundingChunks: [{ web: { uri: "https://example.com/a", title: "A" } }] } }] })
+  });
+  try {
+    const text = await callTool("run_agent_orchestration", {
+      steps: [{ stepId: "s1", capability: "research_web", args: { query: "buzsu su arıtma güncel fiyat", provider: "google", confirmed: true } }]
+    });
+    const parsed = JSON.parse(text);
+    assert.equal(parsed.status, "completed");
+    assert.equal(parsed.completedSteps.length, 1);
+    assert.equal(parsed.completedSteps[0].output.answer, "Cevap metni.");
+    assert.equal(parsed.capabilityOrToolUsed, "research_web");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

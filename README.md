@@ -1125,6 +1125,120 @@ Responses `file_search` aracına `vector_store_ids` ile verilir.
 MCP örneği:
 `search_product_knowledge({productId,query,provider:"auto",confirmed:true})`
 
+## run_agent_orchestration (TASK-007: Controlled Agent Orchestrator)
+
+`src/orchestrator/` — TASK-001..006'nın MEVCUT READ/GENERATE
+capability'lerini (kendi provider mantıklarını TEKRARLAMADAN, doğrudan
+çekirdek fonksiyonlarını çağırarak) sabit, sıralı bir adım listesi olarak
+yürüten **deterministik, sınırlı (bounded) bir state machine**.
+`generate_scene_image`/`research_web`/`transcribe_media`/
+`validate_product_visual`/`generate_image_from_video`/
+`search_product_knowledge`'in kendi MCP tool'ları BİREBİR aynı çalışır —
+bu orkestratör onların ÜZERİNE, isteğe bağlı bir koordinasyon katmanıdır.
+
+**Durum modeli** (`src/orchestrator/states.js`) — run VE her adım için AYNI
+6 sabit durum:
+
+| Durum | Anlamı |
+|---|---|
+| `pending` | Run henüz doğrulanmadı/başlamadı (geçiş anı, senkron yanıtta hiç gözlemlenmez). |
+| `running` | Adımlar sırayla yürütülüyor (geçiş anı). |
+| `waiting_for_confirmation` | Bir adım ücretli ve `confirmed:true` almadı — run burada GÜVENLE durur. |
+| `completed` | Tüm adımlar başarıyla tamamlandı. |
+| `failed` | Bir adım (tüm retry'ları tükettikten sonra) başarısız oldu. |
+| `blocked` | Plan yürütülmeye BAŞLAMADAN reddedildi (malformed/bilinmeyen capability/sınır aşımı). |
+
+Geçişler `assertValidTransition` ile SABİT bir tabloya karşı doğrulanır —
+`pending->running`, `pending->blocked`, `running->completed`,
+`running->failed`, `running->waiting_for_confirmation`; hiçbir terminal
+durumdan (completed/failed/blocked/waiting_for_confirmation) başka bir
+duruma geçiş YOKTUR (bu sürüm bir run'ı devam ettirmez/resume etmez — her
+çağrı sıfırdan `pending`te başlar).
+
+Yanıt alanları (manifest'in `required_run_metadata`'sıyla AYNI semantik,
+bu depodaki HER mevcut MCP yanıtıyla tutarlı olacak şekilde camelCase'e
+çevrilmiş — `run_id`→`runId`, `current_step`→`currentStep`,
+`completed_steps`→`completedSteps`, `pending_steps`→`pendingSteps`,
+`blocked_or_confirmation_reason`→`blockedOrConfirmationReason`,
+`failure_reason`→`failureReason`,
+`capability_or_tool_used`→`capabilityOrToolUsed`):
+`{runId, status, currentStep, completedSteps, pendingSteps,
+blockedOrConfirmationReason, failureReason, capabilityOrToolUsed}`.
+`completedSteps` önceki BAŞARILI adımların `{stepId, capability, output}`
+kayıtlarıdır — bir adım başarısız/onay-bekliyor olduğunda bunlar yanıtta
+KORUNUR, hiçbir zaman silinmez.
+
+**Capability registry** (`src/orchestrator/capabilities.js`) — sabit bir
+allowlist, sadece 8 isim: `list_products`, `get_buzsu_product_context`
+(READ, onay gerektirmez) ve `research_web`, `transcribe_media`,
+`generate_scene_image`, `validate_product_visual`,
+`generate_image_from_video`, `search_product_knowledge` (GENERATE, HEPSİ
+`requiresConfirmation:true`). `publish_now`/`create_draft`/
+`update_draft`/`update_status`/`set_autopilot`/`upload_media` veya
+herhangi bir silme/env/deployment işlemi registry'de **hiç yoktur** —
+bilinmeyen/izin verilmeyen bir capability adı PLANIN TAMAMINI (hiçbir adım
+çalışmadan) `blocked` olarak reddeder.
+
+**Onay (confirmation) davranışı** — `research_web`/`transcribe_media`/
+`validate_product_visual`/`generate_scene_image`'ın ÇEKİRDEK
+fonksiyonlarında (kendi MCP case handler'larının AKSİNE) hiçbir dahili
+`confirmed` kontrolü YOKTUR — bu kontrol normalde SADECE `api/mcp.js`'in
+case handler'ında yaşar. Orkestratör bu çekirdek fonksiyonları case
+handler'ı ATLAYARAK çağırdığı için, AYNI onay kapısını
+`capabilities.js`'te (ağ çağrısından ÖNCE) YENİDEN uygular — hiçbir adım
+için `confirmed` kendiliğinden ÜRETİLMEZ/VARSAYILMAZ; çağıran HER ücretli
+adım için `confirmed:true`'yu O ADIMIN KENDİ `args`'ında AÇIKÇA
+göndermelidir. `generate_image_from_video`/`search_product_knowledge`
+KENDİ İÇLERİNDE de ayrıca bir confirmed kontrolü yapar (savunma katmanı).
+
+**Güvenlik kararları:**
+- `generate_scene_image` orkestratör içinde `api/mcp.js`'in case
+  handler'ı DEĞİL, ÇEKİRDEK `generateSceneImage`/
+  `generateCompositeSceneImage` fonksiyonları üzerinden çalışır — case
+  handler'ın ürettiği Vercel Blob upload + Airtable "Görsel URL" PATCH
+  (kalıcı ürün kaydı güncellemesi) BİLEREK dahil EDİLMEZ, çünkü bu
+  manifest'in `forbidden_capabilities` listesindeki "arbitrary
+  external-state updates"e girer. Orkestratörden gelen bu adımın çıktısı
+  SADECE `dataUrl`/`prompt`/`provider`/`model` içerir, hiçbir Airtable
+  kaydı DEĞİŞMEZ.
+- Ürün çözümleme (`productId`→ürün) `api/mcp.js`'in özel (export
+  edilmemiş) `resolveProduct`'ından KOPYALANMAZ/import EDİLMEZ (bir `src/`
+  modülünün bir `api/` route dosyasına bağımlı olması ters bir katman
+  ilişkisi olurdu); onun yerine ZATEN paylaşılan `src/lib/products.js`
+  (`listRawRecords`) ve `src/lib/product-catalog.js`
+  (`isCatalogProductId`/`findCatalogProduct`) birincilleri kullanılarak
+  AYNI çözümleme AYRI bir fonksiyonda yeniden inşa edilir — Airtable
+  HTTP+pagination mantığı yine TEK bir yerde (`listRawRecords` içinde)
+  kalır.
+- Hata mesajları (`failureReason`/`blockedOrConfirmationReason`) daima
+  bilinen tüm secret env değişkenlerine (AIRTABLE_TOKEN, GEMINI_API_KEY,
+  OPENAI_API_KEY, BLOB_READ_WRITE_TOKEN, ... — bkz.
+  `src/orchestrator/redact.js`) karşı redakte edilir; bir capability'nin
+  hata metnine kazara sızmış ham bir anahtar/token ASLA olduğu gibi
+  caller'a dönmez.
+- Adım girdileri (`args`) her capability için SABİT bir `allowedArgs`
+  kümesine karşı doğrulanır — tanımlı olmayan bir alan gönderilirse PLANIN
+  TAMAMI reddedilir; yürütme yetkisi doğrulanmış şema + state + policy'den
+  gelir, serbest biçimli bir girdi hiçbir zaman doğrudan bir capability'ye
+  ulaşmaz.
+
+**Sınırlar (bounded):** en fazla 20 adım (`MAX_STEPS`), adım başına en
+fazla 3 deneme (`MAX_RETRY_ATTEMPTS`, `maxAttempts:1` varsayılan) — ne
+adım sayısında ne retry'da sınırsız/örtük bir davranış yoktur (bkz.
+`src/orchestrator/validate.js`).
+
+**Bilinen sınırlamalar:** bu sürüm SENKRON ve TEK ÇAĞRILIKTIR — bir run
+`waiting_for_confirmation` durumunda durduğunda, caller aynı planı
+(eksik adım için `confirmed:true` eklenmiş şekilde) YENİDEN göndermelidir;
+orkestratör kendi başına bir run'ı "resume" etmez/beklemede bırakmaz,
+kalıcı bir run deposu (Airtable/DB) YOKTUR. Adımlar arasında veri
+aktarımı (bir adımın çıktısını sonraki adımın girdisine bağlama) da bu
+sürümde YOKTUR — her adımın `args`'ı çağıran tarafından SABİT olarak
+verilir.
+
+MCP örneği:
+`run_agent_orchestration({steps:[{stepId:"s1",capability:"research_web",args:{query:"...",confirmed:true}}]})`
+
 ## AI Reels V2 — dashboard sihirbazı (PR-D: Ürün→Senaryo→Sahne Onayı, PR-E: Sahne Videosu, PR-F/G: Ses & Müzik + Final Reel)
 
 Dashboard'da (`dashboard-reels-v2.js` + `dashboard.html`, `data-tab="reels"`
