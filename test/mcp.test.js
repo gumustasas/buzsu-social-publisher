@@ -881,3 +881,41 @@ test("transcribe_media: diarization:true + whisper-1 override (discovery diariza
     else process.env.OPENAI_TRANSCRIBE_MODEL = originalModel;
   }
 });
+
+// TASK-003 (generate_scene_image tiers): api/mcp.js'e minimum entegrasyon —
+// asıl provider/discovery/tier testleri test/scene-image.test.js ve
+// test/video-provider-capabilities.test.js'te (owns). Burada yalnız yeni
+// tier değerlerinin tools/list'te göründüğü ve callTool'un discovery-gating'i
+// gerçekten uyguladığı doğrulanır.
+test("tools/list: generate_scene_image provider enum'ı economy/balanced/quality tier'larının tümünü (nano-banana-pro, openai-high dahil) içerir", async () => {
+  const response = await handleMessage({ id: 1, method: "tools/list" });
+  const tool = response.result.tools.find((t) => t.name === "generate_scene_image");
+  assert.ok(tool, "generate_scene_image tools/list içinde bulunamadı");
+  assert.deepEqual(tool.inputSchema.properties.provider.enum, ["gemini", "nano-banana-2", "nano-banana-pro", "openai", "openai-low", "openai-high", "composite"]);
+});
+
+test("generate_scene_image: provider='nano-banana-pro' gerçek discovery'de bulunamazsa SESSİZCE nano-banana-2'ye düşmez, isError:true ile açık bir hata döner", async () => {
+  process.env.AIRTABLE_TOKEN = "test-token";
+  const originalFetch = global.fetch;
+  let generateContentCalled = false;
+  global.fetch = async (url) => {
+    const href = String(url);
+    if (href.includes("api.airtable.com")) return { ok: true, json: async () => ({ records: [{ id: "recTEST123", fields: { "Başlık": "Buzsu Ultramag", "Görsel URL": "https://example.com/photo.png" } }] }) };
+    if (href.includes("example.com")) return { ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer };
+    if (href.includes("generativelanguage.googleapis.com/v1beta/models") && !href.includes("generateContent")) {
+      // discovery gerçekten çalışıyor ama Nano Banana Pro listede YOK.
+      return { ok: true, json: async () => ({ models: [{ name: "models/gemini-3.1-flash-image" }] }) };
+    }
+    if (href.includes("generateContent")) { generateContentCalled = true; throw new Error("çağrılmamalıydı"); }
+    throw new Error("beklenmeyen fetch: " + href);
+  };
+  try {
+    const response = await handleMessage({ id: 1, method: "tools/call", params: { name: "generate_scene_image", arguments: { productId: "recTEST123", sceneDescription: "mutfak", provider: "nano-banana-pro" } } });
+    assert.equal(response.result.isError, true);
+    assert.match(response.result.content[0].text, /Nano Banana Pro/);
+    assert.equal(generateContentCalled, false);
+  } finally {
+    global.fetch = originalFetch;
+    delete process.env.AIRTABLE_TOKEN;
+  }
+});
