@@ -40,10 +40,36 @@
 /* AI REELS V2 — PR-D: mevcut dashboard'dan izole wizard stilleri. */
 #reels-v2-custom-wrap.hidden{display:none}
 .reels-v2-steps{display:grid;grid-template-columns:repeat(7,minmax(92px,1fr));gap:6px;margin:14px 0 18px;overflow-x:auto}.reels-v2-step{background:#eef3f6;color:#61737f;border:1px solid #dce5ea;padding:9px 7px;border-radius:9px;font-size:12px;text-align:center}.reels-v2-step.active{background:#e5f3ff;color:#1267b0;border-color:#77afe0;font-weight:700}.reels-v2-step.complete{background:#eaf8ee;color:#18783a;border-color:#9bd0aa}.reels-v2-step[disabled]{cursor:not-allowed;opacity:.62}.reels-v2-stage{border-top:1px solid #edf0f2;padding-top:14px;margin-top:12px}.reels-v2-context{display:grid;grid-template-columns:minmax(0,1fr) minmax(230px,.65fr);gap:14px;margin-top:12px}.reels-v2-facts{margin:6px 0;padding-left:18px}.reels-v2-images{display:flex;gap:8px;overflow:auto}.reels-v2-images img{width:96px;height:96px;object-fit:contain;border:1px solid #dfe5e9;border-radius:8px;background:#fff}.reels-v2-scenes{display:grid;gap:12px;margin-top:12px}.reels-v2-scene{border:1px solid #dfe5e9;border-radius:12px;padding:14px;background:#fbfcfd}.reels-v2-scene.approved{border-color:#79bd8c;background:#f4fbf6}.reels-v2-scene-head{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:10px}.reels-v2-scene-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.reels-v2-scene-grid .wide{grid-column:1/-1}.reels-v2-constraints{background:#eef3f6;border-radius:8px;padding:9px;margin-top:8px;font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap}.reels-v2-claims{display:grid;gap:6px;margin:10px 0}.reels-v2-claim{padding:8px;border-left:3px solid #287bd7;background:#f3f8fd;font-size:13px}.reels-v2-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.reels-v2-ref-thumbs{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}.reels-v2-ref-thumb{padding:3px;background:#fff;border:2px solid #dfe5e9;border-radius:8px}.reels-v2-ref-thumb img{width:64px;height:64px;object-fit:contain;display:block;background:#fff}.reels-v2-ref-thumb.selected{border-color:#087ea4}@media(max-width:760px){.reels-v2-context,.reels-v2-scene-grid{grid-template-columns:1fr}.reels-v2-step{min-width:105px}}
+/* AI ARAŞTIRMA / AGENT WORKSPACE — TASK-009: TASK-007 (run_agent_orchestration)
+   ve TASK-008 (run_deep_research) çekirdek fonksiyonlarını çağıran authenticated
+   dashboard sekmesi. Kendi bir provider/validation/state-machine mantığı YOKTUR —
+   yalnızca sunum katmanıdır. */
+.ai-ws-section{border-top:1px solid #edf0f2;padding-top:16px;margin-top:14px}.ai-ws-section:first-of-type{border-top:0;padding-top:0;margin-top:0}
+.ai-ws-summary{background:#eef3f6;border:1px solid #dce5ea;border-radius:10px;padding:12px 14px;margin-top:10px;font-size:13px;line-height:1.6}
+.ai-ws-summary strong{color:#0e1a25}
+.ai-ws-finding{border:1px solid #dfe5e9;border-radius:10px;padding:12px;margin-top:10px;background:#fbfcfd}
+.ai-ws-finding h4{margin:0 0 6px;font-size:13px;color:#087ea4}
+.ai-ws-source{padding:8px 10px;border-left:3px solid #287bd7;background:#f3f8fd;font-size:13px;margin-top:6px;word-break:break-word}
+.ai-ws-source .meta{margin-top:2px}
+.ai-ws-uncertainty{padding:8px 10px;border-left:3px solid #c98a15;background:#fdf6ea;font-size:13px;margin-top:6px}
+.ai-ws-conflict{padding:8px 10px;border-left:3px solid #b42318;background:#fdeeec;font-size:13px;margin-top:6px;font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap}
+.ai-ws-badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.ai-ws-badge{background:#eef3f6;color:#4d6270;border-radius:20px;padding:3px 10px;font-size:12px;font-weight:600}
+.ai-ws-state-badge{display:inline-block;border-radius:20px;padding:3px 12px;font-size:12px;font-weight:700}
+.ai-ws-state-completed{background:#eaf8ee;color:#18783a}
+.ai-ws-state-failed{background:#fdeeec;color:#b42318}
+.ai-ws-state-blocked{background:#fdeeec;color:#b42318}
+.ai-ws-state-waiting_for_confirmation{background:#fdf6ea;color:#a5680b}
+.ai-ws-steps{display:grid;gap:8px;margin-top:10px}
+.ai-ws-step{border:1px solid #dfe5e9;border-radius:9px;padding:10px;font-size:13px}
+.ai-ws-step.completed{border-color:#9bd0aa;background:#f4fbf6}
+.ai-ws-step.failed,.ai-ws-step.blocked{border-color:#e3a49c;background:#fdf4f2}
+.ai-ws-step.pending{opacity:.65}
+@media(max-width:760px){.ai-ws-badges{flex-direction:column;align-items:flex-start}}
   </style>
 </head>
 <body>
-  <aside class="brand-rail" aria-label="Ana menü"><h2>Buzsu</h2><p>Sosyal Otomasyon</p><nav><button type="button" data-tab="overview">Genel Bakış</button><button type="button" data-tab="queue">İçerik Kuyruğu</button><button type="button" data-tab="composer" class="active">İçerik Üret (AI)</button><button type="button" data-tab="seo">SEO İçerik (AI)</button><button type="button" data-tab="reels">Reels / Video</button><button type="button" data-tab="analytics">Analitik</button><button type="button" data-tab="meta-ads">Meta Reklamlar</button><button type="button" data-tab="platform">Platform Bağlantıları</button><button type="button" data-tab="admin">Kullanıcılar</button><button type="button" data-tab="settings">Ayarlar</button></nav></aside>
+  <aside class="brand-rail" aria-label="Ana menü"><h2>Buzsu</h2><p>Sosyal Otomasyon</p><nav><button type="button" data-tab="overview">Genel Bakış</button><button type="button" data-tab="queue">İçerik Kuyruğu</button><button type="button" data-tab="composer" class="active">İçerik Üret (AI)</button><button type="button" data-tab="seo">SEO İçerik (AI)</button><button type="button" data-tab="reels">Reels / Video</button><button type="button" data-tab="ai-workspace">AI Araştırma / Agent</button><button type="button" data-tab="analytics">Analitik</button><button type="button" data-tab="meta-ads">Meta Reklamlar</button><button type="button" data-tab="platform">Platform Bağlantıları</button><button type="button" data-tab="admin">Kullanıcılar</button><button type="button" data-tab="settings">Ayarlar</button></nav></aside>
   <header><div><h1>İçerik Üret (AI)</h1><span id="session-label" class="meta">Oturum açılmadı</span></div><input id="overview-search" class="dashboard-search" type="search" placeholder="İçerik, ürün veya kayıt ara..." aria-label="İçerik ara"><div class="header-actions"><button type="button" id="new-content">+ Yeni içerik</button></div></header>
   <section id="auth" class="panel">
     <h2>Panel girişi</h2>
@@ -267,6 +293,43 @@
       <p id="compose-video-message" class="hint"></p>
       <div id="compose-video-result" class="hidden" style="margin-top:8px"></div>
     </details>
+    <section class="panel tab-panel tab-hidden" data-tab="ai-workspace">
+      <h2>AI Araştırma / Agent Workspace</h2>
+      <p class="hint">TASK-007'nin kontrollü agent orkestratörünü ve TASK-008'in salt-okunur derin araştırma katmanını kullanır. Burada yayınlama, taslak/durum güncelleme, silme veya otomatik pilot işlemi YOKTUR ve çalıştırılamaz. Ücretli her adım KENDİ açık onayınızı gerektirir — hiçbir işlem sizin adınıza otomatik onaylanmaz; aşağıdaki "Çalıştır" butonlarının ilk tıklaması asla ücretli bir çağrı başlatmaz, önce bir onay özeti gösterir.</p>
+
+      <div class="ai-ws-section">
+        <h3>Derin Araştırma</h3>
+        <p class="hint">Modlar: SEO fırsatları, Rakip analizi, Haftalık içerik fırsatları (bkz. src/deep-research/, TASK-008). GERÇEK PARA HARCAR.</p>
+        <div class="auth-grid">
+          <select id="ai-ws-mode"><option value="seo">SEO fırsatları</option><option value="competitor">Rakip analizi</option><option value="weekly_content_opportunities">Haftalık içerik fırsatları</option></select>
+          <select id="ai-ws-provider"><option value="auto">Sağlayıcı: Otomatik</option><option value="google">Google</option><option value="openai">OpenAI</option></select>
+        </div>
+        <label class="field-label" style="margin-top:8px">Hedef / araştırılacak soru (SEO ve Rakip modunda zorunlu, Haftalık modda isteğe bağlı)<textarea id="ai-ws-objective" placeholder="Örn: kireç önleyici anahtar kelimeleri ve içerik boşlukları" style="width:100%;min-height:70px"></textarea></label>
+        <div class="auth-grid" style="margin-top:8px">
+          <input id="ai-ws-competitors" placeholder="Rakip marka/ürün adları, virgülle ayrılmış (en fazla 5)">
+          <input id="ai-ws-urls" placeholder="İlgili URL'ler, virgülle ayrılmış (en fazla 5)">
+        </div>
+        <div class="auth-grid" style="margin-top:8px">
+          <input id="ai-ws-product-search" type="search" placeholder="Ürün ara (isteğe bağlı bağlam)...">
+          <select id="ai-ws-product-select"><option value="">Ürün bağlamı yok</option></select>
+        </div>
+        <label class="field-label" style="margin-top:8px">Ürün bilgisi arama sorusu (isteğe bağlı — ürün seçiliyse EK ücretli bir File Search çağrısı tetikler)<input id="ai-ws-product-knowledge-query" placeholder="Örn: kurulum talimatı nedir"></label>
+        <div id="ai-ws-research-summary" class="ai-ws-summary hidden"></div>
+        <div class="actions" style="margin-top:10px"><button id="ai-ws-research-run" type="button">Araştırmayı çalıştır</button></div>
+        <p id="ai-ws-research-message" class="hint"></p>
+        <div id="ai-ws-research-result" class="hidden" style="margin-top:10px"></div>
+      </div>
+
+      <div class="ai-ws-section">
+        <h3>Gelişmiş Agent</h3>
+        <p class="hint">TASK-007'nin sabit, salt-okunur/onaylı capability listesini kullanır: list_products, get_buzsu_product_context, research_web, transcribe_media, generate_scene_image, validate_product_visual, generate_image_from_video, search_product_knowledge. Başka hiçbir capability (yayınlama/taslak/silme/otomatik pilot dahil) çalıştırılamaz — bilinmeyen bir isim adımı çalıştırmadan planın tamamını reddeder. Her adımın confirmed:true'sunu JSON içinde AÇIKÇA belirtmelisiniz; aksi halde o adımda güvenle durur, hiçbir API çağrısı yapılmaz.</p>
+        <label class="field-label">Adımlar (JSON dizisi)<textarea id="ai-ws-agent-steps" style="width:100%;min-height:140px;font:12px/1.5 ui-monospace,Menlo,monospace" placeholder='[{"stepId":"s1","capability":"research_web","args":{"query":"...","confirmed":true}}]'></textarea></label>
+        <div id="ai-ws-agent-summary" class="ai-ws-summary hidden"></div>
+        <div class="actions" style="margin-top:10px"><button id="ai-ws-agent-run" type="button">Agent'ı çalıştır</button></div>
+        <p id="ai-ws-agent-message" class="hint"></p>
+        <div id="ai-ws-agent-result" class="hidden" style="margin-top:10px"></div>
+      </div>
+    </section>
     <div class="tab-panel tab-hidden" data-tab="queue">
     <div class="toolbar"><button id="load">Kuyruğu getir</button><button id="logout" class="secondary">Çıkış yap</button><select id="filter" class="queue-filter"><option value="drafts">Taslaklar</option><option value="Kontrol Edilecek">Kontrol Edilecek</option><option value="scheduled" selected>Yayın saati bekleyenler</option><option value="active">Aktif kuyruk</option><option value="Durduruldu">Durdurulanlar</option><option value="Hata">Hata</option><option value="Paylaşıldı">Arşiv</option><option value="cop-kutusu">Çöp Kutusu</option><option value="all">Tümü</option></select><button id="delete-selected" class="danger hidden">Seçilenleri sil</button><button id="restore-selected" class="secondary hidden">Seçilenleri geri al</button><span id="message" class="meta"></span></div>
     <div class="view-switch" role="tablist" aria-label="Kuyruk görünümü"><button type="button" class="active" data-view="list">☰ Liste</button><button type="button" data-view="kanban">▤ Kanban</button><button type="button" data-view="grid">▦ Instagram Izgara</button><button type="button" data-view="calendar">📅 Takvim</button></div>
@@ -431,9 +494,106 @@
       selectEl.innerHTML=productOptionsHtml(products,search);
       if([...selectEl.options].some(o=>o.value===previous))selectEl.value=previous;
     }
-    async function loadProducts(){const res=await api('/api/content');const data=await res.json();if(!res.ok)throw new Error(data.error||'Ürünler okunamadı');products=sortProductsImageFirst(data.products);renderProductSelect(document.querySelector('#product-select'),document.querySelector('#product-search').value);renderProductSelect(document.querySelector('#seo-product-select'),document.querySelector('#seo-product-search').value);updateProductImageField();renderComposeVideoProducts();}
+    async function loadProducts(){const res=await api('/api/content');const data=await res.json();if(!res.ok)throw new Error(data.error||'Ürünler okunamadı');products=sortProductsImageFirst(data.products);renderProductSelect(document.querySelector('#product-select'),document.querySelector('#product-search').value);renderProductSelect(document.querySelector('#seo-product-select'),document.querySelector('#seo-product-search').value);renderProductSelect(document.querySelector('#ai-ws-product-select'),document.querySelector('#ai-ws-product-search').value);updateProductImageField();renderComposeVideoProducts();}
     document.querySelector('#product-search').addEventListener('input',()=>{renderProductSelect(document.querySelector('#product-select'),document.querySelector('#product-search').value);updateProductImageField();});
     document.querySelector('#seo-product-search').addEventListener('input',()=>renderProductSelect(document.querySelector('#seo-product-select'),document.querySelector('#seo-product-search').value));
+    document.querySelector('#ai-ws-product-search').addEventListener('input',()=>renderProductSelect(document.querySelector('#ai-ws-product-select'),document.querySelector('#ai-ws-product-search').value));
+    // AI ARAŞTIRMA / AGENT WORKSPACE (TASK-009) — bu blok SADECE /api/ai-workspace'e
+    // (kendisi runDeepResearch/runOrchestration'ı OLDUĞU GİBİ çağıran en küçük
+    // adaptör) istek atar; hiçbir provider/validation/state-machine mantığı
+    // burada TEKRARLANMAZ. İlk "Çalıştır" tıklaması ASLA ücretli bir istek
+    // göndermez — önce bir onay özeti gösterir; confirmed:true yalnız İKİNCİ
+    // (açıkça "Onayla ve Çalıştır") tıklamada, ve SADECE server'a, gönderilir.
+    let aiWsResearchConfirming=false, aiWsAgentConfirming=false;
+    function aiWsCsvToList(value){return String(value||'').split(',').map(s=>s.trim()).filter(Boolean);}
+    function aiWsResetResearchConfirm(){aiWsResearchConfirming=false;document.querySelector('#ai-ws-research-summary').classList.add('hidden');document.querySelector('#ai-ws-research-run').textContent='Araştırmayı çalıştır';}
+    ['#ai-ws-mode','#ai-ws-objective','#ai-ws-competitors','#ai-ws-urls','#ai-ws-provider','#ai-ws-product-select','#ai-ws-product-knowledge-query'].forEach(sel=>document.querySelector(sel).addEventListener('input',aiWsResetResearchConfirm));
+    document.querySelector('#ai-ws-product-select').addEventListener('change',aiWsResetResearchConfirm);
+    function renderAiWsResearchResult(result){
+      const wrap=document.querySelector('#ai-ws-research-result');
+      const findingsHtml=(result.findings||[]).map(f=>`<div class="ai-ws-finding"><h4>${esc(f.capability)}${f.provider?' · '+esc(f.provider):''}</h4><div>${esc(f.answer||'')}</div></div>`).join('')||'<p class="hint">Bulgu yok.</p>';
+      const sourcesHtml=(result.sources||[]).map(s=>`<div class="ai-ws-source"><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title||s.url)}</a>${s.snippet?'<div>'+esc(s.snippet)+'</div>':''}<div class="meta">${esc(s.provider||'')}${s.capability?' · '+esc(s.capability):''}</div></div>`).join('')||'<p class="hint">Kaynak yok.</p>';
+      const uncertaintyHtml=(result.uncertainty||[]).map(u=>`<div class="ai-ws-uncertainty">${esc(u)}</div>`).join('')||'<p class="hint">Yapısal bir belirsizlik sinyali bulunamadı (bu "kesin" anlamına gelmez).</p>';
+      const conflictsHtml=(result.conflicts||[]).length?result.conflicts.map(c=>`<div class="ai-ws-conflict">${esc(JSON.stringify(c,null,2))}</div>`).join(''):'<p class="hint">Çelişki tespit edilmedi.</p>';
+      const badgesHtml=(result.providers_or_capabilities_used||[]).map(p=>`<span class="ai-ws-badge">${esc(p)}</span>`).join('')||'<span class="hint">—</span>';
+      wrap.innerHTML=`<h4>Bulgular</h4>${findingsHtml}<h4 style="margin-top:14px">Kaynaklar</h4>${sourcesHtml}<h4 style="margin-top:14px">Belirsizlik</h4>${uncertaintyHtml}<h4 style="margin-top:14px">Çelişkiler</h4>${conflictsHtml}<h4 style="margin-top:14px">Kullanılan sağlayıcı/capability</h4><div class="ai-ws-badges">${badgesHtml}</div>`;
+      wrap.classList.remove('hidden');
+    }
+    document.querySelector('#ai-ws-research-run').addEventListener('click',async()=>{
+      const button=document.querySelector('#ai-ws-research-run');
+      const msg=document.querySelector('#ai-ws-research-message');
+      const mode=document.querySelector('#ai-ws-mode').value;
+      const objective=document.querySelector('#ai-ws-objective').value.trim();
+      const competitors=aiWsCsvToList(document.querySelector('#ai-ws-competitors').value);
+      const urls=aiWsCsvToList(document.querySelector('#ai-ws-urls').value);
+      const provider=document.querySelector('#ai-ws-provider').value;
+      const productId=document.querySelector('#ai-ws-product-select').value;
+      const productKnowledgeQuery=document.querySelector('#ai-ws-product-knowledge-query').value.trim();
+      msg.textContent='';
+      if((mode==='seo'||mode==='competitor')&&!objective){msg.textContent='Bu mod için "Hedef / araştırılacak soru" zorunludur.';return;}
+      if(!aiWsResearchConfirming){
+        const productLabel=productId?(products.find(p=>p.id===productId)?.title||productId):'';
+        document.querySelector('#ai-ws-research-summary').innerHTML=`<strong>Onay gerekiyor</strong> — bu işlem GERÇEK API kredisi harcar (research_web${productKnowledgeQuery&&productId?' + search_product_knowledge':''}).<br>Mod: <strong>${esc(mode)}</strong>${objective?' · Hedef: '+esc(objective):''}${competitors.length?' · Rakipler: '+esc(competitors.join(', ')):''}${urls.length?' · URL sayısı: '+urls.length:''}${productLabel?' · Ürün bağlamı: '+esc(productLabel):''}`;
+        document.querySelector('#ai-ws-research-summary').classList.remove('hidden');
+        aiWsResearchConfirming=true;
+        button.textContent='Onayla ve Çalıştır (ücretli)';
+        return;
+      }
+      button.disabled=true;
+      msg.textContent='Araştırma çalışıyor...';
+      try{
+        const res=await api('/api/ai-workspace?action=deep-research',{method:'POST',body:JSON.stringify({mode,objective,competitors,urls,provider,productId:productId||undefined,productKnowledgeQuery:productKnowledgeQuery||undefined,confirmed:true})});
+        const data=await res.json();
+        if(!res.ok)throw new Error(data.error||'Araştırma başarısız');
+        renderAiWsResearchResult(data.result);
+        msg.textContent='Tamamlandı.';
+      }catch(e){
+        msg.textContent=e.message;
+      }finally{
+        button.disabled=false;
+        aiWsResetResearchConfirm();
+      }
+    });
+    function aiWsResetAgentConfirm(){aiWsAgentConfirming=false;document.querySelector('#ai-ws-agent-summary').classList.add('hidden');document.querySelector('#ai-ws-agent-run').textContent="Agent'ı çalıştır";}
+    document.querySelector('#ai-ws-agent-steps').addEventListener('input',aiWsResetAgentConfirm);
+    function renderAiWsAgentResult(result){
+      const wrap=document.querySelector('#ai-ws-agent-result');
+      const stopped=['failed','blocked','waiting_for_confirmation'].includes(result.status)&&result.currentStep?[{stepId:result.currentStep,capability:result.capabilityOrToolUsed,state:result.status,reason:result.failureReason||result.blockedOrConfirmationReason}]:[];
+      const stepRows=[...(result.completedSteps||[]).map(s=>({stepId:s.stepId,capability:s.capability,state:'completed',output:s.output})),...stopped,...(result.pendingSteps||[]).filter(id=>id!==result.currentStep).map(id=>({stepId:id,state:'pending'}))];
+      const stepsHtml=stepRows.map(s=>`<div class="ai-ws-step ${esc(s.state)}"><strong>${esc(s.stepId)}</strong>${s.capability?' · '+esc(s.capability):''} — <span>${esc(s.state)}</span>${s.output?'<div>'+esc(JSON.stringify(s.output))+'</div>':''}${s.reason?'<div>'+esc(s.reason)+'</div>':''}</div>`).join('')||'<p class="hint">Adım yok.</p>';
+      wrap.innerHTML=`<span class="ai-ws-state-badge ai-ws-state-${esc(result.status)}">${esc(result.status)}</span><div class="ai-ws-steps">${stepsHtml}</div>`;
+      wrap.classList.remove('hidden');
+    }
+    document.querySelector('#ai-ws-agent-run').addEventListener('click',async()=>{
+      const button=document.querySelector('#ai-ws-agent-run');
+      const msg=document.querySelector('#ai-ws-agent-message');
+      msg.textContent='';
+      let steps;
+      try{steps=JSON.parse(document.querySelector('#ai-ws-agent-steps').value||'[]');}catch(e){msg.textContent='Adımlar geçerli bir JSON dizisi olmalı.';return;}
+      if(!Array.isArray(steps)||!steps.length){msg.textContent='En az bir adım gerekli.';return;}
+      if(!aiWsAgentConfirming){
+        const hasConfirmedStep=steps.some(s=>s&&s.args&&s.args.confirmed===true);
+        document.querySelector('#ai-ws-agent-summary').innerHTML=`<strong>Onay gerekiyor</strong> — bu plan ${steps.length} adım içeriyor.${hasConfirmedStep?' En az bir adım confirmed:true içeriyor ve GERÇEK API kredisi harcayabilir.':' Hiçbir adımda confirmed:true yok; ücretli adımlar onay-bekliyor durumunda güvenle duracak.'}`;
+        document.querySelector('#ai-ws-agent-summary').classList.remove('hidden');
+        aiWsAgentConfirming=true;
+        button.textContent='Onayla ve Çalıştır';
+        return;
+      }
+      button.disabled=true;
+      msg.textContent='Agent çalışıyor...';
+      try{
+        const res=await api('/api/ai-workspace?action=agent',{method:'POST',body:JSON.stringify({steps})});
+        const data=await res.json();
+        if(!res.ok)throw new Error(data.error||'Agent çalıştırılamadı');
+        renderAiWsAgentResult(data.result);
+        msg.textContent='Tamamlandı.';
+      }catch(e){
+        msg.textContent=e.message;
+      }finally{
+        button.disabled=false;
+        aiWsResetAgentConfirm();
+      }
+    });
     async function loadAiProviders(){const res=await api('/api/reels');const data=await res.json();if(!res.ok)throw new Error(data.error||'AI sağlayıcıları okunamadı');const select=document.querySelector('#reel-provider');select.innerHTML='<option value="">AI sağlayıcısı seçin</option>'+data.providers.map(p=>`<option value="${p}">${p==='fal'?'fal.ai (görselden video, hızlı/ucuz)':p==='veo'?'Google Veo 3.1 (sinematik video, Google kredisi)':p==='omni'?'Google Gemini Omni 1.1 Flash (sıfırdan video üret, Google kredisi)':p}</option>`).join('');if(!data.providers.length)document.querySelector('#reel-message').textContent='Henüz AI anahtarı eklenmedi. Vercel Production ortamına OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY veya FAL_KEY ekleyin.';await applyVideoProviderCapabilities();}
     // /api/video-provider-capabilities gerçekten erişilebilir Google
     // modellerini raporlar (bkz. src/lib/video-provider-capabilities.js) —
