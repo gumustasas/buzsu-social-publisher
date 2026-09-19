@@ -82,6 +82,100 @@ test("runDeepResearch: malformed girdi (seo modunda objective eksik) hiçbir ağ
   assert.equal(called, false);
 });
 
+// ROOT review (PR #107): FAIL CLOSED — competitors/urls sınırı aşarsa
+// PLANIN TAMAMI (research_web/search_product_knowledge/
+// get_buzsu_product_context dahil HİÇ BİR downstream capability) hiç
+// çağrılmadan reddedilir; sessizce kırpılıp devam EDİLMEZ.
+test("runDeepResearch: competitors 5'ten fazlaysa run_deep_research'ün ucundan-ucuna çağrısı HİÇBİR downstream capability'yi tetiklemeden reddedilir", async () => {
+  let researchCalled = false;
+  let contextCalled = false;
+  await assert.rejects(
+    () => runDeepResearch(
+      { mode: "competitor", objective: "x", competitors: ["A", "B", "C", "D", "E", "F"], productId: "rec1", confirmed: true },
+      {},
+      {
+        researchWebImpl: async () => { researchCalled = true; return {}; },
+        getBuzsuProductContextImpl: async () => { contextCalled = true; return {}; }
+      }
+    ),
+    /"competitors" en fazla 5 öğe içerebilir/
+  );
+  assert.equal(researchCalled, false);
+  assert.equal(contextCalled, false);
+});
+
+test("runDeepResearch: tam olarak 5 competitors ile geçerli bir akış kabul edilir, sorguda hepsi görünür", async () => {
+  let seenQuery;
+  const competitors = ["A", "B", "C", "D", "E"];
+  const result = await runDeepResearch(
+    { mode: "competitor", objective: "x", competitors, confirmed: true },
+    {},
+    { researchWebImpl: async (args) => { seenQuery = args.query; return fakeResearchWeb()(args); } }
+  );
+  for (const name of competitors) assert.match(seenQuery, new RegExp(name));
+  assert.equal(result.findings.length, 1);
+});
+
+test("runDeepResearch: competitors AÇIKÇA verilmiş ama dizi DEĞİLSE hiçbir downstream çağrı yapılmadan reddedilir", async () => {
+  let called = false;
+  await assert.rejects(
+    () => runDeepResearch(
+      { mode: "competitor", objective: "x", competitors: "MarkaX", confirmed: true },
+      {},
+      { researchWebImpl: async () => { called = true; return {}; } }
+    ),
+    /"competitors" bir dizi olmalı/
+  );
+  assert.equal(called, false);
+});
+
+test("runDeepResearch: urls 5'ten fazlaysa research_web'in KENDİ sessiz kırpmasına hiç ULAŞMADAN reddedilir", async () => {
+  let called = false;
+  const urls = Array.from({ length: 6 }, (_, i) => `https://example.com/${i}`);
+  await assert.rejects(
+    () => runDeepResearch(
+      { mode: "seo", objective: "x", urls, confirmed: true },
+      {},
+      { researchWebImpl: async () => { called = true; return {}; } }
+    ),
+    /"urls" en fazla 5 öğe içerebilir/
+  );
+  assert.equal(called, false);
+});
+
+test("runDeepResearch: tam olarak 5 urls ile geçerli bir akış kabul edilir, research_web'e hepsi geçirilir", async () => {
+  let seenUrls;
+  const urls = Array.from({ length: 5 }, (_, i) => `https://example.com/${i}`);
+  await runDeepResearch(
+    { mode: "seo", objective: "x", urls, confirmed: true },
+    {},
+    { researchWebImpl: async (args) => { seenUrls = args.urls; return fakeResearchWeb()(args); } }
+  );
+  assert.deepEqual(seenUrls, urls);
+});
+
+test("runDeepResearch: urls AÇIKÇA verilmiş ama dizi DEĞİLSE hiçbir downstream çağrı yapılmadan reddedilir", async () => {
+  let called = false;
+  await assert.rejects(
+    () => runDeepResearch(
+      { mode: "seo", objective: "x", urls: "https://example.com", confirmed: true },
+      {},
+      { researchWebImpl: async () => { called = true; return {}; } }
+    ),
+    /"urls" bir dizi olmalı/
+  );
+  assert.equal(called, false);
+});
+
+test("runDeepResearch: competitors/urls hiç verilmezse (omitted) sessizce [] olarak normalize edilir, akış normal şekilde tamamlanır", async () => {
+  const result = await runDeepResearch(
+    { mode: "seo", objective: "x", confirmed: true },
+    {},
+    { researchWebImpl: fakeResearchWeb({ sources: [{ url: "https://a.com", title: "A", snippet: "", provider: "google" }, { url: "https://b.com", title: "B", snippet: "", provider: "google" }] }) }
+  );
+  assert.equal(result.findings.length, 1);
+});
+
 test("runDeepResearch: confirmed:true olmadan (ÜCRETSİZ get_buzsu_product_context dahil) HİÇBİR çağrı yapılmaz — onay hiçbir zaman kendiliğinden üretilmez", async () => {
   let researchCalled = false;
   let contextCalled = false;

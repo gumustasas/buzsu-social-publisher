@@ -1332,6 +1332,22 @@ GEÇMEZ, hatayı olduğu gibi (secret redaksiyonu dışında) yükseltir.
 `search_product_knowledge` (ücretli, AYNI `confirmed:true` altında)
 DA çağrılır — otomatik/örtük DEĞİLDİR.
 
+**`competitors`/`urls` girdi sınırı — FAIL CLOSED (ROOT review, PR #107):**
+her ikisi de en fazla 5 öğe kabul eder (`MAX_COMPETITORS`/`MAX_URLS`,
+`src/deep-research/validate.js`). Sınırı aşan bir dizi SESSİZCE KIRPILMAZ —
+hiçbir downstream capability/ağ çağrısı yapılmadan açıkça reddedilir.
+AÇIKÇA verilmiş ama dizi olmayan bir değer de aynı şekilde reddedilir
+(sessizce `[]`'e çevrilmez); alan hiç verilmemişse (omitted) normal şekilde
+`[]`'e normalize edilir. Dizideki her öğe boş olmayan bir string olmalıdır
+— malformed bir öğe (obje, sayı, boş string) sessizce geçerli bir isim/URL
+gibi yeniden yorumlanmaz, PLANIN TAMAMI reddedilir. `MAX_URLS` bilerek
+`research_web`'in (TASK-001, `src/research/index.js`) KENDİ `MAX_URLS`
+sabitiyle (5) AYNI değere sahip, TASK-008'e özgü bir sabittir — TASK-001'in
+dosyasına dokunulmadan/export eklenmeden aynı üst sınır TASK-008'in kendi
+sınırında da uygulanır; böylece `run_deep_research`, `research_web`'in
+kendi (dokümante edilmiş, değiştirilmemiş) sessiz kırpmasına HİÇ
+ulaşmadan reddeder.
+
 **Bilinen sınırlamalar:** `conflicts`/kaynak-çakışması tespiti YALNIZ
 `search_product_knowledge` çağrıldığında mevcuttur (yani bir ürün bağlamı
 + `productKnowledgeQuery` verildiğinde) — `research_web`'in birden çok
