@@ -1,0 +1,27 @@
+task_id: TASK-005
+title: Video to Image Creative
+status: READY
+type: code
+assigned_to: claude-code
+review_by:
+  - gemini
+  - chatgpt-root
+depends_on: []
+branch: agent/task-005-video-to-image
+repo: https://github.com/gumustasas/buzsu-social-publisher
+goal: >
+  Add a separate video-to-image creative flow for thumbnail/poster/carousel/story use,
+  initially using officially supported Google Gemini image video input paths.
+owns:
+  - src/video-to-image/**
+  - test/video-to-image*
+acceptance:
+  - generate_image_from_video MCP tool exists
+  - supported input methods are verified against official API behavior
+  - confirmed:true is required for paid image generation
+  - current scene-image flow is not overloaded or broken
+  - npm run check passes
+deliverables:
+  - pull_request
+  - tests
+  - supported-input notes
