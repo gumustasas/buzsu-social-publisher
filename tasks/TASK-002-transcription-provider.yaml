@@ -2,7 +2,7 @@ task_id: TASK-002
 title: Shared Google/OpenAI Transcription Provider
 status: READY
 type: code
-assigned_to: codex
+assigned_to: claude-code
 review_by:
   - perplexity
   - chatgpt-root
@@ -18,6 +18,15 @@ owns:
   - test/transcription*
 do_not_touch:
   - src/research/**
+# shared_touch: minimum-integration files this task may edit but does not own.
+# No broad refactors here — see docs/multi-agent-orchestration.md "Shared File
+# Conflict Protocol". Merge order across tasks touching these is set by
+# chatgpt-root.
+shared_touch:
+  - api/mcp.js
+  - test/mcp.test.js
+  - README.md
+  - .env.example
 acceptance:
   - transcribe_media MCP tool exists
   - provider supports auto/google/openai

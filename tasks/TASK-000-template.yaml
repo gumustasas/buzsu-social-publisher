@@ -12,6 +12,11 @@ goal: >
   Describe the exact outcome.
 owns: []
 do_not_touch: []
+# shared_touch: files this task may edit for minimum integration only (e.g.
+# registering a new MCP tool), but does not own. No broad refactors here.
+# See docs/multi-agent-orchestration.md "Shared File Conflict Protocol".
+# Leave as [] if this task needs no shared-file integration.
+shared_touch: []
 acceptance:
   - npm run check passes
   - no paid API calls in tests
