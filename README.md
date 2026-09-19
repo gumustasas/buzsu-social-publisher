@@ -1088,6 +1088,43 @@ Bu repo iki yolu şöyle uygular:
 MCP:
 `generate_image_from_video({videoUrl,prompt,aspectRatio?,model?,confirmed:true})`.
 
+## search_product_knowledge (TASK-006: Product Knowledge / File Search)
+
+`src/knowledge/` Google Gemini File Search ve OpenAI File Search/Vector
+Store altyapısını aynı MCP sözleşmesinin arkasında birleştirir. Bu katman,
+Airtable ve resmi Buzsu kaynaklarının yerine geçmez.
+
+**Kaynak önceliği:**
+1. `airtable` — mevcutsa ürün kimliği/operasyonel kayıt.
+2. `buzsu_official` — exact XML feed + canonical Buzsu ürün sayfasından
+   `getBuzsuProductContext` ile çıkarılan doğrulanmış gerçekler.
+3. `file_search` — Google/OpenAI deposundaki ek dokümanlar.
+
+File Search belgesi daha yüksek öncelikli kaynakla çelişirse sistem düşük
+öncelikli bilgiyi sessizce gerçek kabul etmez. Sonuçta `conflicts` ve
+`hasConflicts` alanları döner; hangi resmi gerçekle hangi doküman bilgisinin
+çeliştiği açıkça gösterilir.
+
+**Provider davranışı**
+- `provider:"auto"`: key + store birlikte yapılandırılmışsa önce Google,
+  sonra OpenAI seçilir. Seçilen provider çağrı sırasında başarısız olursa
+  diğer ücretli providera **sessiz fallback yapılmaz**.
+- Google: `GOOGLE_PRODUCT_KNOWLEDGE_STORE=fileSearchStores/...`,
+  `GEMINI_API_KEY`; Gemini Interactions API `file_search` tool'u kullanılır.
+- OpenAI: `OPENAI_PRODUCT_KNOWLEDGE_VECTOR_STORE_ID=vs_...`,
+  `OPENAI_API_KEY`/mevcut text key; Responses API `file_search` tool'u
+  `vector_store_ids` ile kullanılır.
+- Her iki provider'da model çıktısı yapılandırılmış JSON olarak istenir.
+- `confirmed:true` olmadan provider/model çağrısı başlamaz.
+
+Google'ın File Search API'si dosyaları store'a import edip semantik olarak
+arar; Interactions API'de `tools:[{type:"file_search",
+file_search_store_names:[...]}]` kullanılır. OpenAI tarafında vector store,
+Responses `file_search` aracına `vector_store_ids` ile verilir.
+
+MCP örneği:
+`search_product_knowledge({productId,query,provider:"auto",confirmed:true})`
+
 ## AI Reels V2 — dashboard sihirbazı (PR-D: Ürün→Senaryo→Sahne Onayı, PR-E: Sahne Videosu, PR-F/G: Ses & Müzik + Final Reel)
 
 Dashboard'da (`dashboard-reels-v2.js` + `dashboard.html`, `data-tab="reels"`

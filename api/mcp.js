@@ -31,6 +31,7 @@ import { transcribeMedia, TRANSCRIPTION_PROVIDERS } from "../src/transcription/i
 import { validateProductVisual, VISUAL_VALIDATION_CHECKS } from "../src/visual-validation/index.js";
 import { generateImageFromVideo, VIDEO_TO_IMAGE_MODELS, VIDEO_TO_IMAGE_ASPECT_RATIOS } from "../src/video-to-image/index.js";
 import { CREATIVE_TIERS } from "../src/creative-providers/model-registry.js";
+import { searchProductKnowledge, KNOWLEDGE_PROVIDERS, SOURCE_PRIORITY } from "../src/knowledge/index.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
 const SERVER_INFO = { name: "buzsu-social-publisher", version: "1.0.0" };
@@ -519,6 +520,21 @@ const TOOLS = [
         confirmed: { type: "boolean", description: "true olmadan discovery/generation/video upload çağrısı yapılmaz." }
       },
       required: ["videoUrl", "prompt", "confirmed"]
+    }
+  },
+  {
+    name: "search_product_knowledge",
+    description: `Buzsu ürün bilgisini yüksek-otoriteli kaynaklarla File Search depolarını birlikte kullanarak araştırır. Kaynak önceliği sabittir: ${SOURCE_PRIORITY.join(" > ")}. Airtable ürün kimliği ve Buzsu resmi feed/canonical ürün sayfası, Google/OpenAI File Search belgelerinden daha yüksek otoritedir. Düşük öncelikli belge resmi kaynakla çelişirse bilgi sessizce ezilmez; conflicts + hasConflicts alanlarında açıkça raporlanır. provider auto/google/openai destekler; auto yalnız yapılandırılmış ilk provider'ı seçer ve çalışma zamanı hatasında diğer ücretli providera sessiz fallback yapmaz. Google Gemini File Search store veya OpenAI vector store önceden yapılandırılmış olmalıdır. confirmed:true zorunludur.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        productId: { type: "string", description: "İsteğe bağlı ürün ID'si; productUrl ile birlikte verilmezse ürün çözümlemede kullanılır." },
+        productUrl: { type: "string", description: "İsteğe bağlı resmi buzsu.com.tr ürün URL'i. productId veya productUrl'den en az biri zorunludur." },
+        query: { type: "string", description: "Ürün hakkında aranacak soru/konu." },
+        provider: { type: "string", enum: ["auto", ...KNOWLEDGE_PROVIDERS], description: "Varsayılan auto. Yapılandırılmış provider seçilir; başarısızlıkta sessizce diğer providera geçilmez." },
+        confirmed: { type: "boolean", description: "true olmadan ücretli File Search/model çağrısı yapılmaz." }
+      },
+      required: ["query", "confirmed"]
     }
   },
   {
@@ -1047,6 +1063,19 @@ export async function callTool(name, args) {
         process.env
       );
       return JSON.stringify(result, null, 2);
+    }
+    case "search_product_knowledge": {
+      const result = await searchProductKnowledge(
+        {
+          productId: args.productId,
+          productUrl: args.productUrl,
+          query: args.query,
+          provider: args.provider,
+          confirmed: args.confirmed === true
+        },
+        process.env
+      );
+      return JSON.stringify({ ok: true, ...result }, null, 2);
     }
     case "generate_video_narration": {
       const narration = await generateVideoNarration(

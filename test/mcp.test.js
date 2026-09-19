@@ -1071,3 +1071,33 @@ test("generate_image_from_video: confirmed:true olmadan ücretli çağrı başla
     global.fetch = originalFetch;
   }
 });
+
+
+// TASK-006: Product Knowledge MCP sözleşmesi.
+test("tools/list: search_product_knowledge exposes provider choices and confirmed gate", async () => {
+  const response = await handleMessage({ id: 1, method: "tools/list" });
+  const tool = response.result.tools.find((t) => t.name === "search_product_knowledge");
+  assert.ok(tool);
+  assert.deepEqual(tool.inputSchema.required, ["query", "confirmed"]);
+  assert.deepEqual(tool.inputSchema.properties.provider.enum, ["auto", "google", "openai"]);
+  assert.match(tool.description, /airtable > buzsu_official > file_search/);
+  assert.match(tool.description, /conflicts/);
+});
+
+test("search_product_knowledge: confirmed:true olmadan hiçbir provider çağrısı başlamaz", async () => {
+  const originalFetch = global.fetch;
+  let called = false;
+  global.fetch = async () => { called = true; throw new Error("çağrılmamalıydı"); };
+  try {
+    const response = await handleMessage({
+      id: 1,
+      method: "tools/call",
+      params: { name: "search_product_knowledge", arguments: { productId: "recTEST", query: "özellikler" } }
+    });
+    assert.equal(response.result.isError, true);
+    assert.match(response.result.content[0].text, /confirmed:true/);
+    assert.equal(called, false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
