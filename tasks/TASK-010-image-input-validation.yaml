@@ -1,0 +1,172 @@
+task_id: TASK-010
+title: Harden image input validation for FFmpeg video render
+status: READY
+type: code
+assigned_to: claude-code
+review_by:
+  - chatgpt-root
+depends_on:
+  - TASK-009
+branch: agent/task-010-image-input-validation
+repo: https://github.com/gumustasas/buzsu-social-publisher
+
+goal: >
+  Fail early and clearly when compose_product_video downloads a corrupt,
+  truncated, mislabeled, or non-image body. Harden the existing
+  fetchPublicImage boundary so only valid JPEG/PNG/WebP image bytes reach
+  Sharp/libvips and the product-video frame pipeline, while preserving the
+  existing SSRF, redirect, size-limit and paid-upscale behavior.
+
+owns:
+  - src/lib/upload-media.js
+  - test/upload-media.test.js
+  - test/video-render*
+  - tasks/TASK-010-image-input-validation.yaml
+
+shared_touch:
+  - scripts/render-product-video.mjs
+
+do_not_touch:
+  - src/lib/ffmpeg-command.js
+  - src/video-compose.js except a minimal demonstrated compatibility fix
+  - src/post-branding.js except a minimal demonstrated compatibility fix
+  - dashboard.html
+  - api/compose-video.js
+  - publishing/autopilot implementation
+  - deployment configuration
+  - production environment variables
+
+dependency_gate:
+  - verify TASK-009 status is DONE on current main
+  - inspect the current fetchPublicImage and render-product-video call path before implementation
+  - if the dependency is missing or not DONE, stop and report BLOCKED
+
+execution_rules:
+  - start from current main
+  - create or use branch agent/task-010-image-input-validation only after dependency verification
+  - keep the fix at the existing fetchPublicImage/download-validation boundary
+  - preserve existing HTTPS, DNS/private-IP SSRF, redirect and streaming byte-limit protections
+  - do not trust URL extension or HTTP Content-Type as proof of image format
+  - detect actual JPEG, PNG or WebP format from downloaded bytes using a deterministic local mechanism
+  - require the detected format to agree with the declared supported image Content-Type
+  - validate that the downloaded image can actually be decoded before it is accepted
+  - corrupt/truncated/undecodable input must fail before FFmpeg execution
+  - if normalization is introduced, only normalize after successful decode and produce a deterministic safe image buffer for downstream use
+  - do not silently repair an input that cannot be decoded
+  - do not silently reinterpret a mismatched Content-Type as another image type
+  - do not add network/provider fallback
+  - do not weaken existing image size limits
+  - do not make paid API calls in tests
+  - do not deploy or merge
+
+error_contract:
+  - use a stable INVALID_IMAGE_INPUT error code/prefix for invalid downloaded image data
+  - render worker errors must identify the failing mediaItems index
+  - include only a safe URL representation such as origin plus pathname; never expose query strings, fragments, signed tokens or credentials
+  - distinguish at least unsupported/non-image bytes, MIME/actual-format mismatch, and corrupt/undecodable image where practical
+  - do not expose raw libvips decoder errors as the primary user-facing diagnosis
+
+validation_behavior:
+  - valid JPEG declared image/jpeg is accepted
+  - valid PNG declared image/png is accepted
+  - valid WebP declared image/webp is accepted
+  - HTML or JSON bytes declared image/jpeg are rejected
+  - PNG bytes declared image/jpeg are rejected
+  - JPEG bytes declared image/png are rejected
+  - truncated/corrupt JPEG is rejected before downstream frame composition
+  - malformed PNG/WebP is rejected before downstream frame composition
+  - query/hash components of source URLs are absent from surfaced errors
+  - existing max-byte and SSRF protections remain effective
+
+acceptance:
+  - fetchPublicImage no longer accepts a body solely because its HTTP Content-Type is an allowed image MIME
+  - actual image format is determined from bytes and checked against Content-Type
+  - accepted image data is demonstrably decodable
+  - invalid image data fails with the stable INVALID_IMAGE_INPUT contract
+  - product-video worker adds mediaItems[index] context without leaking signed URL query/hash data
+  - invalid input cannot reach the FFmpeg execution step
+  - valid existing JPEG/PNG/WebP video inputs continue to work
+  - no FFmpeg argument/composition/UI redesign is introduced
+  - repository-standard full test suite passes
+  - npm run check passes
+  - tests make no real paid generation/inference calls
+
+required_tests:
+  - valid JPEG acceptance
+  - valid PNG acceptance
+  - valid WebP acceptance
+  - fake image/jpeg containing HTML or JSON rejection
+  - MIME/actual-format mismatch rejection
+  - truncated JPEG rejection
+  - corrupt PNG or WebP rejection
+  - INVALID_IMAGE_INPUT error contract
+  - mediaItems index appears in render-worker failure context
+  - signed URL query/hash is not leaked in render-worker failure context
+  - invalid image failure occurs before FFmpeg execution
+  - existing fetchPublicImage SSRF/redirect/size-limit regressions remain green
+  - existing product-video regressions remain green
+
+implementation_notes:
+  - prefer a small local signature detector for JPEG/PNG/WebP unless an already-installed dependency provides the needed deterministic detection
+  - JPEG signature alone is not sufficient for decode validity; decoder validation is still required
+  - use Sharp/libvips as decode validation only after byte-format and MIME agreement checks
+  - avoid double decoding where a small refactor can safely reuse validated metadata/buffer without broadening scope
+  - preserve the current fetchPublicImage return contract where practical; if it must change, demonstrate why and update only direct callers/tests
+  - any normalization must preserve current downstream expectations and must not invoke AI upscaling
+
+documentation:
+  - document the new image-validation/error behavior in code comments or existing relevant documentation only if needed
+  - mark this manifest DONE only after ROOT merge, not inside the worker PR
+
+validation:
+  - inspect package scripts before running commands
+  - run focused upload-media/TASK-010 tests
+  - run relevant product-video/render regression tests
+  - run the repository-standard full test suite
+  - run npm run check
+  - do not weaken, skip or delete tests
+  - no real paid generation/inference calls
+
+delivery:
+  branch: agent/task-010-image-input-validation
+  pull_request:
+    base: main
+    draft: true
+    preferred_title: "fix: validate image bytes before video render (TASK-010)"
+    merge: false
+  pr_body_must_include:
+    - root cause
+    - changed files
+    - validation and normalization design
+    - INVALID_IMAGE_INPUT error contract
+    - media item and URL redaction behavior
+    - preserved SSRF/redirect/size protections
+    - tests and validation results
+    - known limitations
+    - statement that no real paid generation/inference call was made
+    - statement that no production deployment was performed
+
+stop_condition: >
+  After committing the implementation and opening the Draft PR, stop. Do not
+  merge, deploy or expand scope. Wait for ChatGPT ROOT review.
+
+final_report:
+  - dependency check result
+  - branch
+  - commit SHA
+  - PR number
+  - changed files
+  - root cause confirmed
+  - image validation/normalization behavior
+  - error contract and URL redaction behavior
+  - focused and full test results
+  - npm run check result
+  - open issues, if any
+  - READY FOR ROOT REVIEW or precise blocker
+
+deliverables:
+  - draft_pull_request
+  - hardened_image_validation
+  - render_worker_error_context
+  - regression_tests
+  - final implementation report
