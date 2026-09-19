@@ -1,6 +1,6 @@
 task_id: TASK-007
 title: Controlled Agent Orchestrator
-status: BLOCKED
+status: READY
 type: code
 assigned_to: claude-code
 review_by:
@@ -14,19 +14,184 @@ depends_on:
   - TASK-006
 branch: agent/task-007-orchestrator
 repo: https://github.com/gumustasas/buzsu-social-publisher
+
 goal: >
-  Build a provider-independent, deterministic state-machine orchestrator for READ+GENERATE
-  workflow steps only. No autonomous publish/delete/update actions.
+  Build a provider-independent, deterministic, bounded state-machine orchestrator
+  that composes the existing TASK-001..006 READ+GENERATE capabilities without
+  duplicating their provider logic. The orchestrator must be fail-closed and must
+  never autonomously publish, delete, update external state, bypass confirmation
+  gates, or silently perform paid fallback.
+
 owns:
   - src/orchestrator/**
   - test/orchestrator*
+
+shared_touch:
+  - api/mcp.js
+  - test/mcp.test.js
+  - README.md
+  - tasks/TASK-007-agent-orchestrator.yaml
+
+do_not_touch:
+  - provider implementations owned by TASK-001..006 except when a minimal,
+    demonstrated compatibility fix is strictly required
+  - deployment configuration
+  - production environment variables
+
+dependency_gate:
+  - verify TASK-001 status is DONE on current main
+  - verify TASK-002 status is DONE on current main
+  - verify TASK-003 status is DONE on current main
+  - verify TASK-004 status is DONE on current main
+  - verify TASK-005 status is DONE on current main
+  - verify TASK-006 status is DONE on current main
+  - if any dependency is missing or not DONE, stop and report BLOCKED before implementation
+
+execution_rules:
+  - start from current main
+  - create or use branch agent/task-007-orchestrator only after dependency verification
+  - reuse existing MCP tools/capabilities; do not create duplicate provider stacks
+  - orchestration execution authority must come from validated schema, state and policy,
+    not unrestricted free-form LLM output
+  - preserve every existing confirmed:true or equivalent user-confirmation gate
+  - never synthesize confirmation on behalf of the user
+  - paid generation/inference must not run without the confirmation required by the underlying tool
+  - no silent provider fallback that changes cost or behavior
+  - failed or blocked steps must not be treated as successful
+  - preserve artifacts from previously completed successful steps when a later step fails
+  - retries, if implemented, must be explicit, bounded and testable
+  - never expose API keys, secrets or credentials in logs, responses or errors
+  - do not change env values
+  - do not deploy to Vercel, Render or production
+  - do not merge the pull request
+
+allowed_capabilities:
+  - existing READ capabilities
+  - existing GENERATE capabilities subject to their original confirmation/cost gates
+  - TASK-001 research provider
+  - TASK-002 transcription provider
+  - TASK-003 image quality/capability layer
+  - TASK-004 visual product validation
+  - TASK-005 video-to-image creative
+  - TASK-006 product knowledge/file search
+
+forbidden_capabilities:
+  - autonomous publish
+  - autonomous social posting
+  - delete operations
+  - destructive mutations
+  - arbitrary external-state updates
+  - permission/authentication changes
+  - environment or deployment mutations
+
+state_model:
+  required_states:
+    - pending
+    - running
+    - waiting_for_confirmation
+    - completed
+    - failed
+    - blocked
+  required_run_metadata:
+    - run_id
+    - status
+    - current_step
+    - completed_steps
+    - pending_steps
+    - blocked_or_confirmation_reason
+    - failure_reason
+    - capability_or_tool_used
+  note: >
+    Equivalent names are acceptable only when they are more consistent with the
+    existing repository architecture and preserve the same explicit semantics.
+
+mcp_integration:
+  - expose the TASK-007 orchestrator through the existing MCP architecture as required by implementation
+  - keep integration in api/mcp.js minimal and consistent with existing tool patterns
+  - input schema must be explicit, validated and bounded
+  - tool description must state confirmation and destructive-action boundaries
+  - do not duplicate TASK-001..006 MCP tools
+
 acceptance:
   - deterministic state machine exists
-  - tool registry reuses existing tools
-  - failed steps preserve prior successful artifacts
-  - write/publish/destructive tools are excluded
+  - tool registry reuses existing TASK-001..006 capabilities
+  - orchestration is bounded and fail-closed
+  - write/publish/delete/destructive tools are excluded
+  - confirmation-required steps enter waiting_for_confirmation rather than bypassing the gate
+  - failed steps stop dependent execution and preserve prior successful artifacts
+  - provider/tool errors are surfaced in normalized failure state
+  - malformed or unknown steps are rejected
+  - retries cannot become unbounded loops
+  - run state exposes auditable step/status metadata
+  - secrets are not leaked through orchestrator output or errors
+  - existing MCP tools/list behavior remains compatible
+  - TASK-001..006 regression tests remain green
+  - tests use mocks/stubs and make no real paid generation/inference calls
+  - repository-standard lint/typecheck/build/test checks pass
   - npm run check passes
+
+required_tests:
+  - valid orchestration flow
+  - unknown or forbidden step rejection
+  - dependency/tool failure
+  - confirmation-required step pauses safely
+  - no paid execution without required confirmation
+  - no continuation after failed dependent step
+  - bounded retry behavior
+  - malformed input rejection
+  - provider/tool error propagation
+  - secret leakage regression
+  - deterministic state transitions
+  - existing MCP tools/list compatibility
+  - regression coverage for existing TASK-001..006 behavior
+
+documentation:
+  - document the state machine and execution boundaries
+  - update README only where necessary for the new orchestrator contract
+  - mark this manifest DONE only after implementation and all required checks actually pass
+
+validation:
+  - inspect package scripts before running commands; do not invent unsupported commands
+  - run the repository-standard full validation suite
+  - run npm run check
+  - do not hide failures by deleting, skipping or weakening existing tests
+  - if an unrelated pre-existing failure blocks validation, report its root cause explicitly
+
+delivery:
+  branch: agent/task-007-orchestrator
+  pull_request:
+    base: main
+    draft: true
+    preferred_title: "feat: add controlled agent orchestrator (TASK-007)"
+    merge: false
+  pr_body_must_include:
+    - architecture summary
+    - changed files
+    - state model
+    - security and execution boundaries
+    - confirmation behavior
+    - tests and validation commands/results
+    - known limitations
+    - statement that no real paid API generation/inference call was made
+    - statement that no production deployment was performed
+
+stop_condition: >
+  After committing the implementation and opening the Draft PR, stop. Do not merge,
+  deploy or expand scope. Wait for ChatGPT ROOT review.
+
+final_report:
+  - dependency check result
+  - branch
+  - commit SHA
+  - PR number and URL
+  - main changed files
+  - test/check results
+  - important security decisions
+  - open issues, if any
+  - READY FOR ROOT REVIEW or the precise reason it is not ready
+
 deliverables:
-  - pull_request
+  - draft_pull_request
   - tests
   - state-machine documentation
+  - final implementation report
