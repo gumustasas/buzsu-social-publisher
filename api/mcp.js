@@ -32,6 +32,8 @@ import { validateProductVisual, VISUAL_VALIDATION_CHECKS } from "../src/visual-v
 import { generateImageFromVideo, VIDEO_TO_IMAGE_MODELS, VIDEO_TO_IMAGE_ASPECT_RATIOS } from "../src/video-to-image/index.js";
 import { CREATIVE_TIERS } from "../src/creative-providers/model-registry.js";
 import { searchProductKnowledge, KNOWLEDGE_PROVIDERS, SOURCE_PRIORITY } from "../src/knowledge/index.js";
+import { runOrchestration, ORCHESTRATOR_CAPABILITIES } from "../src/orchestrator/index.js";
+import { MAX_STEPS as MAX_ORCHESTRATOR_STEPS, MAX_RETRY_ATTEMPTS as MAX_ORCHESTRATOR_RETRY_ATTEMPTS } from "../src/orchestrator/validate.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
 const SERVER_INFO = { name: "buzsu-social-publisher", version: "1.0.0" };
@@ -535,6 +537,32 @@ const TOOLS = [
         confirmed: { type: "boolean", description: "true olmadan ücretli File Search/model çağrısı yapılmaz." }
       },
       required: ["query", "confirmed"]
+    }
+  },
+  {
+    name: "run_agent_orchestration",
+    description: `TASK-001..006'nın MEVCUT READ/GENERATE capability'lerini (research_web, transcribe_media, generate_scene_image, validate_product_visual, generate_image_from_video, search_product_knowledge, list_products, get_buzsu_product_context) sabit, sıralı bir adım listesi (steps) olarak yürüten deterministik bir orkestratör. Yalnız ${ORCHESTRATOR_CAPABILITIES.join(", ")} capability'lerini bilir — publish_now/create_draft/update_draft/update_status/set_autopilot/upload_media veya herhangi bir silme/yayınlama/harici-durum-güncelleme işlemi BU ARAÇTA HİÇ YOKTUR ve hiçbir şekilde çağrılamaz; bilinmeyen/izin verilmeyen bir capability adı PLANIN TAMAMINI (henüz hiçbir adım çalışmadan) reddeder. Her adımın confirmed:true'su KENDİ args'ında AÇIKÇA verilmelidir — bu araç hiçbir adım için confirmed'i kendiliğinden ÜRETMEZ/VARSAYMAZ; ücretli bir capability confirmed:true almadan sırasına geldiğinde run 'waiting_for_confirmation' durumunda GÜVENLE durur, hiçbir API çağrısı yapılmadan. Bir adım başarısız olursa SONRAKİ adımlar ÇALIŞTIRILMAZ (bağımlı yürütme durur) ama ÖNCEKİ başarılı adımların çıktıları yanıtta korunur. maxAttempts (adım başına, isteğe bağlı, varsayılan 1, en fazla 3) ile SINIRLI/açık bir retry uygulanabilir — sonsuz veya örtük bir tekrar YOKTUR. Yanıt run durumunu (pending/running/waiting_for_confirmation/completed/failed/blocked) ve adım bazlı denetim bilgisini (currentStep, completedSteps, pendingSteps, failureReason, blockedOrConfirmationReason) döner; hiçbir hata mesajında ham bir API anahtarı/secret DÖNMEZ (bilinen secret env değerleri [REDACTED] ile değiştirilir). GERÇEK PARA HARCAYABİLİR — yalnızca hangi adımların kendi confirmed:true'su varsa onlar için, ve yalnızca altındaki capability'nin ZATEN uyguladığı aynı ücret/onay kurallarıyla.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        steps: {
+          type: "array",
+          minItems: 1,
+          maxItems: MAX_ORCHESTRATOR_STEPS,
+          description: `Sırayla yürütülecek en fazla ${MAX_ORCHESTRATOR_STEPS} adım. Her adım bir öncekinin BAŞARIYLA tamamlanmasına bağımlıdır — bir adım başarısız/onay-bekliyor olursa sonrakiler hiç çalışmaz.`,
+          items: {
+            type: "object",
+            properties: {
+              stepId: { type: "string", description: "Plan içinde benzersiz, çağıranın seçtiği bir kimlik (örn. 'step1')." },
+              capability: { type: "string", enum: ORCHESTRATOR_CAPABILITIES, description: "Çalıştırılacak capability adı — bu listenin DIŞINDA bir değer PLANIN TAMAMINI reddeder." },
+              args: { type: "object", description: "Capability'nin kendi MCP tool'undaki (örn. research_web) ile AYNI alanları — izin verilmeyen bir alan adı da PLANIN TAMAMINI reddeder. Ücretli bir capability için confirmed:true burada AÇIKÇA verilmelidir." },
+              maxAttempts: { type: "number", description: `İsteğe bağlı, varsayılan 1, en fazla ${MAX_ORCHESTRATOR_RETRY_ATTEMPTS}. Bu adım başarısız olursa AÇIK/SINIRLI sayıda yeniden denenir.` }
+            },
+            required: ["stepId", "capability"]
+          }
+        }
+      },
+      required: ["steps"]
     }
   },
   {
@@ -1076,6 +1104,15 @@ export async function callTool(name, args) {
         process.env
       );
       return JSON.stringify({ ok: true, ...result }, null, 2);
+    }
+    case "run_agent_orchestration": {
+      // Bilinçli olarak burada bir top-level confirmed kontrolü YOKTUR —
+      // bu tool'un kendisi ücretli değildir (sadece koordinasyon yapar);
+      // gerçek ücret/onay kapısı HER adımın KENDİ confirmed:true'sunda
+      // yaşar (bkz. src/orchestrator/capabilities.js requiresConfirmation),
+      // runOrchestration bunu asla kendiliğinden üretmez/atlamaz.
+      const result = await runOrchestration({ steps: args.steps }, process.env);
+      return JSON.stringify(result, null, 2);
     }
     case "generate_video_narration": {
       const narration = await generateVideoNarration(
