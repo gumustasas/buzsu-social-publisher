@@ -71,3 +71,34 @@ jobs:
           path: local-output/smoke-test-reel-audio/
           retention-days: 14
           if-no-files-found: warn
+
+  cinematic-render-smoke-test:
+    runs-on: ubuntu-latest
+    # compose_cinematic_reel'in (src/cinematic/**) kamera/renk/efekt/geçiş
+    # filtre grafiğini ve ffprobe QC kapısını GERÇEK ffmpeg'e karşı doğrular
+    # — Blob'a yükleme veya GitHub API çağrısı YAPMAZ (bkz. scripts/
+    # smoke-test-cinematic-render.mjs). Depoda ZATEN bulunan GERÇEK Code
+    # Advantage ürün görselini (assets/code-product.png) kullanır — bu
+    # runner'ın egress'i geliştirme sandbox'ından FARKLIDIR ve TASK-011
+    # manifest'inin belirttiği tam Vercel Blob smoke-test URL'ine buradan da
+    # erişim GEREKMEZ (script bilinçli olarak yerel bir eşdeğer kullanıyor).
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Render + verify cinematic smoke test
+        run: node scripts/smoke-test-cinematic-render.mjs
+      - name: Upload smoke test output (MP4 + kareler + rapor)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinematic-render-smoke-test-output
+          path: local-output/smoke-test-cinematic/
+          retention-days: 14
+          if-no-files-found: warn

@@ -1,0 +1,50 @@
+name: Render Cinematic Reel
+
+# Yalnızca compose_cinematic_reel MCP aracı (src/cinematic-compose.js)
+# tarafından workflow_dispatch API'si üzerinden tetiklenir — push/PR ile
+# OTOMATİK çalışmaz. bkz. render-product-video.yml (aynı gerekçe: Vercel
+# serverless'ın süre/bellek sınırları FFmpeg için riskli).
+on:
+  workflow_dispatch:
+    inputs:
+      jobId:
+        description: "video-jobs/<jobId>.json içindeki işin ID'si"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: render-cinematic-reel-${{ inputs.jobId }}
+  cancel-in-progress: true
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    # Sahne başına ayrı render + xfade birleştirme + (varsa) ses mix,
+    # compose_product_video'dan daha fazla FFmpeg geçişi içerir.
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Kullanılmayan SDK'ları silerek disk alanı serbest bırak
+        run: |
+          echo "Öncesi:"; df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL 2>/dev/null || true
+          echo "Sonrası:"; df -h /
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Render cinematic reel
+        env:
+          JOB_ID: ${{ inputs.jobId }}
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+        run: node scripts/render-cinematic-reel.mjs
+      - name: Disk durumu (render sonrası)
+        if: always()
+        run: df -hT

@@ -36,6 +36,15 @@ import { runOrchestration, ORCHESTRATOR_CAPABILITIES } from "../src/orchestrator
 import { MAX_STEPS as MAX_ORCHESTRATOR_STEPS, MAX_RETRY_ATTEMPTS as MAX_ORCHESTRATOR_RETRY_ATTEMPTS } from "../src/orchestrator/validate.js";
 import { runDeepResearch, RESEARCH_MODES as DEEP_RESEARCH_MODES } from "../src/deep-research/index.js";
 import { MAX_COMPETITORS as MAX_DEEP_RESEARCH_COMPETITORS } from "../src/deep-research/validate.js";
+import { composeCinematicReel, getCinematicRenderStatus } from "../src/cinematic-compose.js";
+import {
+  MIN_SCENES as CINEMATIC_MIN_SCENES, MAX_SCENES as CINEMATIC_MAX_SCENES,
+  CAMERA_TYPES as CINEMATIC_CAMERA_TYPES, EASING_TYPES as CINEMATIC_EASING_TYPES,
+  TRANSITION_TYPES as CINEMATIC_TRANSITION_TYPES, ASPECT_RATIOS as CINEMATIC_ASPECT_RATIOS,
+  VISUAL_PROFILES as CINEMATIC_VISUAL_PROFILES, VIGNETTE_MODES as CINEMATIC_VIGNETTE_MODES,
+  GRAIN_MODES as CINEMATIC_GRAIN_MODES, OUTPUT_FPS_VALUES as CINEMATIC_OUTPUT_FPS_VALUES,
+  OUTPUT_QUALITIES as CINEMATIC_OUTPUT_QUALITIES
+} from "../src/cinematic/schema.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
 const SERVER_INFO = { name: "buzsu-social-publisher", version: "1.0.0" };
@@ -368,6 +377,102 @@ const TOOLS = [
       type: "object",
       properties: {
         jobId: { type: "string", description: "compose_product_video yanıtındaki jobId." }
+      },
+      required: ["jobId"]
+    }
+  },
+  {
+    name: "compose_cinematic_reel",
+    description: `2-${CINEMATIC_MAX_SCENES} sahneden ÜCRETSİZ (paid API/generative video kullanmadan), FFmpeg ile "sinematik" (Veo/Runway benzeri kamera/derinlik/geçiş hissi veren ama tamamen deterministik) bir Reels/Shorts videosu üretir — compose_product_video'dan TAMAMEN BAĞIMSIZ bir motor (ayrı şema, ayrı render hattı). Her sahnede kamera hareketi (push-in/pull-out/pan/tilt/static-premium, easing eğrileriyle), renk derecelendirme profili, isteğe bağlı ışık geçişi/temas gölgesi/derinlik alanı yaklaşımı/hareket bulanıklığı ve Türkçe karakter destekli kinetik başlık/alt başlık uygulanır; sahneler arası crossfade/motion-blur/light-wipe/whip/match-cut geçişleriyle birleştirilir. Ürün/logo/etiket ASLA yeniden çizilmez/warp edilmez (subjectLock varsayılan true) — motor yalnızca kamera ve post-processing filtreleri uygular. Görseller TASK-010'un sertleştirilmiş doğrulamasından (SSRF/DNS + MIME + magic-byte + decode kontrolü) geçer; geçersiz bir sahne görseli render başlamadan ÖNCE sahne bağlamıyla (scene_index/original_url) reddedilir. Render (birkaç dakika sürebilir) GitHub Actions'ın ücretsiz kuyruğunda arka planda çalışır — bu tool işi başlatıp hemen bir jobId döner, sonucu get_cinematic_render_status ile sorgulayın. Çıktı ffprobe ile QC'den geçirilir; QC başarısız olursa iş 'completed' olarak ASLA raporlanmaz. voiceoverUrl/musicUrl verilirse otomatik ducking (autoDuck) ile mikslenir; sound design (yerel SFX) v1'de kararlı bir yerel kaynak bulunmadığından her zaman uygulanmadan atlanır (render başarısız OLMAZ, fallback olarak raporlanır). Bu araç HİÇBİR paid AI/generative video sağlayıcısını (Veo/Omni/fal.ai/Runway) çağırmaz, confirmed şartı YOKTUR (render tamamen ücretsizdir).`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        scenes: {
+          type: "array",
+          description: `${CINEMATIC_MIN_SCENES}-${CINEMATIC_MAX_SCENES} öğe. Her öğe bir sahneyi tanımlar.`,
+          items: {
+            type: "object",
+            properties: {
+              imageUrl: { type: "string", description: "Herkese açık HTTPS görsel URL'i (PNG/JPEG/WebP)." },
+              durationSeconds: { type: "number", description: "Sahnenin ekranda kalma süresi, saniye (1.0-8.0)." },
+              title: { type: "string", description: "İsteğe bağlı — sahnede gösterilecek başlık (en fazla 80 karakter, Türkçe karakter destekli)." },
+              subtitle: { type: "string", description: "İsteğe bağlı — başlığın altında gösterilecek alt başlık." },
+              camera: {
+                type: "object",
+                description: "İsteğe bağlı — varsayılan { type: 'static-premium', intensity: 0.35, easing: 'ease-in-out' }.",
+                properties: {
+                  type: { type: "string", enum: [...CINEMATIC_CAMERA_TYPES] },
+                  intensity: { type: "number", description: "0-1 aralığında kamera hareketi şiddeti." },
+                  easing: { type: "string", enum: [...CINEMATIC_EASING_TYPES] }
+                }
+              },
+              depthEffect: { type: "boolean", description: "true ise derinlik/parallax denenir; yerel bir sağlayıcı yoksa deterministik tüm-kare harekete düşülür ve render durmaz (varsayılan false)." },
+              subjectLock: { type: "boolean", description: "Varsayılan true — üründe hiçbir yeniden çizim/warp uygulanmaz." },
+              transition: {
+                type: "object",
+                description: "İsteğe bağlı — bu sahneden BİR SONRAKİ sahneye geçerken kullanılır (son sahnede yok sayılır). Varsayılan { type: 'crossfade', durationSeconds: 0.4 }.",
+                properties: {
+                  type: { type: "string", enum: [...CINEMATIC_TRANSITION_TYPES] },
+                  durationSeconds: { type: "number", description: "0.15-1.5 aralığında, sahne süresinden küçük olmalıdır." }
+                }
+              },
+              transitionAnchor: {
+                type: "object",
+                description: "İsteğe bağlı, yalnızca match-cut için (x,y her biri 0-1). Geçersizse/eksikse merkeze düşer.",
+                properties: { x: { type: "number" }, y: { type: "number" } }
+              }
+            },
+            required: ["imageUrl", "durationSeconds"]
+          }
+        },
+        aspectRatio: { type: "string", enum: [...CINEMATIC_ASPECT_RATIOS], description: "Varsayılan '9:16'." },
+        visualProfile: { type: "string", enum: [...CINEMATIC_VISUAL_PROFILES], description: "Renk derecelendirme profili (varsayılan 'clean-tech')." },
+        cinematic: {
+          type: "object",
+          description: "İsteğe bağlı sinematik efektler — hepsi varsayılan kapalı (false/off).",
+          properties: {
+            depthParallax: { type: "boolean" },
+            contactShadow: { type: "boolean" },
+            lightSweep: { type: "boolean" },
+            motionBlur: { type: "boolean" },
+            depthOfField: { type: "boolean" },
+            vignette: { type: "string", enum: [...CINEMATIC_VIGNETTE_MODES] },
+            grain: { type: "string", enum: [...CINEMATIC_GRAIN_MODES] }
+          }
+        },
+        audio: {
+          type: "object",
+          description: "İsteğe bağlı — hiçbiri verilmezse video sessiz çıkar.",
+          properties: {
+            voiceoverUrl: { type: "string", description: "Herkese açık HTTPS seslendirme URL'i (ör. generate_turkish_voiceover çıktısı)." },
+            musicUrl: { type: "string", description: "Herkese açık HTTPS müzik URL'i." },
+            autoDuck: { type: "boolean", description: "true ise (varsayılan false) hem voiceover hem music verildiğinde voice konuşurken müzik otomatik kısılır." },
+            duckDb: { type: "number", description: "Ducking şiddeti, dB (6-10 aralığı, varsayılan 8)." },
+            soundDesign: { type: "boolean", description: "İsteğe bağlı — v1'de kararlı bir yerel SFX kaynağı bulunmadığından her zaman atlanır (render başarısız olmaz)." }
+          }
+        },
+        output: {
+          type: "object",
+          description: "İsteğe bağlı — verilmezse aspectRatio'ya göre varsayılan boyutlar kullanılır (9:16 -> 1080x1920).",
+          properties: {
+            width: { type: "number" },
+            height: { type: "number" },
+            fps: { type: "number", enum: [...CINEMATIC_OUTPUT_FPS_VALUES], description: "Varsayılan 30." },
+            codec: { type: "string", enum: ["h264"], description: "Varsayılan 'h264' (tek desteklenen değer)." },
+            quality: { type: "string", enum: [...CINEMATIC_OUTPUT_QUALITIES], description: "Varsayılan 'high'." }
+          }
+        }
+      },
+      required: ["scenes"]
+    }
+  },
+  {
+    name: "get_cinematic_render_status",
+    description: "compose_cinematic_reel ile başlatılmış bir render işinin durumunu sorgular. status 'queued'/'rendering' ise birkaç dakika sonra tekrar deneyin; 'completed' ise videoUrl, durationSeconds, width, height, fps, fileSizeBytes, sceneCount, appliedEffects, fallbacks, warnings döner; 'failed' ise error alanında sebep bulunur (QC başarısız olduysa 'completed' ASLA dönmez).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        jobId: { type: "string", description: "compose_cinematic_reel yanıtındaki jobId." }
       },
       required: ["jobId"]
     }
@@ -988,6 +1093,15 @@ export async function callTool(name, args) {
     case "get_video_render_status": {
       if (!String(args.jobId || "").trim()) throw new Error("jobId gerekli.");
       const status = await getVideoRenderStatus(args.jobId);
+      return JSON.stringify(status, null, 2);
+    }
+    case "compose_cinematic_reel": {
+      const result = await composeCinematicReel(args);
+      return JSON.stringify(result, null, 2);
+    }
+    case "get_cinematic_render_status": {
+      if (!String(args.jobId || "").trim()) throw new Error("jobId gerekli.");
+      const status = await getCinematicRenderStatus(args.jobId);
       return JSON.stringify(status, null, 2);
     }
     case "generate_omni_video_edit": {
