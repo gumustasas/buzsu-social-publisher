@@ -1,0 +1,27 @@
+task_id: TASK-006
+title: Product Knowledge / File Search
+status: READY
+type: code
+assigned_to: codex
+review_by:
+  - perplexity
+  - chatgpt-root
+depends_on: []
+branch: agent/task-006-product-knowledge
+repo: https://github.com/gumustasas/buzsu-social-publisher
+goal: >
+  Design and implement a provider-independent product knowledge layer using Google/OpenAI
+  file search capabilities while preserving Airtable and official Buzsu sources as higher authority.
+owns:
+  - src/knowledge/**
+  - test/knowledge*
+acceptance:
+  - search_product_knowledge MCP tool exists
+  - source priority is explicit
+  - source conflicts are surfaced, not silently resolved
+  - provider supports auto/google/openai
+  - npm run check passes
+deliverables:
+  - pull_request
+  - tests
+  - source-priority documentation
