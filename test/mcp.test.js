@@ -695,12 +695,26 @@ test("generate_nano_banana_scene: product-reference mode (productId given) resol
 // provider/normalize testleri test/research-*.test.js'te (owns). Burada
 // yalnız tool'un TOOLS listesinde göründüğü ve callTool'un researchWeb'i
 // gerçekten çağırdığı doğrulanır.
-test("tools/list: research_web tool listesinde 'query' zorunlu, 'provider'/'urls' isteğe bağlı olarak yer alır", async () => {
+test("tools/list: research_web tool listesinde 'query' + 'confirmed' zorunlu, 'provider'/'urls' isteğe bağlı olarak yer alır", async () => {
   const response = await handleMessage({ id: 1, method: "tools/list" });
   const tool = response.result.tools.find((t) => t.name === "research_web");
   assert.ok(tool, "research_web tools/list içinde bulunamadı");
-  assert.deepEqual(tool.inputSchema.required, ["query"]);
+  assert.deepEqual(tool.inputSchema.required, ["query", "confirmed"]);
   assert.deepEqual(tool.inputSchema.properties.provider.enum, ["auto", "google", "openai"]);
+});
+
+test("research_web: confirmed:true olmadan provider çağrısı yapılmaz", async () => {
+  let called = false;
+  const originalFetch = global.fetch;
+  global.fetch = async () => { called = true; throw new Error("çağrılmamalıydı"); };
+  try {
+    const response = await handleMessage({ id: 1, method: "tools/call", params: { name: "research_web", arguments: { query: "test", provider: "google" } } });
+    assert.equal(response.result.isError, true);
+    assert.match(response.result.content[0].text, /confirmed:true/);
+    assert.equal(called, false);
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test("research_web: provider='google' ile researchWeb'i çağırır, normalize edilmiş sources döner", async () => {
@@ -710,7 +724,7 @@ test("research_web: provider='google' ile researchWeb'i çağırır, normalize e
     json: async () => ({ candidates: [{ content: { parts: [{ text: "Cevap metni." }] }, groundingMetadata: { groundingChunks: [{ web: { uri: "https://example.com/a", title: "A" } }] } }] })
   });
   try {
-    const text = await callTool("research_web", { query: "buzsu su arıtma güncel fiyat", provider: "google" });
+    const text = await callTool("research_web", { query: "buzsu su arıtma güncel fiyat", provider: "google", confirmed: true });
     const parsed = JSON.parse(text);
     assert.equal(parsed.ok, true);
     assert.equal(parsed.provider, "google");
@@ -730,7 +744,7 @@ test("research_web: provider='openai' ama OPENAI_API_KEY yoksa google'a SESSİZC
   let googleCalled = false;
   global.fetch = async (url) => { if (String(url).includes("generativelanguage")) googleCalled = true; throw new Error("çağrılmamalıydı"); };
   try {
-    const response = await handleMessage({ id: 1, method: "tools/call", params: { name: "research_web", arguments: { query: "test", provider: "openai" } } });
+    const response = await handleMessage({ id: 1, method: "tools/call", params: { name: "research_web", arguments: { query: "test", provider: "openai", confirmed: true } } });
     assert.equal(response.result.isError, true);
     assert.match(response.result.content[0].text, /missing_api_key/);
     assert.equal(googleCalled, false);
