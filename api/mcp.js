@@ -29,6 +29,7 @@ import { REEL_OBJECTIVES, REEL_ASPECT_RATIOS, REEL_DURATIONS } from "../src/lib/
 import { researchWeb, RESEARCH_PROVIDERS } from "../src/research/index.js";
 import { transcribeMedia, TRANSCRIPTION_PROVIDERS } from "../src/transcription/index.js";
 import { validateProductVisual, VISUAL_VALIDATION_CHECKS } from "../src/visual-validation/index.js";
+import { generateImageFromVideo, VIDEO_TO_IMAGE_MODELS, VIDEO_TO_IMAGE_ASPECT_RATIOS } from "../src/video-to-image/index.js";
 import { CREATIVE_TIERS } from "../src/creative-providers/model-registry.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
@@ -503,6 +504,21 @@ const TOOLS = [
         confirmed: { type: "boolean", description: "true olmadan ücretli karşılaştırma çağrısı yapılmaz." }
       },
       required: ["referenceImageUrl", "confirmed"]
+    }
+  },
+  {
+    name: "generate_image_from_video",
+    description: "Bir videonun görsel bağlamını kullanarak thumbnail/poster/carousel/story görseli üretir. Google Gemini video-to-image kullanır. Resmi olarak yalnız gemini-3.1-flash-image ve gemini-3.1-flash-lite-image desteklenir; başka modele SESSİZ fallback yapılmaz. Public YouTube URL doğrudan Gemini fileData olarak gönderilir; diğer herkese açık HTTPS MP4/MOV/WebM URL'leri mevcut SSRF-güvenli video fetch katmanıyla indirilip Gemini Files API'ye yüklenir. GERÇEK PARA HARCAR; confirmed:true zorunludur.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        videoUrl: { type: "string", description: "Public YouTube URL veya herkese açık HTTPS MP4/MOV/WebM video URL'i." },
+        prompt: { type: "string", description: "Videodan üretilecek görselin amacı/tarifi; ör. 'Bu videonun ana temasını yansıtan sinematik 9:16 Story kapağı oluştur'." },
+        aspectRatio: { type: "string", enum: VIDEO_TO_IMAGE_ASPECT_RATIOS, description: "Çıktı oranı; varsayılan 9:16." },
+        model: { type: "string", enum: VIDEO_TO_IMAGE_MODELS, description: "İsteğe bağlı; varsayılan gemini-3.1-flash-image. Seçilen model discovery'de yoksa açık hata döner." },
+        confirmed: { type: "boolean", description: "true olmadan discovery/generation/video upload çağrısı yapılmaz." }
+      },
+      required: ["videoUrl", "prompt", "confirmed"]
     }
   },
   {
@@ -1018,6 +1034,19 @@ export async function callTool(name, args) {
         process.env
       );
       return JSON.stringify({ ok: true, ...result }, null, 2);
+    }
+    case "generate_image_from_video": {
+      const result = await generateImageFromVideo(
+        {
+          videoUrl: args.videoUrl,
+          prompt: args.prompt,
+          aspectRatio: args.aspectRatio,
+          model: args.model,
+          confirmed: args.confirmed === true
+        },
+        process.env
+      );
+      return JSON.stringify(result, null, 2);
     }
     case "generate_video_narration": {
       const narration = await generateVideoNarration(

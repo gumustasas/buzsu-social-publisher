@@ -1058,6 +1058,36 @@ açıkça çağrılan bir MCP tool'dur.
   `{passed, needsReview, checks, failedChecks, notes}`. **GERÇEK PARA
   HARCAR** (bir Gemini vision çağrısıdır).
 
+## generate_image_from_video (TASK-005: Video → Image Creative)
+
+`src/video-to-image/` ayrı bir video-to-image yaratıcı akışıdır; mevcut
+`generate_scene_image` akışını genişletmez veya overload etmez. Amaç bir
+videonun bağlamından thumbnail, poster, carousel kartı veya Story kapağı gibi
+yeni bir görsel sentezlemektir.
+
+**Resmi destek doğrulaması (Google Gemini API, 2026-09-03 güncel dokümanı):**
+video girdisi ile image generation yalnız `gemini-3.1-flash-image` ve
+`gemini-3.1-flash-lite-image` modellerinde desteklenir. Public YouTube URL
+doğrudan `fileData.fileUri` olarak verilebilir; diğer/local video dosyaları
+Files API'ye yüklenip oluşan file URI ile `generateContent` çağrısına
+eklenir. Kaynak: Google AI Developers → Nano Banana image generation →
+“Video-to-image generation (3.1 Flash and 3.1 Flash Lite)”.
+
+Bu repo iki yolu şöyle uygular:
+- **Public YouTube URL** → indirme/yükleme yapmadan doğrudan Gemini
+  `fileData`; `videoMetadata.fps=0.5`.
+- **Diğer public HTTPS video URL** → mevcut `fetchPublicVideo` ile
+  HTTPS/SSRF/redirect/MIME/boyut doğrulaması → Gemini resumable Files API →
+  video `ACTIVE` olana kadar durum kontrolü → `fileData`.
+- Model varsayılanı `gemini-3.1-flash-image`; opsiyonel
+  `GEMINI_VIDEO_TO_IMAGE_MODEL` yalnız desteklenen iki modelden biri olabilir.
+  Seçilen model gerçek model discovery sonucunda yoksa **sessiz fallback yok**.
+- `confirmed:true` olmadan hiçbir ücretli çağrı yapılmaz.
+- Çıktı BLOB token varsa Vercel Blob'a yazılır; yoksa data URL döner.
+
+MCP:
+`generate_image_from_video({videoUrl,prompt,aspectRatio?,model?,confirmed:true})`.
+
 ## AI Reels V2 — dashboard sihirbazı (PR-D: Ürün→Senaryo→Sahne Onayı, PR-E: Sahne Videosu, PR-F/G: Ses & Müzik + Final Reel)
 
 Dashboard'da (`dashboard-reels-v2.js` + `dashboard.html`, `data-tab="reels"`
