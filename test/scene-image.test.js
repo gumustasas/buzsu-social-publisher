@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import { floodFillBackgroundMask, sceneEditPrompt, geminiScenePrompt, applyRemoveBox, availableSceneProviders, generateSceneImage, NANO_BANANA_2_MODEL, callGeminiTextToImage } from "../src/scene-image.js";
+import { floodFillBackgroundMask, sceneEditPrompt, geminiScenePrompt, applyRemoveBox, availableSceneProviders, generateSceneImage, NANO_BANANA_2_MODEL, NANO_BANANA_PRO_MODEL, IMAGE_QUALITY_TIERS, IMAGE_TIER_PROVIDERS, isNanoBananaProDiscoverable, callGeminiTextToImage } from "../src/scene-image.js";
 
 test("floodFillBackgroundMask marks border-connected near-white pixels as background", () => {
   const width = 4, height = 4, channels = 3;
@@ -121,9 +121,9 @@ test("geminiScenePrompt forbids fabricated signage/plaques with made-up text on 
   assert.match(prompt, /gerçek olmayan, üzerinde yazı\/marka adı bulunan pleksi, metal veya plastik bir tabela/);
 });
 
-test("availableSceneProviders lists gemini, nano-banana-2, openai, openai-low, then the experimental composite variant, only when keys are present", () => {
-  assert.deepEqual(availableSceneProviders({ GEMINI_API_KEY: "g", OPENAI_API_KEY: "o" }), ["gemini", "nano-banana-2", "openai", "openai-low", "composite"]);
-  assert.deepEqual(availableSceneProviders({ OPENAI_API_KEY: "o" }), ["openai", "openai-low"]);
+test("availableSceneProviders lists gemini, nano-banana-2, nano-banana-pro, openai, openai-low, openai-high, then the experimental composite variant, only when keys are present", () => {
+  assert.deepEqual(availableSceneProviders({ GEMINI_API_KEY: "g", OPENAI_API_KEY: "o" }), ["gemini", "nano-banana-2", "nano-banana-pro", "openai", "openai-low", "openai-high", "composite"]);
+  assert.deepEqual(availableSceneProviders({ OPENAI_API_KEY: "o" }), ["openai", "openai-low", "openai-high"]);
   assert.deepEqual(availableSceneProviders({}), []);
 });
 
@@ -208,8 +208,8 @@ test("callGeminiTextToImage (zero-shot, no product) calls Nano Banana 2 with onl
   }
 });
 
-test("availableSceneProviders offers openai/openai-low from a standalone OPENAI_IMAGE_API_KEY even without OPENAI_API_KEY", () => {
-  assert.deepEqual(availableSceneProviders({ OPENAI_IMAGE_API_KEY: "img" }), ["openai", "openai-low"]);
+test("availableSceneProviders offers openai/openai-low/openai-high from a standalone OPENAI_IMAGE_API_KEY even without OPENAI_API_KEY", () => {
+  assert.deepEqual(availableSceneProviders({ OPENAI_IMAGE_API_KEY: "img" }), ["openai", "openai-low", "openai-high"]);
 });
 
 test("generateSceneImage sends the standalone OPENAI_IMAGE_API_KEY (not the text OPENAI_API_KEY) for provider 'openai' when both are set", async () => {
@@ -259,6 +259,128 @@ test("generateSceneImage sends quality 'low' for provider 'openai-low' but omits
 
     await generateSceneImage({ title: "Test Ürün", imageUrl: "https://example.com/photo.png" }, "mutfak", { OPENAI_API_KEY: "key" }, { provider: "openai" });
     assert.equal(capturedFormHasQuality, false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+// TASK-003: economy/balanced/quality tier mapping is explicit and documented.
+test("IMAGE_QUALITY_TIERS/IMAGE_TIER_PROVIDERS map economy/balanced/quality to the exact same provider strings generateSceneImage already supports", () => {
+  assert.deepEqual(IMAGE_QUALITY_TIERS, ["economy", "balanced", "quality"]);
+  assert.deepEqual(IMAGE_TIER_PROVIDERS.google, { economy: "gemini", balanced: "nano-banana-2", quality: "nano-banana-pro" });
+  assert.deepEqual(IMAGE_TIER_PROVIDERS.openai, { economy: "openai-low", balanced: "openai", quality: "openai-high" });
+});
+
+test("isNanoBananaProDiscoverable: GEMINI_API_KEY yoksa hiçbir fetch atmadan false döner", async () => {
+  let called = false;
+  const originalFetch = global.fetch;
+  global.fetch = async () => { called = true; throw new Error("çağrılmamalıydı"); };
+  try {
+    assert.equal(await isNanoBananaProDiscoverable(NANO_BANANA_PRO_MODEL, {}), false);
+    assert.equal(called, false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("isNanoBananaProDiscoverable: discovery gerçekten çalışıp modeli listelemiyorsa false döner (SESSİZCE 'var' denmez)", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, json: async () => ({ models: [{ name: "models/gemini-3.1-flash-image" }] }) });
+  try {
+    assert.equal(await isNanoBananaProDiscoverable(NANO_BANANA_PRO_MODEL, { GEMINI_API_KEY: "key" }), false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("isNanoBananaProDiscoverable: discovery modeli listeliyorsa true döner", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, json: async () => ({ models: [{ name: `models/${NANO_BANANA_PRO_MODEL}` }] }) });
+  try {
+    assert.equal(await isNanoBananaProDiscoverable(NANO_BANANA_PRO_MODEL, { GEMINI_API_KEY: "key" }), true);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("isNanoBananaProDiscoverable: discovery isteği başarısız/erişilemezse (ör. ağ kısıtlı ortam) SESSİZCE false DENMEZ, anahtar varlığına düşülür (true)", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => { throw new Error("network unreachable"); };
+  try {
+    assert.equal(await isNanoBananaProDiscoverable(NANO_BANANA_PRO_MODEL, { GEMINI_API_KEY: "key" }), true);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateSceneImage provider 'nano-banana-pro' discovery'de bulunamazsa ürün görseli hiç indirilmeden/mask oluşturulmadan açık bir hata fırlatır (Nano Banana 2'ye SESSİZCE düşülmez)", async () => {
+  const originalFetch = global.fetch;
+  let productImageFetched = false;
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("example.com")) { productImageFetched = true; throw new Error("çağrılmamalıydı"); }
+    if (u.includes("generativelanguage.googleapis.com/v1beta/models") && !u.includes("generateContent")) {
+      return { ok: true, json: async () => ({ models: [{ name: "models/gemini-3.1-flash-image" }] }) }; // Pro discovery'de YOK
+    }
+    throw new Error(`unexpected fetch: ${u}`);
+  };
+  try {
+    await assert.rejects(
+      () => generateSceneImage({ title: "Test Ürün", imageUrl: "https://example.com/photo.png" }, "mutfak", { GEMINI_API_KEY: "key" }, { provider: "nano-banana-pro" }),
+      /Nano Banana Pro.*bulunamadı/
+    );
+    assert.equal(productImageFetched, false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateSceneImage provider 'nano-banana-pro' discovery'de bulunursa gemini-3-pro-image modelini çağırır", async () => {
+  const originalFetch = global.fetch;
+  let calledUrls = [];
+  const tinyPng = await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer();
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("example.com")) return { ok: true, arrayBuffer: async () => tinyPng };
+    if (u.includes("generativelanguage.googleapis.com/v1beta/models") && !u.includes("generateContent")) {
+      return { ok: true, json: async () => ({ models: [{ name: `models/${NANO_BANANA_PRO_MODEL}` }] }) };
+    }
+    if (u.includes("generateContent")) {
+      calledUrls.push(u);
+      return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { data: "AAAA" } }] } }] }) };
+    }
+    throw new Error(`unexpected fetch: ${u}`);
+  };
+  try {
+    const result = await generateSceneImage(
+      { title: "Test Ürün", imageUrl: "https://example.com/photo.png" },
+      "mutfak",
+      { GEMINI_API_KEY: "key" },
+      { provider: "nano-banana-pro" }
+    );
+    assert.equal(result.model, NANO_BANANA_PRO_MODEL);
+    assert.ok(calledUrls[0].includes(`models/${NANO_BANANA_PRO_MODEL}:generateContent`));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateSceneImage sends quality 'high' for provider 'openai-high', distinct from 'low'/plain 'openai'", async () => {
+  const originalFetch = global.fetch;
+  let capturedQualityValue = null;
+  const tinyPng = await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer();
+  global.fetch = async (url, options) => {
+    const u = String(url);
+    if (u.includes("example.com")) return { ok: true, arrayBuffer: async () => tinyPng };
+    if (u.includes("api.openai.com")) {
+      capturedQualityValue = options.body.get("quality");
+      return { ok: true, json: async () => ({ data: [{ b64_json: "AAAA" }] }) };
+    }
+    throw new Error(`unexpected fetch: ${u}`);
+  };
+  try {
+    await generateSceneImage({ title: "Test Ürün", imageUrl: "https://example.com/photo.png" }, "mutfak", { OPENAI_API_KEY: "key" }, { provider: "openai-high" });
+    assert.equal(capturedQualityValue, "high");
   } finally {
     global.fetch = originalFetch;
   }

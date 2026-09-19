@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { getVideoProviderCapabilities } from "../src/lib/video-provider-capabilities.js";
 import { OMNI_MODEL } from "../src/omni-video.js";
 import { VEO_MODEL_TIERS } from "../src/veo-video.js";
-import { NANO_BANANA_2_MODEL } from "../src/scene-image.js";
-import { VEO_TIER_UI_LABELS, OMNI_UI_LABEL, NANO_BANANA_2_UI_LABEL, NANO_BANANA_2_LITE_UI_LABEL } from "../src/lib/video-model-labels.js";
+import { NANO_BANANA_2_MODEL, NANO_BANANA_PRO_MODEL } from "../src/scene-image.js";
+import { VEO_TIER_UI_LABELS, OMNI_UI_LABEL, NANO_BANANA_2_UI_LABEL, NANO_BANANA_2_LITE_UI_LABEL, NANO_BANANA_PRO_UI_LABEL } from "../src/lib/video-model-labels.js";
 
 const DEPRECATED_VEO_3_0_IDS = ["veo-3.0-generate-001", "veo-3.0-fast-generate-001"];
 
@@ -24,7 +24,13 @@ test("getVideoProviderCapabilities reports everything unavailable when no keys a
       },
       image: {
         nanoBanana2: { available: false, model: NANO_BANANA_2_MODEL, label: NANO_BANANA_2_UI_LABEL },
-        nanoBanana2Lite: { available: false, model: "gemini-3.1-flash-lite-image", label: NANO_BANANA_2_LITE_UI_LABEL }
+        nanoBanana2Lite: { available: false, model: "gemini-3.1-flash-lite-image", label: NANO_BANANA_2_LITE_UI_LABEL },
+        nanoBananaPro: { available: false, model: NANO_BANANA_PRO_MODEL, label: NANO_BANANA_PRO_UI_LABEL },
+        qualityTiers: {
+          economy: { provider: "gemini", model: "gemini-3.1-flash-lite-image", available: false },
+          balanced: { provider: "nano-banana-2", model: NANO_BANANA_2_MODEL, available: false },
+          quality: { provider: "nano-banana-pro", model: NANO_BANANA_PRO_MODEL, available: false }
+        }
       }
     },
     fal: { available: false }
@@ -49,11 +55,31 @@ test("getVideoProviderCapabilities: Veo tier UI labels use Lite/Fast/Quality wor
 // HEDEF: Nano Banana 2, bu PR'ın ana image modeli olarak capability'de ayrı
 // raporlanır — Nano Banana 2 Lite (mevcut GEMINI_SCENE_MODEL varsayılanı)
 // ile ASLA karıştırılmaz, iki ayrı model/iki ayrı alan.
-test("getVideoProviderCapabilities reports Nano Banana 2 and Nano Banana 2 Lite as distinct image models", async () => {
+test("getVideoProviderCapabilities reports Nano Banana 2, Nano Banana 2 Lite and Nano Banana Pro as distinct image models", async () => {
   const capabilities = await getVideoProviderCapabilities({ GEMINI_API_KEY: "test" });
   assert.equal(capabilities.google.image.nanoBanana2.model, "gemini-3.1-flash-image");
   assert.equal(capabilities.google.image.nanoBanana2Lite.model, "gemini-3.1-flash-lite-image");
-  assert.notEqual(capabilities.google.image.nanoBanana2.model, capabilities.google.image.nanoBanana2Lite.model);
+  assert.equal(capabilities.google.image.nanoBananaPro.model, NANO_BANANA_PRO_MODEL);
+  const models = [capabilities.google.image.nanoBanana2.model, capabilities.google.image.nanoBanana2Lite.model, capabilities.google.image.nanoBananaPro.model];
+  assert.equal(new Set(models).size, 3);
+});
+
+// TASK-003 acceptance: "economy/balanced/quality image tiers are explicit" —
+// qualityTiers, discovery'de yalnızca Nano Banana Pro'nun listelendiği bir
+// hesapta economy/balanced'ı true, quality'yi discovery'ye göre doğru
+// raporlamalı (hard-coded bir "hepsi açık" varsayımı YOKTUR).
+test("getVideoProviderCapabilities.google.image.qualityTiers reflects real per-model discovery, not a hard-coded assumption", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, json: async () => ({ models: [{ name: `models/${NANO_BANANA_PRO_MODEL}` }] }) });
+  try {
+    const capabilities = await getVideoProviderCapabilities({ GEMINI_API_KEY: "test" });
+    assert.equal(capabilities.google.image.qualityTiers.economy.available, false);
+    assert.equal(capabilities.google.image.qualityTiers.balanced.available, false);
+    assert.equal(capabilities.google.image.qualityTiers.quality.available, true);
+    assert.equal(capabilities.google.image.qualityTiers.quality.provider, "nano-banana-pro");
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test("getVideoProviderCapabilities: fal availability is derived purely from FAL_KEY presence", async () => {
@@ -104,7 +130,9 @@ test("getVideoProviderCapabilities only reports the Veo/Omni models actually pre
   };
   try {
     const capabilities = await getVideoProviderCapabilities({ GEMINI_API_KEY: "secret-key-value" });
-    assert.equal(requestedUrl, "https://generativelanguage.googleapis.com/v1beta/models");
+    const parsedRequestedUrl = new URL(requestedUrl);
+    assert.equal(parsedRequestedUrl.origin + parsedRequestedUrl.pathname, "https://generativelanguage.googleapis.com/v1beta/models");
+    assert.equal(parsedRequestedUrl.searchParams.get("pageSize"), "100");
     assert.equal(capabilities.google.omni.available, true);
     assert.equal(capabilities.google.veo.available, true);
     assert.deepEqual(new Set(capabilities.google.veo.models), new Set([VEO_MODEL_TIERS.fast, VEO_MODEL_TIERS.quality]));

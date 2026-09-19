@@ -629,7 +629,13 @@ secret/token içermez — yalnızca `available`/`models` alanları döner:
     },
     "image": {
       "nanoBanana2": { "available": true, "model": "gemini-3.1-flash-image", "label": "Nano Banana 2" },
-      "nanoBanana2Lite": { "available": true, "model": "gemini-3.1-flash-lite-image", "label": "Nano Banana 2 Lite" }
+      "nanoBanana2Lite": { "available": true, "model": "gemini-3.1-flash-lite-image", "label": "Nano Banana 2 Lite" },
+      "nanoBananaPro": { "available": false, "model": "gemini-3-pro-image", "label": "Nano Banana Pro" },
+      "qualityTiers": {
+        "economy": { "provider": "gemini", "model": "gemini-3.1-flash-lite-image", "available": true },
+        "balanced": { "provider": "nano-banana-2", "model": "gemini-3.1-flash-image", "available": true },
+        "quality": { "provider": "nano-banana-pro", "model": "gemini-3-pro-image", "available": false }
+      }
     }
   },
   "fal": { "available": true }
@@ -665,7 +671,7 @@ modeli vardır ve birbirine ASLA karıştırılmamalı:
 | --- | --- | --- |
 | Nano Banana 2 | `gemini-3.1-flash-image` | Bu pipeline'ın ana image modeli |
 | Nano Banana 2 Lite | `gemini-3.1-flash-lite-image` | Mevcut `#scene-provider` → "gemini" akışının varsayılanı (`GEMINI_SCENE_MODEL`), değişmedi |
-| Nano Banana Pro | `gemini-3-pro-image` | Bu depoda kullanılmıyor |
+| Nano Banana Pro | `gemini-3-pro-image` | TASK-003: `generate_scene_image`'ın "quality" tier'ı (`provider:"nano-banana-pro"`) — GERÇEK discovery'de bu hesapta listelenmediği sürece SESSİZCE Nano Banana 2'ye düşülmez, açık bir hata döner (bkz. aşağıdaki "economy/balanced/quality kalite tier'ları" bölümü) |
 
 **Neden iki aşamalı (image → onay → video)?** Nano Banana 2 sahneyi
 hazırlar, Veo/Omni SADECE onaylanan sahneyi hareketlendirir. Bu hem
@@ -714,6 +720,41 @@ davranışıyla birebir tutarlı).
 **Google'ın "Flow" uygulaması bu depoya entegre EDİLMEDİ** — yalnızca
 Flow'un iki-aşamalı mantığı (görsel üret → onayla → hareketlendir) bu
 depodaki mevcut mimari üzerinde yeniden uygulandı.
+
+## generate_scene_image — economy/balanced/quality kalite tier'ları (TASK-003)
+
+`generate_scene_image`'ın `provider` parametresi, Google ve OpenAI için
+**birleştirilmiş, açık üç kalite tier'ına** karşılık gelir
+(`src/scene-image.js:IMAGE_QUALITY_TIERS`/`IMAGE_TIER_PROVIDERS`) — **yeni
+bir seçim mekanizması eklenmedi**, mevcut `provider` string'leri (geriye
+dönük TAM uyumlu) tier isimlendirmesiyle eşlenmiş durumda:
+
+| Tier | Google `provider` | OpenAI `provider` |
+| --- | --- | --- |
+| economy | `gemini` (Nano Banana 2 Lite, `GEMINI_SCENE_MODEL`) | `openai-low` (gpt-image-2, `quality:"low"`) |
+| balanced | `nano-banana-2` (Nano Banana 2, `GEMINI_NANO_BANANA_2_MODEL`) | `openai` (gpt-image-2, varsayılan quality) |
+| quality | `nano-banana-pro` (Nano Banana Pro, `GEMINI_NANO_BANANA_PRO_MODEL`) | `openai-high` (gpt-image-2, `quality:"high"`) |
+
+**Nano Banana Pro capability/discovery-gated'dir**: `provider:"nano-banana-pro"`
+çağrılmadan ÖNCE (ürün görseli indirilmeden/maske oluşturulmadan) gerçek bir
+`GET /v1beta/models` discovery isteğiyle bu modelin GERÇEKTEN bu hesapta
+erişilebilir olduğu doğrulanır (`src/scene-image.js:isNanoBananaProDiscoverable`,
+`src/lib/gemini-model-discovery.js:listGeminiModels` — Veo/Omni/Nano Banana
+2/Lite ile AYNI, `video-provider-capabilities.js`'in de reuse ettiği tek
+discovery fonksiyonu, provider logic İKİ YERDE AYRI AYRI icat edilmedi).
+Discovery isteği ağ hatasıyla başarısız olursa (bkz. Veo/Omni'nin mevcut
+davranışı) sessizce "unavailable" denmez, yalnızca anahtar varlığına
+düşülür; discovery GERÇEKTEN çalışıp modeli listelemiyorsa (hesapta erişim
+yok) **SESSİZCE Nano Banana 2'ye düşülmez** — açık bir hata döner.
+`GET /api/video-provider-capabilities`'in `google.image.qualityTiers` alanı
+(yukarıdaki örnek) bu üç tier'ın anlık `available` durumunu dashboard'a
+raporlar.
+
+**Geriye dönük uyumluluk**: `gemini`/`nano-banana-2`/`openai`/`openai-low`/
+`composite` değerleri ve davranışları BİREBİR eskisi gibi kalır;
+`nano-banana-pro`/`openai-high` yalnızca EKLENEN yeni değerlerdir.
+`generate_nano_banana_scene` (yukarıdaki ayrı MCP tool) bu tier
+sisteminden etkilenmez — hâlâ her zaman Nano Banana 2'yi hedefler.
 
 ## AI Reels V2 — Creative Provider abstraction + model registry (src/creative-providers/)
 

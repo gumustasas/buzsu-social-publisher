@@ -33,13 +33,17 @@ export function openaiTextApiKey(env) {
 }
 
 // Panelde AI sağlayıcısı dropdown'u sahne GÖRSELİ (gemini/openai/openai-low/
-// composite — bkz. src/scene-image.js, src/scene-composite.js) ile sahne
-// planı/başlık METNİ arasında paylaşılıyor. "openai-low" ve "composite"
-// yalnızca görsel üretim seçenekleridir (composite Gemini tabanlı), metin
-// üretiminde sırasıyla "openai"/"gemini" ile aynı şekilde çalışmalı.
+// openai-high/nano-banana-pro/composite — bkz. src/scene-image.js,
+// src/scene-composite.js) ile sahne planı/başlık METNİ arasında
+// paylaşılıyor. "openai-low"/"openai-high" ve "composite"/"nano-banana-pro"
+// yalnızca görsel üretim (kalite tier) seçenekleridir; metin üretiminde
+// sırasıyla "openai"/"gemini" ile aynı şekilde çalışmalı — TASK-003'ün
+// eklediği openai-high/nano-banana-pro burada normalize EDİLMEZSE caption/
+// hashtag/scene-plan/scenario/SEO akışları "Desteklenmeyen AI sağlayıcısı."
+// hatasıyla başarısız olur (bkz. PR #102 ROOT review, blocker 1).
 function normalizeTextProvider(provider) {
-  if (provider === "openai-low") return "openai";
-  if (provider === "composite") return "gemini";
+  if (provider === "openai-low" || provider === "openai-high") return "openai";
+  if (provider === "composite" || provider === "nano-banana-pro") return "gemini";
   return provider;
 }
 

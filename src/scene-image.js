@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import { listGeminiModels } from "./lib/gemini-model-discovery.js";
 
 const CANVAS_SIZE = 1024;
 const BACKGROUND_THRESHOLD = 235;
@@ -150,6 +151,41 @@ async function buildMaskBuffer(sourceBuffer, { removeFaucet = false } = {}) {
 // src/veo-video.js, src/omni-video.js).
 export const NANO_BANANA_2_MODEL = "gemini-3.1-flash-image";
 
+// "Nano Banana Pro" — Google'ın Gemini API'sindeki üst katman görsel modeli
+// (bkz. NANO_BANANA_2_MODEL'in üstündeki yorum: "gemini-3-pro-image" = Nano
+// Banana Pro). TASK-003: economy/balanced/quality tier'ının "quality" ucu.
+// Nano Banana 2/Lite'ın AKSİNE bu model discovery/capability-gated'dir —
+// generateSceneImage çağrısından ÖNCE gerçekten bu hesapta/discovery'de
+// listelenip listelenmediği (bkz. isNanoBananaProDiscoverable) doğrulanır;
+// bulunamazsa SESSİZCE Nano Banana 2'ye düşülmez, açık bir hata verilir.
+export const NANO_BANANA_PRO_MODEL = "gemini-3-pro-image";
+
+// TASK-003 goal: "Unify image quality selection across Google and OpenAI" —
+// economy/balanced/quality'nin HER sağlayıcı ailesinde hangi mevcut
+// `provider` string'ine karşılık geldiğinin AÇIK haritası. Yeni bir
+// paralel seçim mekanizması İCAT EDİLMEZ: bu sadece var olan provider
+// değerlerini (generateSceneImage'ın zaten desteklediği) üç tier'a
+// isimlendirir — geriye dönük uyumluluk tamamen korunur (eski `provider`
+// değerleri birebir eskisi gibi çalışır).
+export const IMAGE_QUALITY_TIERS = ["economy", "balanced", "quality"];
+export const IMAGE_TIER_PROVIDERS = {
+  google: { economy: "gemini", balanced: "nano-banana-2", quality: "nano-banana-pro" },
+  openai: { economy: "openai-low", balanced: "openai", quality: "openai-high" }
+};
+
+// Nano Banana Pro'nun GERÇEKTEN bu hesapta/discovery'de erişilebilir olup
+// olmadığını doğrular — Veo/Omni/Nano Banana 2 ile AYNI ilke (bkz.
+// video-provider-capabilities.js): discovery başarısız/erişilemezse (ör.
+// ağ kısıtlı bir ortam) SESSİZCE "unavailable" denmez, yalnızca anahtar
+// varlığına düşülür; discovery GERÇEKTEN çalışıp modeli listelemiyorsa
+// (hesapta erişim yok) false döner.
+export async function isNanoBananaProDiscoverable(model, env) {
+  if (!env.GEMINI_API_KEY) return false;
+  const discoveredModels = await listGeminiModels(env);
+  if (discoveredModels === null) return true;
+  return discoveredModels.has(model);
+}
+
 function imageConfigFor(aspectRatio) {
   const value = String(aspectRatio || "").trim();
   return value ? { imageConfig: { aspectRatio: value } } : {};
@@ -247,8 +283,18 @@ export function availableSceneProviders(env = process.env) {
     // Banana 2 LITE'a (GEMINI_SCENE_MODEL) düşer, bu seçenek her zaman tam
     // Nano Banana 2'yi hedefler.
     env.GEMINI_API_KEY && "nano-banana-2",
+    // "nano-banana-pro" (TASK-003, quality tier): burada listelenmesi
+    // yalnız GEMINI_API_KEY varlığına bakar (nano-banana-2 ile AYNI seviye) —
+    // GERÇEK discovery-gating generateSceneImage çağrısı sırasında yapılır
+    // (bkz. isNanoBananaProDiscoverable), burada "seçilebilir" demek
+    // "hesapta kesin erişilebilir" demek değildir.
+    env.GEMINI_API_KEY && "nano-banana-pro",
     openaiImageApiKey(env) && "openai",
     openaiImageApiKey(env) && "openai-low",
+    // "openai-high" (TASK-003, quality tier): aynı gpt-image-2 modeli,
+    // quality:"high" — "openai-low" ile AYNI seviye, ayrı bir API key/model
+    // gerektirmez.
+    openaiImageApiKey(env) && "openai-high",
     // "composite": ürünü gerçek fotoğraftan piksel birebir kesip AI sadece
     // arka planı üretiyor (bkz. src/scene-composite.js) — deneysel ikinci
     // yöntem, aynı GEMINI_API_KEY ile çalışır.
@@ -257,6 +303,18 @@ export function availableSceneProviders(env = process.env) {
 }
 
 export async function generateSceneImage(product, sceneDescription, env = process.env, { removeFaucet = false, provider = "gemini", aspectRatio } = {}) {
+  // TASK-003: Nano Banana Pro capability/discovery-gated — pahalı adımlardan
+  // (ürün görseli indirme, maske oluşturma) ÖNCE, gerçekten bu hesapta/
+  // discovery'de erişilebilir mi diye kontrol edilir. Bulunamazsa SESSİZCE
+  // Nano Banana 2'ye düşülmez, açık bir hata verilir.
+  if (provider === "nano-banana-pro") {
+    const proModel = env.GEMINI_NANO_BANANA_PRO_MODEL || NANO_BANANA_PRO_MODEL;
+    const discoverable = await isNanoBananaProDiscoverable(proModel, env);
+    if (!discoverable) {
+      throw new Error(`Nano Banana Pro (${proModel}) bu hesapta/discovery'de bulunamadı veya erişilebilir değil. Sessizce Nano Banana 2'ye düşülmez — model adını doğrulayın veya provider:"nano-banana-2" kullanın.`);
+    }
+  }
+
   const imageUrls = [...new Set((Array.isArray(product?.imageUrls) ? product.imageUrls : [product?.imageUrl]).map((url) => String(url || "").trim()).filter((url) => /^https:\/\//i.test(url)))].slice(0, 4);
   const imageUrl = imageUrls[0] || "";
   if (!/^https:\/\//i.test(imageUrl)) throw new Error("Ürün görseli herkese açık HTTPS URL olmalı.");
@@ -275,16 +333,16 @@ export async function generateSceneImage(product, sceneDescription, env = proces
   }
 
   let b64, model, prompt;
-  if (provider === "gemini" || provider === "nano-banana-2") {
+  if (provider === "gemini" || provider === "nano-banana-2" || provider === "nano-banana-pro") {
     prompt = geminiScenePrompt(sceneDescription, { removeFaucet, referenceCount: imageUrls.length });
-    model = provider === "nano-banana-2"
-      ? (env.GEMINI_NANO_BANANA_2_MODEL || NANO_BANANA_2_MODEL)
-      : (env.GEMINI_SCENE_MODEL || "gemini-3.1-flash-lite-image");
+    if (provider === "nano-banana-pro") model = env.GEMINI_NANO_BANANA_PRO_MODEL || NANO_BANANA_PRO_MODEL;
+    else if (provider === "nano-banana-2") model = env.GEMINI_NANO_BANANA_2_MODEL || NANO_BANANA_2_MODEL;
+    else model = env.GEMINI_SCENE_MODEL || "gemini-3.1-flash-lite-image";
     b64 = await callGeminiImageEdit({ basePng, referencePngs, prompt, model, aspectRatio }, env);
-  } else if (provider === "openai" || provider === "openai-low") {
+  } else if (provider === "openai" || provider === "openai-low" || provider === "openai-high") {
     prompt = `${sceneEditPrompt(sceneDescription, { removeFaucet })} ${imageUrls.length > 1 ? "Ek referans görselleri aynı ürünün farklı açılarıdır; tüm gerçek parçaları koru ve yeni model icat etme." : ""}`;
     model = env.OPENAI_SCENE_MODEL || "gpt-image-2";
-    const quality = provider === "openai-low" ? "low" : undefined;
+    const quality = provider === "openai-low" ? "low" : provider === "openai-high" ? "high" : undefined;
     b64 = await callOpenAIImageEdit({ basePng, referencePngs, maskPng, prompt, apiKey: openaiImageApiKey(env), quality }, env);
   } else {
     throw new Error("Desteklenmeyen sahne üretim sağlayıcısı.");
