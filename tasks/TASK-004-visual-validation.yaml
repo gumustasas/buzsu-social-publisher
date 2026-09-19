@@ -17,6 +17,11 @@ goal: >
 owns:
   - src/visual-validation/**
   - test/visual-validation*
+shared_touch:
+  - api/mcp.js
+  - test/mcp.test.js
+  - README.md
+  - .env.example
 acceptance:
   - validate_product_visual MCP tool exists
   - no arbitrary single confidence score is used as the decision
