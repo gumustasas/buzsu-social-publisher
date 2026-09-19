@@ -1,0 +1,28 @@
+task_id: TASK-008
+title: Read-Only Deep Research Layer
+status: BLOCKED
+type: code
+assigned_to: codex
+review_by:
+  - perplexity
+  - chatgpt-root
+depends_on:
+  - TASK-001
+  - TASK-006
+branch: agent/task-008-deep-research
+repo: https://github.com/gumustasas/buzsu-social-publisher
+goal: >
+  Add a separate read-only deep-research workflow for SEO, competitor and weekly content
+  opportunity research, using only allowlisted read tools.
+owns:
+  - src/deep-research/**
+  - test/deep-research*
+acceptance:
+  - only read-only tools are exposed
+  - no publish/update/delete actions
+  - research output includes sources and uncertainty/conflicts
+  - npm run check passes
+deliverables:
+  - pull_request
+  - tests
+  - allowlist documentation
