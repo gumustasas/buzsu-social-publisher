@@ -227,6 +227,81 @@ test("generateReelScript: OpenAI çağrısı başarısız olursa Google'a OTOMAT
 
 // --- Veo constraints / Product Identity Lock / Lyria brief (uçtan uca) ----
 
+// --- researchMode (TASK-001) -----------------------------------------------
+
+test("generateReelScript: researchMode verilmezse (varsayılan 'none') research_web'e HİÇ istek atılmaz, davranış eskisiyle AYNI", async () => {
+  const deps = {
+    productContextDeps: baseProductContextDeps(),
+    discoveryDeps: discoveryDepsWithOpenAiModel("gpt-5.6"),
+    generationDeps: { fetchImpl: async () => ({ ok: true, json: async () => ({ output_text: validReelScriptJson() }) }) },
+    researchDeps: { fetchImpl: async () => { throw new Error("research_web çağrılmamalıydı"); } }
+  };
+  const result = await generateReelScript(baseInput({ provider: "openai", modelTier: "balanced" }), { OPENAI_API_KEY: "k", OPENAI_CREATIVE_BALANCED_MODEL: "gpt-5.6" }, deps);
+  assert.equal(result.researchMode, "none");
+  assert.equal(result.research, null);
+});
+
+test("generateReelScript: geçersiz researchMode hiçbir productContext/discovery çağrısı yapmadan reddedilir", async () => {
+  let called = false;
+  const deps = { productContextDeps: { listProductsImpl: async () => { called = true; return []; } } };
+  await assert.rejects(
+    () => generateReelScript(baseInput({ researchMode: "anthropic" }), {}, deps),
+    (e) => e instanceof ReelScriptError && e.code === "INVALID_INPUT"
+  );
+  assert.equal(called, false);
+});
+
+test("generateReelScript: researchMode='google' — research_web'in cevabı+kaynakları prompt'a geçirilir ve sonuçta raporlanır", async () => {
+  let promptSeen;
+  const deps = {
+    productContextDeps: baseProductContextDeps(),
+    discoveryDeps: discoveryDepsWithOpenAiModel("gpt-5.6"),
+    researchDeps: {
+      fetchImpl: async () => ({
+        ok: true,
+        json: async () => ({ candidates: [{ content: { parts: [{ text: "Rakipler 2 kademeli filtre kullanıyor." }] }, groundingMetadata: { groundingChunks: [{ web: { uri: "https://example.com/rakip", title: "Rakip analizi" } }] } }] })
+      })
+    },
+    generationDeps: {
+      fetchImpl: async (url, options) => {
+        if (String(url).includes("api.openai.com")) { promptSeen = JSON.parse(options.body).input; return { ok: true, json: async () => ({ output_text: validReelScriptJson() }) }; }
+        throw new Error("beklenmeyen çağrı: " + url);
+      }
+    }
+  };
+  const result = await generateReelScript(
+    baseInput({ provider: "openai", modelTier: "balanced", researchMode: "google", researchQuery: "buzsu rakip analizi" }),
+    { OPENAI_API_KEY: "k", OPENAI_CREATIVE_BALANCED_MODEL: "gpt-5.6", GEMINI_API_KEY: "gkey" },
+    deps
+  );
+  assert.equal(result.researchMode, "google");
+  assert.equal(result.research.provider, "google");
+  assert.equal(result.research.query, "buzsu rakip analizi");
+  assert.deepEqual(result.research.sources, [{ url: "https://example.com/rakip", title: "Rakip analizi", snippet: "", provider: "google" }]);
+  assert.match(promptSeen, /GÜNCEL ARAŞTIRMA BULGULARI/);
+  assert.match(promptSeen, /Rakipler 2 kademeli filtre kullanıyor/);
+});
+
+test("generateReelScript: researchMode!=none ama research_web başarısız olursa senaryo üretimine HİÇ geçilmez, hata olduğu gibi yansır", async () => {
+  let generationCalled = false;
+  const deps = {
+    productContextDeps: baseProductContextDeps(),
+    discoveryDeps: discoveryDepsWithOpenAiModel("gpt-5.6"),
+    researchDeps: { fetchImpl: async () => ({ ok: false, status: 500, json: async () => ({ error: { message: "research failed" } }) }) },
+    generationDeps: { fetchImpl: async () => { generationCalled = true; throw new Error("çağrılmamalıydı"); } }
+  };
+  await assert.rejects(
+    () => generateReelScript(baseInput({ provider: "openai", modelTier: "balanced", researchMode: "google" }), { OPENAI_API_KEY: "k", OPENAI_CREATIVE_BALANCED_MODEL: "gpt-5.6", GEMINI_API_KEY: "gkey" }, deps),
+    /research failed/
+  );
+  assert.equal(generationCalled, false);
+});
+
+test("generateReelScript: confirmed:false ile researchMode!=none olsa da research_web'e istek atılmaz", async () => {
+  const deps = { researchDeps: { fetchImpl: async () => { throw new Error("çağrılmamalıydı"); } } };
+  await assert.rejects(() => generateReelScript(baseInput({ confirmed: false, researchMode: "google" }), {}, deps), /confirmed:true/);
+});
+
 test("generateReelScript: sonuçtaki her sahnenin veoPrompt'u sessiz-video kısıtını, referans gereken sahne Product Identity Lock'u taşır", async () => {
   const deps = {
     productContextDeps: baseProductContextDeps(),
