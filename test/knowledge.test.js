@@ -63,3 +63,19 @@ test("confirmed:true gate occurs before product/network work", async () => {
   ), /confirmed:true/);
   assert.equal(called, false);
 });
+
+
+test("productId + productUrl farklı ürünleri gösterirse authority kaynakları karıştırılmaz", async () => {
+  const other = { id: "rec2", title: "UltraMag", url: "https://www.buzsu.com.tr/ultra-manyetik-kirec-onleyici/", fromAirtable: true };
+  let runnerCalled = false;
+  await assert.rejects(() => searchProductKnowledge(
+    { productId: "rec1", productUrl: other.url, query: "x", provider: "google", confirmed: true },
+    { GEMINI_API_KEY: "g", GOOGLE_PRODUCT_KNOWLEDGE_STORE: "fileSearchStores/x" },
+    {
+      getBuzsuProductContextImpl: async () => ({ ...context, canonicalUrl: other.url, productName: "UltraMag" }),
+      listProductsImpl: async () => [product, other],
+      runners: { google: async () => { runnerCalled = true; return {}; } }
+    }
+  ), /farklı ürünleri işaret ediyor/);
+  assert.equal(runnerCalled, false);
+});
