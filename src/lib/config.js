@@ -50,6 +50,11 @@ export const REEL_AUDIO_RENDER_WORKFLOW_FILE = process.env.REEL_AUDIO_RENDER_WOR
 // edilir) birleştiren AYRI bir eşleniği.
 export const REEL_FINAL_RENDER_WORKFLOW_FILE = process.env.REEL_FINAL_RENDER_WORKFLOW_FILE || "render-reel-final.yml";
 
+// compose_cinematic_reel (TASK-011, bkz. src/cinematic-compose.js) — AYNI
+// sebeple (Vercel süre/bellek sınırları) render-product-video.yml'nin
+// sahne-bazlı kamera/renk/ses motoruna sahip AYRI bir eşleniği.
+export const CINEMATIC_RENDER_WORKFLOW_FILE = process.env.CINEMATIC_RENDER_WORKFLOW_FILE || "render-cinematic-reel.yml";
+
 export function assertMetaGraphVersionCurrent() {
   const parsed = parseMetaGraphVersionNumber(META_GRAPH_VERSION);
   if (parsed === null) {

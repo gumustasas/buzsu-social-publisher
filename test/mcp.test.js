@@ -1246,3 +1246,42 @@ test("run_deep_research: confirmed:true ile geçerli bir SEO akışını çalı�
     global.fetch = originalFetch;
   }
 });
+
+// TASK-011: compose_cinematic_reel, gerçek Blob/GitHub API çağrılarından ÖNCE
+// scenes'i doğrular (bkz. src/cinematic/schema.js) — compose_product_video
+// testindeki (satır ~173) AYNI ilke. Kapsamlı job-yaşam-döngüsü testleri
+// test/cinematic-compose.test.js'te (owns).
+test("compose_cinematic_reel validates scenes before any network/Blob access", async () => {
+  await assert.rejects(() => callTool("compose_cinematic_reel", { scenes: [{ imageUrl: "https://example.com/a.png", durationSeconds: 3 }] }), /en az 2/);
+  await assert.rejects(() => callTool("compose_cinematic_reel", { scenes: [] }), /en az 2/);
+});
+
+test("get_cinematic_render_status requires jobId", async () => {
+  await assert.rejects(() => callTool("get_cinematic_render_status", {}), /jobId gerekli/);
+});
+
+test("tools/list: compose_cinematic_reel ve get_cinematic_render_status listede yer alır, scenes şeması min 2 öğe + tüm kamera/geçiş/görsel profili enum'larını içerir, ve MEVCUT tool'lar (compose_product_video dahil) BOZULMAMIŞTIR", async () => {
+  const response = await handleMessage({ id: 1, method: "tools/list" });
+  const tools = response.result.tools;
+  const composeTool = tools.find((t) => t.name === "compose_cinematic_reel");
+  assert.ok(composeTool, "compose_cinematic_reel tools/list içinde bulunamadı");
+  assert.deepEqual(composeTool.inputSchema.required, ["scenes"]);
+  assert.deepEqual(composeTool.inputSchema.properties.scenes.items.required, ["imageUrl", "durationSeconds"]);
+  assert.deepEqual(composeTool.inputSchema.properties.scenes.items.properties.camera.properties.type.enum, [
+    "push-in", "pull-out", "pan-left", "pan-right", "tilt-up", "tilt-down", "static-premium"
+  ]);
+  assert.deepEqual(composeTool.inputSchema.properties.scenes.items.properties.transition.properties.type.enum, [
+    "crossfade", "motion-blur", "light-wipe", "whip", "match-cut"
+  ]);
+  assert.deepEqual(composeTool.inputSchema.properties.visualProfile.enum, ["clean-tech", "premium-soft", "commercial", "natural"]);
+  assert.deepEqual(composeTool.inputSchema.properties.aspectRatio.enum, ["9:16", "1:1", "16:9"]);
+  assert.ok(!("confirmed" in (composeTool.inputSchema.properties || {})), "render tamamen ücretsizdir — confirmed alanı OLMAMALI");
+
+  const statusTool = tools.find((t) => t.name === "get_cinematic_render_status");
+  assert.ok(statusTool, "get_cinematic_render_status tools/list içinde bulunamadı");
+  assert.deepEqual(statusTool.inputSchema.required, ["jobId"]);
+
+  for (const existingName of ["compose_product_video", "get_video_render_status", "compose_reel_audio", "generate_video_clip", "generate_omni_video_edit", "generate_gemini_video"]) {
+    assert.ok(tools.some((t) => t.name === existingName), `${existingName} tools/list'ten kaybolmuş`);
+  }
+});
