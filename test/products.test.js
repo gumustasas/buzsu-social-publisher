@@ -158,3 +158,35 @@ test("createDraftRecord writes mediaItems as a JSON string in the Media Items fi
     global.fetch = originalFetch;
   }
 });
+
+
+test("listProducts Airtable pagination offset'lerini takip eder ve 100+ kaydı kaybetmez", async () => {
+  const originalFetch = global.fetch;
+  const page1 = Array.from({ length: 100 }, (_, i) => ({
+    id: `rec${i + 1}`,
+    fields: { "Başlık": `Ürün ${i + 1}`, "Kaynak URL": `https://www.buzsu.com.tr/urun-${i + 1}/` }
+  }));
+  const page2 = [{
+    id: "rec101",
+    fields: { "Başlık": "Geç Sayfa Ürünü", "Kaynak URL": "https://www.buzsu.com.tr/gec-sayfa-urunu/" }
+  }];
+  const airtableUrls = [];
+  global.fetch = async (url) => {
+    const href = String(url);
+    if (href.includes("api.airtable.com")) {
+      airtableUrls.push(href);
+      if (href.includes("offset=page2")) return { ok: true, json: async () => ({ records: page2 }) };
+      return { ok: true, json: async () => ({ records: page1, offset: "page2" }) };
+    }
+    if (href.includes("llms-full.txt")) return { ok: true, text: async () => "" };
+    throw new Error(`unexpected fetch: ${href}`);
+  };
+  try {
+    const products = await listProducts();
+    assert.ok(products.some((item) => item.id === "rec101"));
+    assert.equal(airtableUrls.length, 2);
+    assert.ok(airtableUrls[1].includes("offset=page2"));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
