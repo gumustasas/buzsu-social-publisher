@@ -39,8 +39,10 @@ export async function researchWithGoogle({ query, urls = [] }, env = process.env
     .map((chunk) => chunk?.web)
     .filter(Boolean)
     .map((web) => ({ url: web.uri, title: web.title, provider: "google" }));
-  const urlContextSources = (grounding.urlContextMetadata?.urlMetadata || [])
-    .filter((entry) => entry?.retrievedUrl)
+  // URL Context metadata is a top-level Candidate field in generateContent,
+  // not nested inside groundingMetadata.
+  const urlContextSources = (candidate.urlContextMetadata?.urlMetadata || [])
+    .filter((entry) => entry?.retrievedUrl && entry?.urlRetrievalStatus === "URL_RETRIEVAL_STATUS_SUCCESS")
     .map((entry) => ({ url: entry.retrievedUrl, title: entry.retrievedUrl, provider: "google" }));
 
   return {
