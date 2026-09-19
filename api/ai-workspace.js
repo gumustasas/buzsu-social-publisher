@@ -2,6 +2,7 @@ import "dotenv/config";
 import { getSession } from "../src/auth.js";
 import { runDeepResearch, RESEARCH_MODES } from "../src/deep-research/index.js";
 import { runOrchestration, ORCHESTRATOR_CAPABILITIES } from "../src/orchestrator/index.js";
+import { redactSecrets } from "../src/orchestrator/redact.js";
 
 // TASK-009: Dashboard AI Research / Agent Workspace — bu dosya SADECE
 // authenticated dashboard'ın TASK-007 (run_agent_orchestration) ve TASK-008
@@ -75,12 +76,18 @@ export function createAiWorkspaceHandler({
 
       return response.status(400).json({ ok: false, error: `Desteklenmeyen action: "${action}".` });
     } catch (error) {
-      // runDeepResearch/runOrchestration hata mesajlarını KENDİLERİ zaten
-      // secret'lara karşı redakte eder (bkz. src/deep-research/redact.js,
-      // src/orchestrator/redact.js) — burada AYRICA bir redaksiyon
-      // katmanı İCAT EDİLMEZ, olduğu gibi (zaten güvenli) mesaj iletilir.
-      console.error(error);
-      return response.status(400).json({ ok: false, error: error.message });
+      // ROOT review (PR #108): runDeepResearch/runOrchestration hata
+      // mesajlarını KENDİLERİ zaten secret'lara karşı redakte eder (bkz.
+      // src/deep-research/redact.js, src/orchestrator/redact.js) — ama bu
+      // adaptör onların ARKASINDA kalan SON savunma hattıdır: beklenmeyen/
+      // henüz redakte edilmemiş bir hata (örn. bu iki çekirdek fonksiyonun
+      // dışında, adaptörün kendi kodunda oluşan bir hata) burada YAKALANIR
+      // ve HEM tarayıcıya dönen yanıtta HEM log satırında (console.error'a
+      // asla ham error/error.message VERİLMEZ) AYNI (zaten depoda var olan,
+      // TEKRAR icat edilmeyen) redactSecrets() ile redakte edilir.
+      const safeMessage = redactSecrets(error?.message ?? String(error), env);
+      console.error(redactSecrets(error?.stack || safeMessage, env));
+      return response.status(400).json({ ok: false, error: safeMessage });
     }
   };
 }

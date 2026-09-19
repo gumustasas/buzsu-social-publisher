@@ -165,19 +165,40 @@ test("ai-workspace handler: publish/update/delete/upload/autopilot capability'le
   }
 });
 
-test("ai-workspace handler: hata mesajında ham bir secret env değeri varsa sızmaz (runDeepResearch/runOrchestration'ın KENDİ redaksiyonu korunur)", async () => {
+// ROOT review (PR #108): önceki sürümde downstream mock ZATEN önceden
+// redakte edilmiş bir hata fırlatıyordu — bu, adapter'ın KENDİ redaksiyon
+// kodunu HİÇ egzersiz etmiyordu (runDeepResearch/runOrchestration
+// çağrılmadığı için onların redaksiyonu da devrede değildi; test sadece
+// "ne fırlatırsan aynen döner" davranışını doğruluyordu). Burada downstream
+// KASITLI OLARAK HAM (redakte edilmemiş) bir hata fırlatır — adapter'ın
+// KENDİ catch bloğundaki redactSecrets() çağrısının hem HTTP yanıtını hem
+// console.error log satırını GERÇEKTEN redakte ettiği doğrulanır.
+test("ai-workspace handler: downstream RAW (redakte edilmemiş) bir hata fırlatsa bile ham secret NE yanıta NE log'a sızar — adapter'ın KENDİ redaksiyonu devreye girer", async () => {
   const secretValue = "sk-supersecrettestvalue987654";
-  const handler = createAiWorkspaceHandler({
-    getSessionImpl: () => ({ id: "u1" }),
-    env: { GEMINI_API_KEY: secretValue },
-    runDeepResearchImpl: async (input, env) => {
-      // src/deep-research/index.js'in KENDİ redactSecrets'ının davranışını taklit eder.
-      throw new Error(String(`HTTP 401: key=${env.GEMINI_API_KEY}`).split(env.GEMINI_API_KEY).join("[REDACTED]"));
-    }
-  });
-  const res = response();
-  await handler(request("POST", "deep-research", { mode: "seo", objective: "x", confirmed: true }), res);
-  assert.equal(res.statusCode, 400);
-  assert.doesNotMatch(res.payload.error, new RegExp(secretValue));
-  assert.match(res.payload.error, /\[REDACTED\]/);
+  const originalConsoleError = console.error;
+  const loggedCalls = [];
+  console.error = (...args) => { loggedCalls.push(args); };
+  try {
+    const handler = createAiWorkspaceHandler({
+      getSessionImpl: () => ({ id: "u1" }),
+      env: { GEMINI_API_KEY: secretValue },
+      runDeepResearchImpl: async () => {
+        // Ham/redakte edilmemiş bir hata — gerçek bir provider hatasının
+        // (veya adapter'ın kendi kodundaki beklenmeyen bir hatanın) upstream
+        // redaksiyondan KAÇMIŞ olabileceği en kötü durumu temsil eder.
+        throw new Error(`HTTP 401: key=${secretValue} geçersiz — ham hata, redakte edilmemiş`);
+      }
+    });
+    const res = response();
+    await handler(request("POST", "deep-research", { mode: "seo", objective: "x", confirmed: true }), res);
+
+    assert.equal(res.statusCode, 400);
+    assert.doesNotMatch(res.payload.error, new RegExp(secretValue));
+    assert.match(res.payload.error, /\[REDACTED\]/);
+
+    const loggedText = loggedCalls.map((args) => args.map((value) => String(value)).join(" ")).join("\n");
+    assert.doesNotMatch(loggedText, new RegExp(secretValue));
+  } finally {
+    console.error = originalConsoleError;
+  }
 });
