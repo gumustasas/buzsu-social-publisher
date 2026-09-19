@@ -1,6 +1,6 @@
 task_id: TASK-008
 title: Read-Only Deep Research Layer
-status: BLOCKED
+status: READY
 type: code
 assigned_to: claude-code
 review_by:
@@ -11,18 +11,154 @@ depends_on:
   - TASK-006
 branch: agent/task-008-deep-research
 repo: https://github.com/gumustasas/buzsu-social-publisher
+
 goal: >
-  Add a separate read-only deep-research workflow for SEO, competitor and weekly content
-  opportunity research, using only allowlisted read tools.
+  Add a separate provider-independent, read-only deep-research workflow for SEO,
+  competitor analysis and weekly content-opportunity research. Reuse the existing
+  TASK-001 research layer and TASK-006 product-knowledge layer; do not duplicate
+  provider implementations. Research results must preserve sources, uncertainty
+  and material source conflicts.
+
 owns:
   - src/deep-research/**
   - test/deep-research*
+
+shared_touch:
+  - api/mcp.js
+  - test/mcp.test.js
+  - README.md
+  - tasks/TASK-008-deep-research.yaml
+
+do_not_touch:
+  - provider implementations owned by TASK-001 or TASK-006 except when a minimal,
+    demonstrated compatibility fix is strictly required
+  - publishing/autopilot implementation
+  - deployment configuration
+  - production environment variables
+
+dependency_gate:
+  - verify TASK-001 status is DONE on current main
+  - verify TASK-006 status is DONE on current main
+  - if either dependency is missing or not DONE, stop and report BLOCKED before implementation
+
+execution_rules:
+  - start from current main
+  - create or use branch agent/task-008-deep-research only after dependency verification
+  - reuse existing research_web and product-knowledge core capabilities; do not create duplicate provider stacks
+  - deep research must be read-only and fail-closed
+  - use a static allowlist of permitted read/research capabilities
+  - never expose or invoke publish, draft mutation, status mutation, upload, delete, autopilot, deployment or environment-mutation capabilities
+  - preserve existing confirmed:true and cost gates of any underlying capability
+  - never synthesize confirmation on behalf of the user
+  - no silent provider fallback that changes cost or behavior
+  - do not silently resolve contradictory sources; surface material conflicts explicitly
+  - distinguish sourced findings from inference and uncertainty
+  - never expose API keys, secrets or credentials in logs, responses or errors
+  - do not change env values
+  - do not deploy to Vercel, Render or production
+  - do not merge the pull request
+
+required_output:
+  - query_or_objective
+  - findings
+  - sources
+  - uncertainty
+  - conflicts
+  - providers_or_capabilities_used
+
+research_modes:
+  - seo
+  - competitor
+  - weekly_content_opportunities
+
 acceptance:
-  - only read-only tools are exposed
-  - no publish/update/delete actions
-  - research output includes sources and uncertainty/conflicts
+  - separate deep-research module exists under src/deep-research
+  - only explicitly allowlisted read/research capabilities can be invoked
+  - no publish/update/delete/autopilot/deployment action is reachable from the workflow
+  - TASK-001 research capability is reused rather than duplicated
+  - TASK-006 product-knowledge capability is reused where product context is relevant
+  - provider behavior remains provider-independent and does not silently change provider/cost
+  - confirmation/cost gates of reused capabilities are preserved
+  - research output contains normalized sources
+  - research output explicitly contains uncertainty
+  - material source conflicts are surfaced rather than silently reconciled
+  - malformed or unsupported research modes are rejected
+  - provider/tool failures are surfaced clearly and fail closed
+  - secrets are not leaked through output or errors
+  - existing MCP tools/list behavior remains compatible
+  - TASK-001 and TASK-006 regression tests remain green
+  - tests use mocks/stubs and make no real paid generation/inference calls
+  - repository-standard validation passes
   - npm run check passes
+
+required_tests:
+  - valid SEO research flow
+  - valid competitor research flow
+  - valid weekly content-opportunity flow
+  - unsupported mode rejection
+  - read-only allowlist enforcement
+  - forbidden mutation capability rejection
+  - confirmation/cost-gate preservation
+  - no silent provider fallback
+  - normalized source preservation
+  - uncertainty output
+  - conflicting-source output
+  - provider/tool failure propagation
+  - malformed input rejection
+  - secret leakage regression
+  - existing MCP tools/list compatibility
+  - TASK-001 and TASK-006 regression coverage
+
+documentation:
+  - document the deep-research modes and output contract
+  - document the exact read-only allowlist and forbidden capability boundary
+  - document source, uncertainty and conflict semantics
+  - update README only where necessary
+  - mark this manifest DONE only after implementation and all required checks actually pass
+
+validation:
+  - inspect package scripts before running commands; do not invent unsupported commands
+  - run the repository-standard full validation suite
+  - run npm run check
+  - do not hide failures by deleting, skipping or weakening existing tests
+  - if an unrelated pre-existing failure blocks validation, report its root cause explicitly
+
+delivery:
+  branch: agent/task-008-deep-research
+  pull_request:
+    base: main
+    draft: true
+    preferred_title: "feat: add read-only deep research layer (TASK-008)"
+    merge: false
+  pr_body_must_include:
+    - architecture summary
+    - changed files
+    - read-only allowlist and forbidden-action boundary
+    - research modes and output contract
+    - provider and confirmation behavior
+    - source, uncertainty and conflict handling
+    - tests and validation commands/results
+    - known limitations
+    - statement that no real paid generation/inference call was made
+    - statement that no production deployment was performed
+
+stop_condition: >
+  After committing the implementation and opening the Draft PR, stop. Do not merge,
+  deploy or expand scope. Wait for ChatGPT ROOT review.
+
+final_report:
+  - dependency check result
+  - branch
+  - commit SHA
+  - PR number and URL
+  - main changed files
+  - test/check results
+  - read-only/security decisions
+  - open issues, if any
+  - READY FOR ROOT REVIEW or the precise reason it is not ready
+
 deliverables:
-  - pull_request
+  - draft_pull_request
   - tests
   - allowlist documentation
+  - final implementation report
