@@ -1,0 +1,34 @@
+task_id: TASK-003
+title: Image Quality Tiers + Nano Banana Pro
+status: READY
+type: code
+assigned_to: claude-code
+review_by:
+  - gemini
+  - chatgpt-root
+depends_on: []
+branch: agent/task-003-image-tiers
+repo: https://github.com/gumustasas/buzsu-social-publisher
+goal: >
+  Unify image quality selection across Google and OpenAI; add Nano Banana Pro as
+  quality tier without duplicating provider logic or breaking current product-preservation flow.
+owns:
+  - src/scene-image.js
+  - src/lib/video-provider-capabilities.js
+  - src/lib/video-model-labels.js
+  - test/scene-image.test.js
+  - test/video-provider-capabilities.test.js
+do_not_touch:
+  - src/research/**
+  - src/transcription/**
+acceptance:
+  - economy/balanced/quality image tiers are explicit
+  - Nano Banana Pro is capability/discovery gated
+  - existing Nano Banana 2 and Lite behavior remains compatible
+  - GPT-Image-2 remains supported
+  - npm run check passes
+  - no paid calls
+deliverables:
+  - pull_request
+  - tests
+  - Gemini review notes
