@@ -1,0 +1,31 @@
+task_id: TASK-002
+title: Shared Google/OpenAI Transcription Provider
+status: READY
+type: code
+assigned_to: codex
+review_by:
+  - perplexity
+  - chatgpt-root
+depends_on: []
+branch: agent/task-002-transcription
+repo: https://github.com/gumustasas/buzsu-social-publisher
+goal: >
+  Add provider-independent media transcription with Google and OpenAI implementations,
+  Turkish-friendly vocabulary hints, timestamps/diarization capability checks, and reuse
+  existing FFmpeg infrastructure when audio extraction is needed.
+owns:
+  - src/transcription/**
+  - test/transcription*
+do_not_touch:
+  - src/research/**
+acceptance:
+  - transcribe_media MCP tool exists
+  - provider supports auto/google/openai
+  - no duplicate FFmpeg subsystem
+  - model/capability discovery is respected
+  - npm run check passes
+  - no paid calls in tests
+deliverables:
+  - pull_request
+  - tests
+  - model/capability notes
