@@ -1359,6 +1359,80 @@ taşır, tek bir sentezlenmiş anlatıya BİRLEŞTİRİLMEZ.
 MCP örneği:
 `run_deep_research({mode:"seo",objective:"kireç önleyici anahtar kelimeleri",provider:"auto",confirmed:true})`
 
+## AI Araştırma / Agent Workspace (TASK-009: Dashboard AI Research / Agent Workspace)
+
+Dashboard'da (`dashboard.html`, `data-tab="ai-workspace"` — nav'da "AI
+Araştırma / Agent") TASK-007'nin kontrollü agent orkestratörünü
+(`run_agent_orchestration`) ve TASK-008'in salt-okunur derin araştırma
+katmanını (`run_deep_research`) authenticated kullanıcıya sunan bir sekme.
+Bu sekme **hiçbir yeni provider/validation/allowlist/state-machine mantığı
+İCAT ETMEZ** — sunucu tarafında yalnızca `api/ai-workspace.js` adlı EN
+KÜÇÜK HTTP adaptörü vardır, o da `runDeepResearch`/`runOrchestration`'ı
+DOĞRUDAN (case handler'ları ATLAYARAK, ama TASK-007/008'in KENDİ iç
+onay/allowlist kontrolleri ile AYNI şekilde) çağırır.
+
+**TASK-007/TASK-008 reuse noktaları:**
+- Derin Araştırma bölümü → `api/ai-workspace.js`'in `action=deep-research`
+  dalı → `runDeepResearch(input, env)` (TASK-008, değiştirilmeden).
+- Gelişmiş Agent bölümü → `action=agent` dalı → `runOrchestration({steps},
+  env)` (TASK-007, değiştirilmeden).
+- Ürün seçimi, YENİ bir ürün kataloğu İCAT ETMEDEN, dashboard'ın ZATEN var
+  olan `products` listesini (`GET /api/content`, `loadProducts()`/
+  `renderProductSelect()`) reuse eder.
+
+**Kimlik doğrulama:** `api/ai-workspace.js`'in HER isteği, depodaki HER
+diğer authenticated route (`api/reel-script.js`, `api/queue.js`, ...) İLE
+AYNI mekanizmayı (`getSession(request)`, `src/auth.js`) kullanır —
+oturumsuz bir istek her zaman `401 Unauthorized` ile HİÇBİR downstream
+çağrı yapmadan reddedilir. Yeni bir auth yolu İCAT EDİLMEMİŞTİR.
+
+**Onay (confirmation) davranışı:**
+- Derin Araştırma: `runDeepResearch`'in KENDİ TEK üst-seviye
+  `confirmed:true` kapısı (bkz. yukarıdaki TASK-008 bölümü) DEĞİŞMEDEN
+  korunur. Dashboard'daki "Çalıştır" butonuna İLK tıklama SADECE bir
+  onay özeti (mod, hedef, rakipler, ürün bağlamı) gösterir ve butonu
+  "Onayla ve Çalıştır (ücretli)"a çevirir — hiçbir ağ isteği ATILMAZ.
+  `confirmed:true` yalnız İKİNCİ tıklamada, sunucuya gönderilir; adaptör
+  bunu KENDİLİĞİNDEN asla üretmez/varsaymaz.
+- Gelişmiş Agent: her adımın `confirmed:true`'sunu kullanıcı JSON içinde
+  KENDİSİ yazar — adaptör hiçbir adıma bunu eklemez/değiştirmez.
+  Dashboard'daki "Agent'ı çalıştır" da AYNI iki-tıklamalı onay desenini
+  izler (birinci tıklama sadece plan özetini gösterir).
+- Her iki bölümde de bir provider/capability başarısız olursa (örn. key
+  yapılandırılmamış) `runDeepResearch`/`runOrchestration`'ın KENDİ
+  "sessiz fallback yok" davranışı DEĞİŞMEDEN yansır — workspace hiçbir
+  koşulda başka bir provider'a KENDİLİĞİNDEN geçmez veya ücretli bir
+  işlemi otomatik tekrar DENEMEZ.
+
+**Forbidden mutation sınırı:** `api/ai-workspace.js`, `create_draft`/
+`update_draft`/`update_status`/`publish_now`/`upload_media`/
+`set_autopilot` veya herhangi bir silme/env/deployment fonksiyonunu HİÇ
+import ETMEZ — bunlar bu dosyanın bağımlılık grafiğinde YOKTUR. Gelişmiş
+Agent'a bu isimlerden biri bir adım olarak yazılırsa,
+`runOrchestration`'ın KENDİ sabit allowlist'i (bkz. TASK-007 bölümü)
+planın TAMAMINI (`status:"blocked"`), hiçbir adım çalışmadan reddeder —
+adaptör bunun için AYRICA bir kontrol EKLEMEZ, TASK-007'nin KENDİ
+korumasına güvenir.
+
+**Dashboard UX:** Derin Araştırma sonuçları `findings`/`sources`/
+`uncertainty`/`conflicts`/`providers_or_capabilities_used` alanlarının
+HER biri için AYRI bir blok olarak render edilir (bulgular tek bir
+anlatıya BİRLEŞTİRİLMEZ; belirsizlik ve çelişkiler kendi renkli
+bloklarında, SESSİZCE çözülmeden gösterilir). Gelişmiş Agent sonuçları
+run durumunu (`completed`/`failed`/`blocked`/`waiting_for_confirmation`)
+bir rozet olarak, ve HER adımı (tamamlanan/duran/bekleyen) sırayla,
+hatasını/nedenini GİZLEMEDEN gösterir. Her iki "Çalıştır" butonu da
+gerçek istek sırasında (`disabled`) devre dışı bırakılır — kazara çift
+gönderim önlenir.
+
+**Bilinen sınırlamalar:** Gelişmiş Agent alanı ham bir JSON adım dizisi
+kabul eder — sürükle-bırak bir adım oluşturucu bu sürümde YOKTUR (bkz.
+manifest: "Advanced Agent area... rather than inventing a new
+orchestrator" — bilinçli olarak minimal tutulmuştur). Bir run
+`waiting_for_confirmation`da durduğunda dashboard onu otomatik
+devam ettirmez (TASK-007'nin kendi sınırlaması) — kullanıcı `confirmed:true`
+ekleyip aynı planı/formu yeniden göndermelidir.
+
 ## AI Reels V2 — dashboard sihirbazı (PR-D: Ürün→Senaryo→Sahne Onayı, PR-E: Sahne Videosu, PR-F/G: Ses & Müzik + Final Reel)
 
 Dashboard'da (`dashboard-reels-v2.js` + `dashboard.html`, `data-tab="reels"`
