@@ -32,3 +32,39 @@ test("OpenAI invalid shape fails closed", async () => {
     { fetchImpl: async () => ({ ok: true, json: async () => ({ output_text: JSON.stringify({ answer: "a" }) }) }) }
   ), /şeması geçersiz/);
 });
+
+
+test("OpenAI retries malformed strict JSON on same provider and drops include after first attempt", async () => {
+  const seenBodies = [];
+  let calls = 0;
+  const result = await searchKnowledgeWithOpenAi(
+    { query: "soru", authoritative: { airtable: null, buzsuOfficial: { verifiedFacts: [] } } },
+    { OPENAI_API_KEY: "o", OPENAI_PRODUCT_KNOWLEDGE_VECTOR_STORE_ID: "vs_1", OPENAI_PRODUCT_KNOWLEDGE_MODEL: "gpt-test" },
+    { fetchImpl: async (url, options) => {
+      calls++;
+      seenBodies.push(JSON.parse(options.body));
+      if (calls === 1) {
+        return { ok: true, json: async () => ({ output_text: '{"answer":"a":"broken"}', output: [{ type: "file_search_call", results: [{ file_id: "f1", filename: "manual.pdf", text: "chunk" }] }] }) };
+      }
+      return { ok: true, json: async () => ({ output_text: JSON.stringify({ answer: "a", retrievedFacts: [], conflicts: [] }), output: [] }) };
+    } }
+  );
+  assert.equal(calls, 2);
+  assert.deepEqual(seenBodies[0].include, ["file_search_call.results"]);
+  assert.equal("include" in seenBodies[1], false);
+  assert.equal(result.parseRetryCount, 1);
+  assert.deepEqual(result.citations, []);
+});
+
+test("OpenAI malformed JSON remains fail-closed after bounded retries", async () => {
+  let calls = 0;
+  await assert.rejects(() => searchKnowledgeWithOpenAi(
+    { query: "q", authoritative: {} },
+    { OPENAI_API_KEY: "o", OPENAI_PRODUCT_KNOWLEDGE_VECTOR_STORE_ID: "vs_1" },
+    { fetchImpl: async () => {
+      calls++;
+      return { ok: true, json: async () => ({ output_text: "not-json" }) };
+    } }
+  ), /geçersiz JSON/);
+  assert.equal(calls, 3);
+});
