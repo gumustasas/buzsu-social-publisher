@@ -4,7 +4,6 @@ status: BLOCKED
 type: code
 assigned_to: claude-code
 review_by:
-  - codex
   - chatgpt-root
 depends_on:
   - TASK-001
