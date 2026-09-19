@@ -1003,6 +1003,61 @@ düşülmez, `model_not_found` hatası döner.
   discovery'den doğrulanmış/seçilmiş model) ve `capabilities` de raporlanır.
   **GERÇEK PARA HARCAR.**
 
+## validate_product_visual (TASK-004: referans fotoğrafına karşı görsel doğrulama)
+
+`src/visual-validation/` — AI ile üretilmiş bir sahne görselini, ürünün
+GERÇEK referans fotoğrafıyla (Google Gemini vision) DOĞRUDAN karşılaştıran,
+ayrı ve isteğe bağlı bir kontrol katmanı. Bu, `generate_scene_image`/
+`generate_nano_banana_scene`'in kendi otomatik incelemesinden
+(`src/lib/scene-validation.js`, yalnızca metin bağlamına karşı, referans
+görsel YOK) **farklıdır** — o mevcut akışın varsayılan davranışı bu tool
+tarafından HİÇ DEĞİŞTİRİLMEZ; `validate_product_visual` tamamen ayrı,
+açıkça çağrılan bir MCP tool'dur.
+
+- **Karar mekanizması `scene-validation.js` ile AYNI ilke**: tek bir
+  arbitrary güven puanı/confidence skoru KULLANILMAZ. Karar, 7 sabit kontrol
+  kategorisine (`identity`, `logo`, `label`, `proportions`,
+  `component_count`, `installation`, `fabricated_text`) karşı normalize
+  edilmiş bir `failedChecks` listesinden türetilir — model bir sayısal puan
+  döndürse bile bu OKUNMAZ/KULLANILMAZ (`src/visual-validation/prompt.js`
+  modele bunu ÜRETMEMESİNİ de açıkça söyler). `checks` alanı her zaman TAM
+  listedir; `passed = failedChecks.length === 0`; `needsReview =
+  failedChecks.length > 0`.
+- **`src/visual-validation/checks.js`**: `VISUAL_VALIDATION_CHECKS` sabit
+  listesi + `normalizeFailedChecks` — modelin uydurma/bilinmeyen bir kontrol
+  kodu döndürmesi SESSİZCE elenir (halüsinasyona karşı savunma), bilinen
+  kodlar tekilleştirilir.
+- **`src/visual-validation/gemini-compare.js`**: Gemini'ye TEK bir
+  `generateContent` çağrısında referans görseli ÖNCE, üretilen görsel SONRA
+  (iki `inlineData` parçası) gönderir. Model
+  `GEMINI_VISUAL_VALIDATION_MODEL` ile override edilebilir (varsayılan
+  `gemini-3.5-flash`). `scene-validation.js`'in soft-fail (hiç
+  throw etmeyen) davranışından FARKLI OLARAK burada hata SESSİZCE
+  yutulmaz — API key yoksa veya karşılaştırma başarısız olursa açıkça
+  throw eder, çünkü bu birincil, açıkça çağrılan bir tool'dur (ikincil bir
+  otomatik inceleme değil). `generationConfig.responseSchema` ile modelin
+  çıktısı sabit `VISUAL_VALIDATION_CHECKS` enum'ına ve `notes:string`'e
+  ZORLANIR (Gemini structured output) — ama bu şema GÜVENİLİP atlanan bir
+  kısayol DEĞİLDİR: yanıt (boş/eksik metin, bozuk JSON, `failedChecks`'in
+  dizi OLMAMASI) yine de KARARDAN ÖNCE ayrıca doğrulanır. **FAIL-CLOSED**
+  (ROOT review, PR #103): bu üç durumdan HİÇBİRİ sessizce
+  `failedChecks:[]`'e (yani `passed:true`'ya) çevrilmez — açık bir hata
+  fırlatılır, çünkü bozuk/anlaşılamayan bir model yanıtı bir ürün görselini
+  ASLA sessizce onaylayamaz. Yalnızca gerçekten geçerli, dizi tipinde bir
+  `failedChecks` (boş dizi dahil) normal `passed`/`needsReview` kararına
+  girer.
+- **`src/visual-validation/index.js`** (`validateProductVisual`): referans
+  görseli ve üretilen görseli (URL veya base64, `upload_media` ile aynı
+  ikili giriş deseni) `src/lib/upload-media.js`'teki GERÇEK SSRF-güvenli
+  `fetchPublicImage`/`decodeImageBase64` çekirdeğini reuse ederek indirir —
+  kendi indirme/doğrulama mantığı İCAT EDİLMEMİŞTİR.
+- **`validate_product_visual` (MCP tool)**: `referenceImageUrl` ve
+  `confirmed:true` zorunlu; `generatedImageUrl` VEYA
+  (`generatedImageBase64`+`generatedImageMimeType`) TAM OLARAK biri
+  zorunlu, `productTitle`/`sceneDescription` isteğe bağlı. Çıktı:
+  `{passed, needsReview, checks, failedChecks, notes}`. **GERÇEK PARA
+  HARCAR** (bir Gemini vision çağrısıdır).
+
 ## AI Reels V2 — dashboard sihirbazı (PR-D: Ürün→Senaryo→Sahne Onayı, PR-E: Sahne Videosu, PR-F/G: Ses & Müzik + Final Reel)
 
 Dashboard'da (`dashboard-reels-v2.js` + `dashboard.html`, `data-tab="reels"`

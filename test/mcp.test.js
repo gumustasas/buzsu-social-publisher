@@ -965,3 +965,80 @@ test("generate_scene_image: provider='composite' generateCompositeSceneImage'a y
     delete process.env.AIRTABLE_TOKEN;
   }
 });
+
+// TASK-004 (validate_product_visual): api/mcp.js'e minimum entegrasyon —
+// asıl karşılaştırma/normalize/prompt testleri test/visual-validation*.test.js'te
+// (owns). Burada yalnız tool'un TOOLS listesinde göründüğü ve callTool'un
+// validateProductVisual'ı gerçekten çağırdığı (confirmed gate dahil) doğrulanır.
+test("tools/list: validate_product_visual tool listesinde 'referenceImageUrl' + 'confirmed' zorunlu, generatedImageUrl/generatedImageBase64 isteğe bağlı olarak yer alır", async () => {
+  const response = await handleMessage({ id: 1, method: "tools/list" });
+  const tool = response.result.tools.find((t) => t.name === "validate_product_visual");
+  assert.ok(tool, "validate_product_visual tools/list içinde bulunamadı");
+  assert.deepEqual(tool.inputSchema.required, ["referenceImageUrl", "confirmed"]);
+  assert.ok(!tool.inputSchema.required.includes("generatedImageUrl"));
+  assert.ok(!tool.inputSchema.required.includes("generatedImageBase64"));
+  assert.deepEqual(tool.inputSchema.properties.generatedImageMimeType.enum, ["image/png", "image/jpeg", "image/webp"]);
+});
+
+test("validate_product_visual: confirmed:true olmadan hiçbir görsel indirilmez/Gemini'ye istek atılmaz", async () => {
+  const originalFetch = global.fetch;
+  let called = false;
+  global.fetch = async () => { called = true; throw new Error("çağrılmamalıydı"); };
+  try {
+    const response = await handleMessage({
+      id: 1,
+      method: "tools/call",
+      params: { name: "validate_product_visual", arguments: { referenceImageUrl: "https://93.184.216.34/ref.png", generatedImageUrl: "https://93.184.216.34/gen.png" } }
+    });
+    assert.equal(response.result.isError, true);
+    assert.match(response.result.content[0].text, /confirmed:true/);
+    assert.equal(called, false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("validate_product_visual: confirmed:true ile referans+üretilen görseli indirir, Gemini karşılaştırmasını çağırır ve normalize edilmiş failedChecks döner", async () => {
+  const originalFetch = global.fetch;
+  const originalGeminiKey = process.env.GEMINI_API_KEY;
+  process.env.GEMINI_API_KEY = "test-gemini-key";
+  const referenceBytes = new Uint8Array([1, 2, 3, 4]).buffer;
+  const generatedBytes = new Uint8Array([5, 6, 7, 8]).buffer;
+  const fakeImageResponse = (buffer) => ({
+    ok: true,
+    status: 200,
+    headers: { get: (name) => (name === "content-type" ? "image/png" : name === "content-length" ? "4" : null) },
+    arrayBuffer: async () => buffer
+  });
+  let generateContentCalled = false;
+  global.fetch = async (url) => {
+    const href = String(url);
+    if (href.includes("ref.png")) return fakeImageResponse(referenceBytes);
+    if (href.includes("gen.png")) return fakeImageResponse(generatedBytes);
+    if (href.includes("generateContent")) {
+      generateContentCalled = true;
+      return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ failedChecks: ["logo"], notes: "Logo farklı." }) }] } }] }) };
+    }
+    throw new Error("beklenmeyen fetch: " + href);
+  };
+  try {
+    const text = await callTool("validate_product_visual", {
+      referenceImageUrl: "https://93.184.216.34/ref.png",
+      generatedImageUrl: "https://93.184.216.34/gen.png",
+      productTitle: "UltraMag",
+      confirmed: true
+    });
+    const parsed = JSON.parse(text);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.passed, false);
+    assert.equal(parsed.needsReview, true);
+    assert.deepEqual(parsed.failedChecks, ["logo"]);
+    assert.equal(parsed.notes, "Logo farklı.");
+    assert.deepEqual([...parsed.checks].sort(), ["component_count", "fabricated_text", "identity", "installation", "label", "logo", "proportions"]);
+    assert.equal(generateContentCalled, true);
+  } finally {
+    global.fetch = originalFetch;
+    if (originalGeminiKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = originalGeminiKey;
+  }
+});
