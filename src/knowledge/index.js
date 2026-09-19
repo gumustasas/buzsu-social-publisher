@@ -23,10 +23,14 @@ async function buildAuthoritativeContext(input, deps) {
   const context = await getContext({ productId: input.productId, productUrl: input.productUrl }, deps.productContextDeps || {});
   const products = await listProductsImpl();
   const canonical = resolveProductUrl(context.canonicalUrl);
-  const match = products.find((item) =>
-    (input.productId && item.id === input.productId) ||
-    (canonical && resolveProductUrl(item.url) === canonical)
-  );
+  const idMatch = input.productId ? products.find((item) => item.id === input.productId) : null;
+  if (input.productId && input.productUrl && idMatch) {
+    const idCanonical = resolveProductUrl(idMatch.url);
+    if (!idCanonical || idCanonical !== canonical) {
+      throw new Error("productId ve productUrl farklı ürünleri işaret ediyor; authoritative kaynaklar karıştırılmadı.");
+    }
+  }
+  const match = canonical ? products.find((item) => resolveProductUrl(item.url) === canonical) : null;
 
   const airtable = match?.fromAirtable ? {
     productId: match.id,
