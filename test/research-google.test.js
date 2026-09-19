@@ -33,7 +33,7 @@ test("researchWithGoogle: urls verilirse urlContext tool'u eklenir ve urlContext
   const data = {
     candidates: [{
       content: { parts: [{ text: "Cevap." }] },
-      groundingMetadata: { urlContextMetadata: { urlMetadata: [{ retrievedUrl: "https://example.com/b", urlRetrievalStatus: "URL_RETRIEVAL_STATUS_SUCCESS" }] } }
+      urlContextMetadata: { urlMetadata: [{ retrievedUrl: "https://example.com/b", urlRetrievalStatus: "URL_RETRIEVAL_STATUS_SUCCESS" }] }
     }]
   };
   const result = await researchWithGoogle({ query: "test", urls: ["https://example.com/b"] }, { GEMINI_API_KEY: "gkey" }, {
@@ -42,6 +42,19 @@ test("researchWithGoogle: urls verilirse urlContext tool'u eklenir ve urlContext
   assert.deepEqual(seenBody.tools, [{ googleSearch: {} }, { urlContext: {} }]);
   assert.match(seenBody.contents[0].parts[0].text, /example\.com\/b/);
   assert.deepEqual(result.sources, [{ url: "https://example.com/b", title: "https://example.com/b", provider: "google" }]);
+});
+
+test("researchWithGoogle: başarısız URL Context retrieval kaynak listesine eklenmez", async () => {
+  const data = {
+    candidates: [{
+      content: { parts: [{ text: "Cevap." }] },
+      urlContextMetadata: { urlMetadata: [{ retrievedUrl: "https://example.com/paywall", urlRetrievalStatus: "URL_RETRIEVAL_STATUS_PAYWALL" }] }
+    }]
+  };
+  const result = await researchWithGoogle({ query: "test", urls: ["https://example.com/paywall"] }, { GEMINI_API_KEY: "gkey" }, {
+    fetchImpl: async () => ({ ok: true, json: async () => data })
+  });
+  assert.deepEqual(result.sources, []);
 });
 
 test("researchWithGoogle: HTTP hatası açık bir hata fırlatır", async () => {
