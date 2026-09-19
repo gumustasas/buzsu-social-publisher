@@ -1042,3 +1042,32 @@ test("validate_product_visual: confirmed:true ile referans+üretilen görseli in
     else process.env.GEMINI_API_KEY = originalGeminiKey;
   }
 });
+
+
+// TASK-005: video-to-image MCP sözleşmesi — ücretli çağrı confirmed:true ile gated.
+test("tools/list: generate_image_from_video exposes official models and confirmed gate", async () => {
+  const response = await handleMessage({ id: 1, method: "tools/list" });
+  const tool = response.result.tools.find((t) => t.name === "generate_image_from_video");
+  assert.ok(tool);
+  assert.deepEqual(tool.inputSchema.required, ["videoUrl", "prompt", "confirmed"]);
+  assert.deepEqual(tool.inputSchema.properties.model.enum, ["gemini-3.1-flash-lite-image", "gemini-3.1-flash-image"]);
+  assert.deepEqual(tool.inputSchema.properties.aspectRatio.enum, ["9:16", "1:1", "16:9"]);
+});
+
+test("generate_image_from_video: confirmed:true olmadan ücretli çağrı başlamaz", async () => {
+  const originalFetch = global.fetch;
+  let called = false;
+  global.fetch = async () => { called = true; throw new Error("çağrılmamalıydı"); };
+  try {
+    const response = await handleMessage({
+      id: 1,
+      method: "tools/call",
+      params: { name: "generate_image_from_video", arguments: { videoUrl: "https://youtu.be/abc", prompt: "poster" } }
+    });
+    assert.equal(response.result.isError, true);
+    assert.match(response.result.content[0].text, /confirmed:true/);
+    assert.equal(called, false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
