@@ -130,7 +130,9 @@ test("getVideoProviderCapabilities only reports the Veo/Omni models actually pre
   };
   try {
     const capabilities = await getVideoProviderCapabilities({ GEMINI_API_KEY: "secret-key-value" });
-    assert.equal(requestedUrl, "https://generativelanguage.googleapis.com/v1beta/models");
+    const parsedRequestedUrl = new URL(requestedUrl);
+    assert.equal(parsedRequestedUrl.origin + parsedRequestedUrl.pathname, "https://generativelanguage.googleapis.com/v1beta/models");
+    assert.equal(parsedRequestedUrl.searchParams.get("pageSize"), "100");
     assert.equal(capabilities.google.omni.available, true);
     assert.equal(capabilities.google.veo.available, true);
     assert.deepEqual(new Set(capabilities.google.veo.models), new Set([VEO_MODEL_TIERS.fast, VEO_MODEL_TIERS.quality]));

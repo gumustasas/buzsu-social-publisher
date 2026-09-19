@@ -228,6 +228,32 @@ test("generateScenePlan treats provider 'composite' the same as 'gemini' instead
   }
 });
 
+// TASK-003 (PR #102 ROOT review, blocker 1) — "openai-high"/"nano-banana-pro"
+// availableSceneProviders()'a eklenince paylaşılan dropdown'dan sahne planı/
+// başlık METNİ fonksiyonlarına da ulaşabiliyor; "openai-low"/"composite" ile
+// AYNI ilkeyle "Desteklenmeyen AI sağlayıcısı." ile reddedilmemeli.
+test("generateScenePlan treats provider 'openai-high' the same as 'openai' instead of rejecting it", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, json: async () => ({ output_text: "test sahne planı" }) });
+  try {
+    const plan = await generateScenePlan("openai-high", { title: "Code Advantage" }, { OPENAI_API_KEY: "key" });
+    assert.equal(plan, "test sahne planı");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateScenePlan treats provider 'nano-banana-pro' the same as 'gemini' instead of rejecting it", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: "test sahne planı" }] } }] }) });
+  try {
+    const plan = await generateScenePlan("nano-banana-pro", { title: "Code Advantage" }, { GEMINI_API_KEY: "key" });
+    assert.equal(plan, "test sahne planı");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("generateSeoArticle rejects an unsupported provider before making any network call", async () => {
   await assert.rejects(
     () => generateSeoArticle("anthropic", { title: "UltraMag" }, "manyetik kireç önleyici", {}),

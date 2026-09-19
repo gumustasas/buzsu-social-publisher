@@ -919,3 +919,49 @@ test("generate_scene_image: provider='nano-banana-pro' gerçek discovery'de bulu
     delete process.env.AIRTABLE_TOKEN;
   }
 });
+
+// TASK-003 (PR #102 ROOT review, blocker 2): generate_scene_image
+// provider='composite' MCP üzerinden generateSceneImage'a değil (o zaten
+// "composite"yi reddeder), generateCompositeSceneImage'a yönlendirilmeli —
+// asıl composite mantığının testleri test/scene-composite.test.js'te (owns).
+function makeOffWhiteProductPhoto(size = 64, bg = 224) {
+  const raw = Buffer.alloc(size * size * 3, bg);
+  for (let y = 20; y < 44; y++) {
+    for (let x = 20; x < 44; x++) {
+      const o = (y * size + x) * 3;
+      raw[o] = 10; raw[o + 1] = 20; raw[o + 2] = 200;
+    }
+  }
+  return sharp(raw, { raw: { width: size, height: size, channels: 3 } }).png().toBuffer();
+}
+
+test("generate_scene_image: provider='composite' generateCompositeSceneImage'a yönlendirilir, generateSceneImage'ın 'Desteklenmeyen sahne üretim sağlayıcısı.' hatasına düşmez", async () => {
+  process.env.AIRTABLE_TOKEN = "test-token";
+  const originalFetch = global.fetch;
+  const productPhoto = await makeOffWhiteProductPhoto();
+  const backgroundPhoto = await sharp(Buffer.alloc(64 * 64 * 3, 200), { raw: { width: 64, height: 64, channels: 3 } }).png().toBuffer();
+  global.fetch = async (url, options) => {
+    const href = String(url);
+    if (href.includes("api.airtable.com")) return { ok: true, json: async () => ({ records: [{ id: "recTEST123", fields: { "Başlık": "Test Ürün", "Görsel URL": "https://example.com/photo.png" } }] }) };
+    if (href.includes("example.com")) return { ok: true, arrayBuffer: async () => productPhoto };
+    if (href.includes("generativelanguage.googleapis.com")) {
+      const body = JSON.parse(options.body);
+      if (body.generationConfig?.responseMimeType === "application/json") {
+        // validateSceneImage'ın otomatik inceleme çağrısı.
+        return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ failedChecks: [], notes: "" }) }] } }] }) };
+      }
+      // generateCompositeSceneImage'ın arka plan üretim çağrısı.
+      return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { data: backgroundPhoto.toString("base64") } }] } }] }) };
+    }
+    throw new Error("beklenmeyen fetch: " + href);
+  };
+  try {
+    const text = await callTool("generate_scene_image", { productId: "recTEST123", sceneDescription: "mutfak", provider: "composite", brand: false });
+    const parsed = JSON.parse(text);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.provider, "composite");
+  } finally {
+    global.fetch = originalFetch;
+    delete process.env.AIRTABLE_TOKEN;
+  }
+});

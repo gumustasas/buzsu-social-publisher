@@ -6,6 +6,7 @@ import { baseProductTitle } from "../src/lib/product-title.js";
 import { findCatalogProduct, isCatalogProductId } from "../src/lib/product-catalog.js";
 import { buildDraft } from "../src/content-worker.js";
 import { availableSceneProviders, generateSceneImage, NANO_BANANA_2_MODEL } from "../src/scene-image.js";
+import { generateCompositeSceneImage } from "../src/scene-composite.js";
 import { generateNanoBananaScene } from "../src/nano-banana-scene.js";
 import { composeBrandedPost } from "../src/post-branding.js";
 import { runPublisher } from "../src/publish-approved.js";
@@ -659,10 +660,20 @@ export async function callTool(name, args) {
       const providers = availableSceneProviders(process.env);
       if (!providers.length) throw new Error("AI görsel sağlayıcı anahtarı (GEMINI_API_KEY veya OPENAI_API_KEY) tanımlı değil.");
       const provider = providers.includes(args.provider) ? args.provider : providers[0];
-      const scene = await generateSceneImage(product, args.sceneDescription, process.env, {
-        removeFaucet: Boolean(args.removeFaucet),
-        provider
-      });
+      // "composite" (bkz. src/scene-composite.js) generateSceneImage'ın
+      // provider switch'inde YOKTUR — piksel-birebir kırpma + AI arka plan
+      // üreten AYRI bir fonksiyondur (api/scene-image.js HTTP rotası zaten
+      // bunu ayrıca çağırıyor). MCP tool enum'ı "composite"yi advertise
+      // ettiği için burada da AYNI şekilde doğru fonksiyona yönlendirilmeli
+      // (bkz. PR #102 ROOT review, blocker 2) — aksi halde ürün görseli
+      // indirilip mask oluşturulduktan SONRA "Desteklenmeyen sahne üretim
+      // sağlayıcısı." hatasıyla başarısız olurdu.
+      const scene = provider === "composite"
+        ? await generateCompositeSceneImage(product, args.sceneDescription, process.env, {})
+        : await generateSceneImage(product, args.sceneDescription, process.env, {
+            removeFaucet: Boolean(args.removeFaucet),
+            provider
+          });
       const rawBuffer = Buffer.from(scene.dataUrl.split(",")[1], "base64");
       let finalBuffer = rawBuffer;
       if (args.brand !== false) finalBuffer = await composeBrandedPost(finalBuffer, { title: product.title });
