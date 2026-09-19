@@ -876,9 +876,10 @@ kapatmaktır.
 - **`src/research/normalize.js`**: her kaynağı `{url, title, snippet,
   provider}` şekline indirger, aynı URL'i tekrar etmez (dedup), en fazla 20
   kaynak tutar.
-- **`research_web` (MCP tool)**: `query` zorunlu; `provider`
-  (`auto`/`google`/`openai`, varsayılan `auto`) ve `urls` (en fazla 5, URL
-  Context) isteğe bağlı. **GERÇEK PARA HARCAR** (bir inference çağrısıdır).
+- **`research_web` (MCP tool)**: `query` ve `confirmed:true` zorunlu;
+  `provider` (`auto`/`google`/`openai`, varsayılan `auto`) ve `urls`
+  (en fazla 5, URL Context) isteğe bağlı. **GERÇEK PARA HARCAR** (bir inference
+  çağrısıdır); `confirmed:true` olmadan provider çağrısı yapılmaz.
 - **`generate_reel_script` entegrasyonu**: isteğe bağlı `researchMode`
   (varsayılan **`"none"`** — verilmezse `research_web`'e HİÇ istek atılmaz,
   davranış eskisiyle AYNI kalır). `"auto"`/`"google"`/`"openai"` verilirse
