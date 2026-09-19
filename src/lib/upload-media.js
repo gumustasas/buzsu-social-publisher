@@ -141,7 +141,11 @@ async function readBodyWithLimit(response, maxBytes) {
 // Hata mesajları mediaLabel/mediaTypesLabel ile parametrize edilir —
 // fetchPublicImage'ın döndürdüğü mesajlar (ve dolayısıyla onu test eden
 // mevcut testler) birebir korunur.
-async function fetchPublicMediaFile(rawUrl, { maxBytes, fetchImpl = fetch, lookup, allowedMimeTypes, mediaLabel, mediaTypesLabel }) {
+//
+// export: src/transcription/media-fetch.js (TASK-002, bkz. PR #101 ROOT
+// review) AYNI SSRF-güvenli indirme çekirdeğini reuse eder — kendi
+// yönlendirme/private-IP/streaming-limit mantığını AYRICA icat etmez.
+export async function fetchPublicMediaFile(rawUrl, { maxBytes, fetchImpl = fetch, lookup, allowedMimeTypes, mediaLabel, mediaTypesLabel }) {
   let currentUrl = rawUrl;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const url = await assertPublicHttpsUrl(currentUrl, lookup ? { lookup } : {});

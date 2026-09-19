@@ -890,6 +890,78 @@ kapatmaktır.
   (zaten çözülmüş `productContext`'ten) kullanılır — uydurma bir değer
   değildir.
 
+## transcribe_media (TASK-002: provider-independent transkripsiyon katmanı)
+
+`src/transcription/` — Google Gemini 3.5 Transcribe (Files API + Interactions
+API) veya OpenAI Whisper/gpt-4o-transcribe-diarize (`/v1/audio/transcriptions`)
+ile bir medya dosyasını birebir metne çeviren, provider-independent bir katman.
+Model seçimi GERÇEK bir `/models` discovery çağrısıyla doğrulanır —
+`creative-providers/model-registry.js`'teki `resolveTier` İLE AYNI ilke:
+yapılandırılmış bir model discovery'de bulunamazsa SESSİZCE başka bir modele
+düşülmez, `model_not_found` hatası döner.
+
+- **`src/transcription/media-fetch.js`**: mediaUrl'den ham byte'ları indiren
+  TEK ortak yardımcı — `src/lib/upload-media.js`'teki (upload_media/
+  fetchPublicImage/fetchPublicAudio/fetchPublicVideo) GERÇEK SSRF-güvenli
+  indirme çekirdeğini (`fetchPublicMediaFile`) reuse eder: yalnız HTTPS,
+  hostname'in çözümlendiği IP'nin özel/yerel olmadığı (`assertPublicHttpsUrl`),
+  HER yönlendirme adımının yeniden doğrulanması ve gövdenin akış hâlinde
+  okunup limit aşılır aşılmaz durdurulması (Content-Length'e güvenmeden) —
+  kendi SSRF/streaming mantığı İCAT EDİLMEMİŞTİR. **Ayrı bir FFmpeg
+  ses-ayıklama adımı KASITLI olarak YOKTUR**: OpenAI `/v1/audio/
+  transcriptions` mp4/webm video container'larını DOĞRUDAN kabul eder — MOV/
+  M4V gibi diğer kapsayıcılar OpenAI'nin belgelenmiş format listesinde
+  OLMADIĞI için `openai-transcribe.js`'te AÇIKÇA reddedilir (bu katmanın
+  kendi MIME listesi kasıtlı olarak geniştir — sıkı, sağlayıcıya özgü
+  reddetme adapter seviyesinde olur). **Google video KABUL ETMEZ** — Gemini
+  3.5 Transcribe yalnız ses MIME türleriyle çalışır; video verilirse açık
+  bir hatayla (OpenAI'yi seçin veya önce ses ayıklayın) reddedilir. Dosya
+  ~24MB'ı (Vercel fonksiyon sınırları + Whisper'ın API limiti) aşarsa
+  SESSİZCE küçültülmez — açık bir hata döner; bu durumda mevcut GitHub
+  Actions FFmpeg render kuyruğu (`src/lib/ffmpeg-command.js`,
+  `src/reel-audio-compose.js`) yeniden kullanılmalı, yeni bir senkron FFmpeg
+  alt sistemi İCAT EDİLMEMİŞTİR.
+- **`src/transcription/provider.js`**: `discoverTranscriptionModels` her iki
+  sağlayıcının GERÇEK model listesini (`GET /v1beta/models` /
+  `GET /v1/models`, `transcribe`/`whisper` adlı modellerle filtrelenmiş) çeker.
+  `resolveTranscriptionProvider` bu discovery'ye karşı: (1) API key var mı,
+  (2) yapılandırılmış model (`GOOGLE_TRANSCRIBE_MODEL`/`OPENAI_TRANSCRIBE_MODEL`
+  veya varsayılan) discovery'de GERÇEKTEN listeleniyor mu, (3) istenen
+  capability'yi (diarization/customVocabulary) o model destekliyor mu —
+  üçünü de doğrular; herhangi biri tutmazsa SESSİZCE başka bir modele/
+  sağlayıcıya geçmez, açık bir `reason` ile `available:false` döner.
+  `transcriptionCapabilities(provider, model)` MODEL BAZLI bir matristir
+  (aynı provider'ın farklı modelleri farklı yeteneklere sahip olabilir):
+  Google `gemini-3.5-transcribe` → native diarization + kelime düzeyinde
+  `"exact_word"` zaman damgası + custom vocabulary (diarization ile BİRLİKTE
+  değil); OpenAI `whisper-1` → segment düzeyinde `"exact_segment"` zaman
+  damgası + custom vocabulary, diarization YOK; OpenAI
+  `gpt-4o-transcribe-diarize` → native diarization + `"exact_segment"` zaman
+  damgası, custom vocabulary YOK (prompt alanı desteklenmez).
+  `diarization:true` + `vocabularyHints` AYNI istekte birlikte verilemez
+  (`index.js` bunu discovery'ye gitmeden erkenden reddeder) — ikisi karşılıklı
+  dışlar.
+- **`src/transcription/google-transcribe.js`**: Gemini Files API'ye (resumable
+  upload) yükler, sonra Interactions API'ye (`transcription_config`:
+  `language_codes`/`custom_vocabulary`/`mode.diarization_mode`/
+  `mode.timestamp_granularities`) transkript ister; kelime düzeyinde
+  zaman damgası + konuşmacı etiketleri `word_info` annotation'larından
+  (`start_offset`/`end_offset` "0.500s" formatı) çıkarılır.
+- **`src/transcription/openai-transcribe.js`**: `whisper-1` →
+  `response_format:"verbose_json"` + `timestamp_granularities[]:"segment"` +
+  `prompt` (vocabulary ipucu); `gpt-4o-transcribe-diarize` →
+  `response_format:"diarized_json"` + `chunking_strategy:"auto"`, `prompt`
+  YOK (model bunu desteklemez). Aynı `OPENAI_API_KEY`/`OPENAI_IMAGE_API_KEY`
+  reuse edilir.
+- **`src/transcription/normalize.js`**: her segmenti `{startSeconds,
+  endSeconds,text,speaker}` şekline indirger; `endSeconds <= startSeconds`
+  olan bozuk segmentler sessizce ATLANIR (uydurma zaman damgası üretilmez).
+- **`transcribe_media` (MCP tool)**: `mediaUrl` ve `confirmed:true` zorunlu;
+  `provider` (`auto`/`google`/`openai`), `languageHint`, `vocabularyHints`
+  (en fazla 20) ve `diarization` isteğe bağlı. Sonuçta `modelUsed` (gerçekte
+  discovery'den doğrulanmış/seçilmiş model) ve `capabilities` de raporlanır.
+  **GERÇEK PARA HARCAR.**
+
 ## AI Reels V2 — dashboard sihirbazı (PR-D: Ürün→Senaryo→Sahne Onayı, PR-E: Sahne Videosu, PR-F/G: Ses & Müzik + Final Reel)
 
 Dashboard'da (`dashboard-reels-v2.js` + `dashboard.html`, `data-tab="reels"`

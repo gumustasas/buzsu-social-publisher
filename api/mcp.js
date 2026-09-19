@@ -26,6 +26,7 @@ import { getBuzsuProductContext } from "../src/lib/product-intelligence.js";
 import { generateReelScript } from "../src/reel-script.js";
 import { REEL_OBJECTIVES, REEL_ASPECT_RATIOS, REEL_DURATIONS } from "../src/lib/reel-script-schema.js";
 import { researchWeb, RESEARCH_PROVIDERS } from "../src/research/index.js";
+import { transcribeMedia, TRANSCRIPTION_PROVIDERS } from "../src/transcription/index.js";
 import { CREATIVE_TIERS } from "../src/creative-providers/model-registry.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
@@ -467,6 +468,22 @@ const TOOLS = [
         confirmed: { type: "boolean", description: "true olmadan ücretli research provider çağrısı yapılmaz." }
       },
       required: ["query", "confirmed"]
+    }
+  },
+  {
+    name: "transcribe_media",
+    description: "Google Gemini 3.5 Transcribe (Files API + Interactions API) veya OpenAI Whisper/gpt-4o-transcribe-diarize (/v1/audio/transcriptions) ile bir medya dosyasını birebir metne çevirir. Model seçimi GERÇEK bir /models discovery çağrısıyla doğrulanır — yapılandırılmış bir model discovery'de bulunamazsa (model_not_found) SESSİZCE farklı bir modele düşülmez, açık bir hata döner. Google yalnız SES MIME türlerini kabul eder (video için OpenAI'yi seçin veya mevcut GitHub Actions FFmpeg render kuyruğuyla önce ses ayıklayın — bu depoda ayrı bir senkron FFmpeg alt sistemi YOKTUR). GERÇEK PARA HARCAR — confirmed:true olmadan hiçbir sağlayıcıya istek atılmaz. provider='auto' hiçbir koşulda diğer sağlayıcıya SESSİZCE düşmez. diarization:true istenirse yalnızca bunu destekleyen model seçilir (Google 'gemini-3.5-transcribe' native; OpenAI diarization istendiğinde OPENAI_TRANSCRIBE_MODEL override edilmemişse otomatik 'gpt-4o-transcribe-diarize'e geçer, override edilmiş whisper-1 gibi bir model diarization'ı desteklemiyorsa SESSİZCE yok sayılmaz, diarization_not_supported hatası döner). diarization:true ile vocabularyHints AYNI istekte birlikte kullanılamaz (her iki sağlayıcıda da bu ikisi karşılıklı dışlar) — birlikte verilirse hiçbir API çağrısı yapılmadan reddedilir. Zaman damgası doğruluğu seçilen modele göre 'exact_word' (Gemini native)/'exact_segment' (Whisper/diarize) olarak dönen 'timestampAccuracy' alanında raporlanır. vocabularyHints (ör. 'Buzsu', 'kireç önleyici') bir talimat DEĞİLDİR, kelime hazinesi ipucudur.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        mediaUrl: { type: "string", description: "Herkese açık HTTPS medya URL'i. Google için SES MIME türü zorunludur (video reddedilir); OpenAI mp4/webm video container'larını da kabul eder — MOV/M4V gibi diğer kapsayıcılar KABUL EDİLMEZ, açık bir hatayla reddedilir (önce mevcut FFmpeg render kuyruğuyla ses ayıklayın)." },
+        provider: { type: "string", enum: ["auto", ...TRANSCRIPTION_PROVIDERS], description: "Varsayılan 'auto' — GERÇEKTEN yapılandırılmış, discovery'de doğrulanmış (ve diarization/vocabularyHints isteniyorsa bunu destekleyen) ilk sağlayıcı seçilir. Başarısızlıkta ASLA diğer sağlayıcıya otomatik geçilmez." },
+        languageHint: { type: "string", description: "İsteğe bağlı dil ipucu (Google: BCP-47 ör. 'tr-TR'; OpenAI: ISO-639-1 ör. 'tr'). Verilmezse sağlayıcı otomatik algılar." },
+        vocabularyHints: { type: "array", items: { type: "string" }, description: "İsteğe bağlı — en fazla 20 marka/terim ipucu (ör. ['Buzsu','kireç önleyici']), tanımayı iyileştirir; diarization:true ile BİRLİKTE kullanılamaz, bunu desteklemeyen bir model seçiliyse (ör. gpt-4o-transcribe-diarize) custom_vocabulary_not_supported hatası döner." },
+        diarization: { type: "boolean", description: "true ise konuşmacı ayrımı istenir. Bunu destekleyen bir model otomatik/doğrulanarak seçilir (Google gemini-3.5-transcribe; OpenAI gpt-4o-transcribe-diarize) — desteklemeyen bir model açıkça override edilmişse (ör. OPENAI_TRANSCRIBE_MODEL=whisper-1) SESSİZCE yok sayılmaz, açık bir hata döner." },
+        confirmed: { type: "boolean", description: "true olmadan ücretli transkripsiyon çağrısı yapılmaz." }
+      },
+      required: ["mediaUrl", "confirmed"]
     }
   },
   {
@@ -948,6 +965,14 @@ export async function callTool(name, args) {
     case "research_web": {
       if (args.confirmed !== true) throw new Error("Bu işlem gerçek API kredisi harcar. Onaylamak için confirmed:true gönderin.");
       const result = await researchWeb({ query: args.query, provider: args.provider, urls: args.urls }, process.env);
+      return JSON.stringify({ ok: true, ...result }, null, 2);
+    }
+    case "transcribe_media": {
+      if (args.confirmed !== true) throw new Error("Bu işlem gerçek API kredisi harcar. Onaylamak için confirmed:true gönderin.");
+      const result = await transcribeMedia(
+        { mediaUrl: args.mediaUrl, provider: args.provider, languageHint: args.languageHint, vocabularyHints: args.vocabularyHints, diarization: args.diarization === true },
+        process.env
+      );
       return JSON.stringify({ ok: true, ...result }, null, 2);
     }
     case "generate_video_narration": {
