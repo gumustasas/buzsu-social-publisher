@@ -2,10 +2,21 @@ import { openaiTextApiKey } from "../ai-providers.js";
 import { fetchMediaBytes } from "./media-fetch.js";
 import { OPENAI_DIARIZE_MODEL } from "./provider.js";
 
+// TASK-002 ROOT review (PR #101): OpenAI'nin /v1/audio/transcriptions
+// BELGELENMİŞ format listesi flac/m4a/mp3/mp4/mpeg/mpga/oga/ogg/wav/webm'dir.
+// video/quicktime (MOV) ve video/x-m4v BU LİSTEDE YOKTUR — önceki sürüm
+// bunları sessizce eşleyip API'ye gönderiyordu, orada başarısız oluyordu.
+// Artık burada AÇIKÇA reddedilir (media-fetch.js'in kaba MIME güvenlik ağı
+// bunu geçirebilir — sıkı, sağlayıcıya özgü kabul listesi burada uygulanır).
+const SUPPORTED_MIME_TYPES = new Set([
+  "audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav", "audio/ogg", "audio/flac",
+  "video/mp4", "video/webm"
+]);
+
 function extensionFromMime(mimeType) {
   const map = {
-    "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm", "video/x-m4v": "m4v",
-    "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/wav": "wav", "audio/ogg": "ogg", "audio/flac": "flac"
+    "video/mp4": "mp4", "video/webm": "webm",
+    "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/wav": "wav", "audio/x-wav": "wav", "audio/ogg": "ogg", "audio/flac": "flac"
   };
   return map[mimeType] || "bin";
 }
@@ -20,6 +31,12 @@ export async function transcribeWithOpenAi(
   if (!model) throw new Error("OpenAI transcription model çözülmedi.");
 
   const { buffer, mimeType } = await fetchMediaBytesImpl(mediaUrl, { fetchImpl });
+  if (!SUPPORTED_MIME_TYPES.has(mimeType)) {
+    throw new Error(
+      `OpenAI transkripsiyon uç noktası "${mimeType}" türünü desteklemiyor (desteklenenler: mp3/mp4/wav/ogg/flac ses, mp4/webm video — MOV/M4V gibi kapsayıcılar KABUL EDİLMEZ). ` +
+      "Önce mevcut GitHub Actions FFmpeg render kuyruğuyla ses ayıklayın (bkz. src/lib/ffmpeg-command.js) veya provider:'google' deneyin (Google da yalnız ses MIME kabul eder)."
+    );
+  }
   const form = new FormData();
   form.append("file", new Blob([buffer], { type: mimeType }), `media.${extensionFromMime(mimeType)}`);
   form.append("model", model);

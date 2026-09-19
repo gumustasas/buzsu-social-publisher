@@ -41,7 +41,20 @@ test("normalizeTranscript: girdi tamamen boşsa/eksikse hata fırlatmadan boş b
   assert.deepEqual(normalizeTranscript({}), { text: "", language: null, segments: [] });
 });
 
-test("normalizeTranscript: en fazla 500 segment tutar", () => {
+// PR #101 ROOT review: transcribe_media BİREBİR bir transkript vaat eder —
+// önceki sürüm metni 20.000 karakterde, segment listesini 500 kayıtta
+// SESSİZCE kesiyordu. Artık HİÇBİR uzunluk sınırı yok; uzun bir kayıt için
+// bile TAM metin/segment listesi korunur.
+test("normalizeTranscript: uzun bir metni (20.000+ karakter) SESSİZCE kesmez, tamamını korur", () => {
+  const longText = "kelime ".repeat(5000); // ~35.000 karakter
+  const result = normalizeTranscript({ text: longText });
+  assert.equal(result.text, longText.trim());
+  assert.ok(result.text.length > 20000);
+});
+
+test("normalizeTranscript: 500'den fazla segmenti SESSİZCE kesmez, tamamını korur", () => {
   const many = Array.from({ length: 600 }, (_, i) => ({ startSeconds: i, endSeconds: i + 1, text: `parça ${i}` }));
-  assert.equal(normalizeTranscript({ text: "x", segments: many }).segments.length, 500);
+  const result = normalizeTranscript({ text: "x", segments: many });
+  assert.equal(result.segments.length, 600);
+  assert.equal(result.segments[599].text, "parça 599");
 });

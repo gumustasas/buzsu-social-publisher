@@ -831,7 +831,12 @@ test("transcribe_media: provider='openai' ile transcribeMedia'yı çağırır (g
     return { ok: true, headers: { get: () => "audio/mpeg" }, arrayBuffer: async () => new ArrayBuffer(8) };
   };
   try {
-    const text = await callTool("transcribe_media", { mediaUrl: "https://example.com/a.mp3", provider: "openai", confirmed: true });
+    // 93.184.216.34: IP-literal (example.com'un GERÇEK adresi) — fetchMediaBytes
+    // artık SSRF koruması için gerçek dns.lookup çağırıyor (bkz. media-fetch.js
+    // ROOT review fix'i); testin gerçek DNS'e bağımlı olmaması için bir
+    // hostname değil doğrudan IP-literal kullanılıyor (private-IP kontrolü
+    // DNS'siz, senkron çalışır).
+    const text = await callTool("transcribe_media", { mediaUrl: "https://93.184.216.34/a.mp3", provider: "openai", confirmed: true });
     const parsed = JSON.parse(text);
     assert.equal(parsed.ok, true);
     assert.equal(parsed.provider, "openai");
@@ -864,7 +869,7 @@ test("transcribe_media: diarization:true + whisper-1 override (discovery diariza
     throw new Error("çağrılmamalıydı");
   };
   try {
-    const response = await handleMessage({ id: 1, method: "tools/call", params: { name: "transcribe_media", arguments: { mediaUrl: "https://example.com/a.mp3", provider: "openai", diarization: true, confirmed: true } } });
+    const response = await handleMessage({ id: 1, method: "tools/call", params: { name: "transcribe_media", arguments: { mediaUrl: "https://93.184.216.34/a.mp3", provider: "openai", diarization: true, confirmed: true } } });
     assert.equal(response.result.isError, true);
     assert.match(response.result.content[0].text, /diarization_not_supported/);
     assert.equal(transcribeCalled, false);

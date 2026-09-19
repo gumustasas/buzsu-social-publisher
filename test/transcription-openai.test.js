@@ -84,6 +84,46 @@ test("language ve vocabulary prompt alanlarına yazılır; diarize modelde promp
   assert.equal(seenForm.get("prompt"), "Buzsu, kireç");
 });
 
+// PR #101 ROOT review: OpenAI'nin belgelenmiş format listesinde MOV/M4V
+// YOKTUR — önceki sürüm bunları sessizce eşleyip API'ye gönderiyordu (orada
+// başarısız oluyordu). Artık burada AÇIKÇA reddedilir, API'ye hiç istek
+// atılmaz.
+test("video/quicktime (MOV) API'ye hiç istek atılmadan AÇIKÇA reddedilir", async () => {
+  let apiCalled = false;
+  await assert.rejects(
+    () => transcribeWithOpenAi(
+      { mediaUrl: "https://example.com/a.mov", model: "whisper-1" },
+      { OPENAI_API_KEY: "okey" },
+      {
+        fetchImpl: async () => { apiCalled = true; throw new Error("çağrılmamalıydı"); },
+        fetchMediaBytesImpl: fakeMediaBytesImpl(Buffer.from("video"), "video/quicktime")
+      }
+    ),
+    /desteklemiyor/
+  );
+  assert.equal(apiCalled, false);
+});
+
+test("video/x-m4v (M4V) API'ye hiç istek atılmadan AÇIKÇA reddedilir", async () => {
+  await assert.rejects(
+    () => transcribeWithOpenAi(
+      { mediaUrl: "https://example.com/a.m4v", model: "whisper-1" },
+      { OPENAI_API_KEY: "okey" },
+      { fetchMediaBytesImpl: fakeMediaBytesImpl(Buffer.from("video"), "video/x-m4v") }
+    ),
+    /desteklemiyor/
+  );
+});
+
+test("video/mp4 ve video/webm (belgelenmiş formatlar) reddedilmez, API'ye gönderilir", async () => {
+  const resultMp4 = await transcribeWithOpenAi(
+    { mediaUrl: "https://example.com/a.mp4", model: "whisper-1" },
+    { OPENAI_API_KEY: "okey" },
+    { fetchImpl: async () => ({ ok: true, json: async () => ({ text: "x" }) }), fetchMediaBytesImpl: fakeMediaBytesImpl(Buffer.from("video"), "video/mp4") }
+  );
+  assert.equal(resultMp4.text, "x");
+});
+
 test("HTTP hatası açıkça yansır", async () => {
   await assert.rejects(
     () => transcribeWithOpenAi(

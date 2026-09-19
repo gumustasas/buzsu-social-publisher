@@ -476,7 +476,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        mediaUrl: { type: "string", description: "Herkese açık HTTPS medya URL'i. Google için SES MIME türü zorunludur (video reddedilir); OpenAI video container'larını (mp4/mov/webm) da kabul eder." },
+        mediaUrl: { type: "string", description: "Herkese açık HTTPS medya URL'i. Google için SES MIME türü zorunludur (video reddedilir); OpenAI mp4/webm video container'larını da kabul eder — MOV/M4V gibi diğer kapsayıcılar KABUL EDİLMEZ, açık bir hatayla reddedilir (önce mevcut FFmpeg render kuyruğuyla ses ayıklayın)." },
         provider: { type: "string", enum: ["auto", ...TRANSCRIPTION_PROVIDERS], description: "Varsayılan 'auto' — GERÇEKTEN yapılandırılmış, discovery'de doğrulanmış (ve diarization/vocabularyHints isteniyorsa bunu destekleyen) ilk sağlayıcı seçilir. Başarısızlıkta ASLA diğer sağlayıcıya otomatik geçilmez." },
         languageHint: { type: "string", description: "İsteğe bağlı dil ipucu (Google: BCP-47 ör. 'tr-TR'; OpenAI: ISO-639-1 ör. 'tr'). Verilmezse sağlayıcı otomatik algılar." },
         vocabularyHints: { type: "array", items: { type: "string" }, description: "İsteğe bağlı — en fazla 20 marka/terim ipucu (ör. ['Buzsu','kireç önleyici']), tanımayı iyileştirir; diarization:true ile BİRLİKTE kullanılamaz, bunu desteklemeyen bir model seçiliyse (ör. gpt-4o-transcribe-diarize) custom_vocabulary_not_supported hatası döner." },

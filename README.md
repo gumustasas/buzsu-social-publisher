@@ -901,15 +901,26 @@ yapılandırılmış bir model discovery'de bulunamazsa SESSİZCE başka bir mod
 düşülmez, `model_not_found` hatası döner.
 
 - **`src/transcription/media-fetch.js`**: mediaUrl'den ham byte'ları indiren
-  TEK ortak yardımcı. **Ayrı bir FFmpeg ses-ayıklama adımı KASITLI olarak
-  YOKTUR**: OpenAI `/v1/audio/transcriptions` video container'larını
-  (mp4/mov/webm) DOĞRUDAN kabul eder. **Google KABUL ETMEZ** — Gemini 3.5
-  Transcribe yalnız ses MIME türleriyle çalışır; video verilirse açık bir
-  hatayla (OpenAI'yi seçin veya önce ses ayıklayın) reddedilir. Dosya ~24MB'ı
-  (Vercel fonksiyon sınırları + Whisper'ın API limiti) aşarsa SESSİZCE
-  küçültülmez — açık bir hata döner; bu durumda mevcut GitHub Actions FFmpeg
-  render kuyruğu (`src/lib/ffmpeg-command.js`, `src/reel-audio-compose.js`)
-  yeniden kullanılmalı, yeni bir senkron FFmpeg alt sistemi İCAT EDİLMEMİŞTİR.
+  TEK ortak yardımcı — `src/lib/upload-media.js`'teki (upload_media/
+  fetchPublicImage/fetchPublicAudio/fetchPublicVideo) GERÇEK SSRF-güvenli
+  indirme çekirdeğini (`fetchPublicMediaFile`) reuse eder: yalnız HTTPS,
+  hostname'in çözümlendiği IP'nin özel/yerel olmadığı (`assertPublicHttpsUrl`),
+  HER yönlendirme adımının yeniden doğrulanması ve gövdenin akış hâlinde
+  okunup limit aşılır aşılmaz durdurulması (Content-Length'e güvenmeden) —
+  kendi SSRF/streaming mantığı İCAT EDİLMEMİŞTİR. **Ayrı bir FFmpeg
+  ses-ayıklama adımı KASITLI olarak YOKTUR**: OpenAI `/v1/audio/
+  transcriptions` mp4/webm video container'larını DOĞRUDAN kabul eder — MOV/
+  M4V gibi diğer kapsayıcılar OpenAI'nin belgelenmiş format listesinde
+  OLMADIĞI için `openai-transcribe.js`'te AÇIKÇA reddedilir (bu katmanın
+  kendi MIME listesi kasıtlı olarak geniştir — sıkı, sağlayıcıya özgü
+  reddetme adapter seviyesinde olur). **Google video KABUL ETMEZ** — Gemini
+  3.5 Transcribe yalnız ses MIME türleriyle çalışır; video verilirse açık
+  bir hatayla (OpenAI'yi seçin veya önce ses ayıklayın) reddedilir. Dosya
+  ~24MB'ı (Vercel fonksiyon sınırları + Whisper'ın API limiti) aşarsa
+  SESSİZCE küçültülmez — açık bir hata döner; bu durumda mevcut GitHub
+  Actions FFmpeg render kuyruğu (`src/lib/ffmpeg-command.js`,
+  `src/reel-audio-compose.js`) yeniden kullanılmalı, yeni bir senkron FFmpeg
+  alt sistemi İCAT EDİLMEMİŞTİR.
 - **`src/transcription/provider.js`**: `discoverTranscriptionModels` her iki
   sağlayıcının GERÇEK model listesini (`GET /v1beta/models` /
   `GET /v1/models`, `transcribe`/`whisper` adlı modellerle filtrelenmiş) çeker.
