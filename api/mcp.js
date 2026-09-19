@@ -25,6 +25,7 @@ import { composeReelAudio, getReelAudioStatus } from "../src/reel-audio-compose.
 import { getBuzsuProductContext } from "../src/lib/product-intelligence.js";
 import { generateReelScript } from "../src/reel-script.js";
 import { REEL_OBJECTIVES, REEL_ASPECT_RATIOS, REEL_DURATIONS } from "../src/lib/reel-script-schema.js";
+import { researchWeb, RESEARCH_PROVIDERS } from "../src/research/index.js";
 import { CREATIVE_TIERS } from "../src/creative-providers/model-registry.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
@@ -433,7 +434,7 @@ const TOOLS = [
   },
   {
     name: "generate_reel_script",
-    description: "AI Reels V2 senaryo motoru: get_buzsu_product_context'in doğrulanmış ürün bilgisini (verifiedFacts) OpenAI veya Google'a (creative-providers registry, bkz. get_buzsu_product_context/PR-B) vererek yapılandırılmış bir ReelScript JSON'u üretir. Yalnızca SENARYO üretir — Veo/TTS/Lyria/Omni/FFmpeg'i BURADA ÇALIŞTIRMAZ. Product Intelligence üretimi YÖNLENDİRİR fakat product-claim grounding senaryo üretimini/validasyonunu BLOKLAMAZ: doğrulanamayan bir ürün iddiası senaryoyu REDDETMEZ (UNVERIFIED_PRODUCT_CLAIM bu yoldan kaldırıldı). claimsUsed yalnız bilgilendirici bir kaynak atamasıdır: {claim, provenance, sourceUrl?} — verifiedFacts ile eşleşen claim provenance:'verified' ve gerçek sourceUrl ile, eşleşmeyen claim provenance:'unverified' olarak döner. Claim doğruluğu otomatik garanti EDİLMEZ; doğruluk kontrolü sahne onayındaki insan incelemesine aittir. Teknik/yapısal validasyon aynen uygulanır. Sahne zamanlamaları (0'dan başlama/çakışmama/toplam süreyi aşmama) ve Türkçe seslendirme bütçesi (NARRATION_TOO_LONG) doğrulanır. Her sahnenin veoPrompt'una İngilizce 'sessiz video' kısıtı ve (referenceImageRequired:true ise) Product Identity Lock DETERMİNİSTİK olarak eklenir. GERÇEK PARA HARCAR (bir inference çağrısıdır), confirmed:true olmadan hiçbir provider'a istek atılmaz. model verilmişse (provider AUTO OLAMAZ, açıkça belirtilmeli) yalnızca gerçek discovery'de listelenmiş/erişilebilir ise kullanılır — serbest yazılmış model adı kabul edilmez; verilmezse modelTier registry'den (env override + gerçek discovery) çözülür. Başarısızlıkta ASLA başka bir ücretli modele otomatik geçilmez.",
+    description: "AI Reels V2 senaryo motoru: get_buzsu_product_context'in doğrulanmış ürün bilgisini (verifiedFacts) OpenAI veya Google'a (creative-providers registry, bkz. get_buzsu_product_context/PR-B) vererek yapılandırılmış bir ReelScript JSON'u üretir. Yalnızca SENARYO üretir — Veo/TTS/Lyria/Omni/FFmpeg'i BURADA ÇALIŞTIRMAZ. Product Intelligence üretimi YÖNLENDİRİR fakat product-claim grounding senaryo üretimini/validasyonunu BLOKLAMAZ: doğrulanamayan bir ürün iddiası senaryoyu REDDETMEZ (UNVERIFIED_PRODUCT_CLAIM bu yoldan kaldırıldı). claimsUsed yalnız bilgilendirici bir kaynak atamasıdır: {claim, provenance, sourceUrl?} — verifiedFacts ile eşleşen claim provenance:'verified' ve gerçek sourceUrl ile, eşleşmeyen claim provenance:'unverified' olarak döner. Claim doğruluğu otomatik garanti EDİLMEZ; doğruluk kontrolü sahne onayındaki insan incelemesine aittir. Teknik/yapısal validasyon aynen uygulanır. Sahne zamanlamaları (0'dan başlama/çakışmama/toplam süreyi aşmama) ve Türkçe seslendirme bütçesi (NARRATION_TOO_LONG) doğrulanır. Her sahnenin veoPrompt'una İngilizce 'sessiz video' kısıtı ve (referenceImageRequired:true ise) Product Identity Lock DETERMİNİSTİK olarak eklenir. GERÇEK PARA HARCAR (bir inference çağrısıdır), confirmed:true olmadan hiçbir provider'a istek atılmaz. model verilmişse (provider AUTO OLAMAZ, açıkça belirtilmeli) yalnızca gerçek discovery'de listelenmiş/erişilebilir ise kullanılır — serbest yazılmış model adı kabul edilmez; verilmezse modelTier registry'den (env override + gerçek discovery) çözülür. Başarısızlıkta ASLA başka bir ücretli modele otomatik geçilmez. researchMode İSTEĞE BAĞLIDIR ve varsayılanı 'none'dir — verilmezse research_web'e HİÇ istek atılmaz, davranış eskisiyle AYNIDIR. 'auto'/'google'/'openai' verilirse research_web ÇAĞRILIR (AYNI confirmed:true onayı altında, ek bir ücretli çağrıdır) ve bulunan cevap+kaynaklar senaryo prompt'una bir VERİ bloğu olarak eklenir; sonuçtaki 'research' alanında da raporlanır.",
     inputSchema: {
       type: "object",
       properties: {
@@ -446,9 +447,25 @@ const TOOLS = [
         provider: { type: "string", enum: ["auto", "openai", "google"], description: "Varsayılan 'auto'. 'model' verildiğinde 'auto' KABUL EDİLMEZ, açıkça 'openai' veya 'google' olmalı." },
         modelTier: { type: "string", enum: CREATIVE_TIERS, description: "'model' verilmezse kullanılır — registry'den (env override + gerçek discovery) çözülür, tahmini model ATANMAZ." },
         model: { type: "string", description: "İsteğe bağlı 'Özel' mod — gerçek discovery'de listelenmiş bir model kimliği. Verilirse modelTier yerine bu kullanılır, provider açıkça belirtilmelidir." },
-        confirmed: { type: "boolean", description: "true olmadan hiçbir provider'a istek atılmaz/ücret alınmaz." }
+        researchMode: { type: "string", enum: ["none", "auto", ...RESEARCH_PROVIDERS], description: "Varsayılan 'none' (research_web'e istek atılmaz, davranış değişmez). 'auto'/'google'/'openai' verilirse research_web bu senaryo için ÖNCE çağrılır ve sonucu prompt'a eklenir." },
+        researchQuery: { type: "string", description: "researchMode!='none' iken kullanılacak arama sorgusu. Verilmezse ürünün adı (productContext'ten) kullanılır." },
+        researchUrls: { type: "array", items: { type: "string" }, description: "researchMode!='none' iken isteğe bağlı — research_web'in URL Context ile okuyacağı en fazla 5 URL." },
+        confirmed: { type: "boolean", description: "true olmadan hiçbir provider'a istek atılmaz/ücret alınmaz (researchMode!='none' iken research_web çağrısı da dahil)." }
       },
       required: ["durationSeconds", "objective", "confirmed"]
+    }
+  },
+  {
+    name: "research_web",
+    description: "Google Search Grounding + URL Context veya OpenAI Web Search ile GÜNCEL web araması yapar — provider'ların kendi eğitim verisi kesim tarihinden sonraki bilgi/gelişme gerektiren sorular için kullanılır (ör. güncel API/model durumu, rakip fiyatlandırması, mevzuat). GERÇEK PARA HARCAR (bir inference çağrısıdır). provider='auto' hiçbir koşulda diğer sağlayıcıya SESSİZCE düşmez — açıkça 'google' veya 'openai' verilip o sağlayıcının API key'i yoksa/başarısız olursa hata döner, otomatik olarak diğerine geçilmez. urls verilirse (en fazla 5) bu sayfaların içeriği de dikkate alınır (Google: url_context tool'u; OpenAI: promptun içine eklenir). Dönen 'sources' listesi normalize edilmiştir: her kaynak {url,title,snippet,provider} şeklindedir, aynı url tekrar etmez.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Arama sorgusu/sorusu." },
+        provider: { type: "string", enum: ["auto", ...RESEARCH_PROVIDERS], description: "Varsayılan 'auto' — hangi sağlayıcının GERÇEKTEN yapılandırılmış (API key) olduğuna göre sabit bir öncelik sırasıyla (google, sonra openai) seçilir. Başarısızlıkta ASLA diğer sağlayıcıya otomatik geçilmez." },
+        urls: { type: "array", items: { type: "string" }, description: "İsteğe bağlı — içeriği dikkate alınacak en fazla 5 URL (URL Context)." }
+      },
+      required: ["query"]
     }
   },
   {
@@ -918,10 +935,17 @@ export async function callTool(name, args) {
           provider: args.provider,
           modelTier: args.modelTier,
           model: args.model || null,
+          researchMode: args.researchMode,
+          researchQuery: args.researchQuery,
+          researchUrls: args.researchUrls,
           confirmed: args.confirmed === true
         },
         process.env
       );
+      return JSON.stringify({ ok: true, ...result }, null, 2);
+    }
+    case "research_web": {
+      const result = await researchWeb({ query: args.query, provider: args.provider, urls: args.urls }, process.env);
       return JSON.stringify({ ok: true, ...result }, null, 2);
     }
     case "generate_video_narration": {

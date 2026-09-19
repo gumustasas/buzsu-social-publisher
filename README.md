@@ -848,6 +848,47 @@ FFmpeg'i bu adımda hiç çalıştırmaz. **GERÇEK PARA HARCAR** (bir inference
 - **`generate_reel_script` (MCP tool)**: `productId`/`productUrl`'den en az
   biri yeterli (PR-A ile aynı kural); `confirmed:true` şart.
 
+## AI Reels V2 — research_web (TASK-001: provider-independent research katmanı)
+
+`src/research/` — Google Search Grounding + URL Context ve OpenAI Web Search
+için ortak, provider-independent bir güncel-web-araması katmanı. Amaç,
+provider'ların eğitim verisi kesim tarihinden sonraki gelişmeleri (güncel
+API/model durumu, rakip bilgisi, mevzuat vb.) gerektiren durumları
+kapatmaktır.
+
+- **`resolveResearchProvider`** (`src/research/provider.js`) —
+  `creative-providers/model-registry.js`'teki `resolveAutoSelection` İLE AYNI
+  sözleşme: `provider:"auto"` sabit bir öncelik sırasıyla (google, sonra
+  openai) İLK GERÇEKTEN yapılandırılmış (API key mevcut) sağlayıcıyı seçer;
+  hiçbir koşulda başarısız bir sağlayıcıdan diğerine SESSİZCE geçilmez —
+  `available:false` + `reason` (`missing_api_key`/`no_available_provider`/
+  `unsupported_provider`) döner, çağıran taraf (`researchWeb`) bunu açık bir
+  hataya çevirir.
+- **`src/research/google-search.js`**: Gemini'nin `googleSearch` tool'u
+  (Search Grounding) ve — `urls` verildiğinde — `urlContext` tool'u AYNI
+  `generateContent` çağrısında kullanılır (aynı `GEMINI_API_KEY`, aynı uç
+  nokta — `creative-providers/google.js` ile aynı HTTP taşıması). Kaynaklar
+  `groundingChunks` + `urlContextMetadata.urlMetadata`'dan gelir.
+- **`src/research/openai-search.js`**: Responses API'nin `web_search`
+  tool'u (aynı `OPENAI_API_KEY`/`OPENAI_IMAGE_API_KEY`, aynı `/v1/responses`
+  uç noktası). Tool adı OpenAI tarafında değişirse `OPENAI_WEB_SEARCH_TOOL_TYPE`
+  ile override edilebilir. Kaynaklar `url_citation` annotation'larından gelir.
+- **`src/research/normalize.js`**: her kaynağı `{url, title, snippet,
+  provider}` şekline indirger, aynı URL'i tekrar etmez (dedup), en fazla 20
+  kaynak tutar.
+- **`research_web` (MCP tool)**: `query` zorunlu; `provider`
+  (`auto`/`google`/`openai`, varsayılan `auto`) ve `urls` (en fazla 5, URL
+  Context) isteğe bağlı. **GERÇEK PARA HARCAR** (bir inference çağrısıdır).
+- **`generate_reel_script` entegrasyonu**: isteğe bağlı `researchMode`
+  (varsayılan **`"none"`** — verilmezse `research_web`'e HİÇ istek atılmaz,
+  davranış eskisiyle AYNI kalır). `"auto"`/`"google"`/`"openai"` verilirse
+  (AYNI `confirmed:true` onayı altında) `research_web` önce çağrılır;
+  bulunan cevap + normalize edilmiş kaynaklar senaryo prompt'una ayrı bir
+  VERİ bloğu olarak eklenir (`reel-script-prompt.js`) ve sonuçtaki
+  `research` alanında raporlanır. `researchQuery` verilmezse ürünün adı
+  (zaten çözülmüş `productContext`'ten) kullanılır — uydurma bir değer
+  değildir.
+
 ## AI Reels V2 — dashboard sihirbazı (PR-D: Ürün→Senaryo→Sahne Onayı, PR-E: Sahne Videosu, PR-F/G: Ses & Müzik + Final Reel)
 
 Dashboard'da (`dashboard-reels-v2.js` + `dashboard.html`, `data-tab="reels"`

@@ -690,3 +690,92 @@ test("generate_nano_banana_scene: product-reference mode (productId given) resol
     delete process.env.AIRTABLE_TOKEN;
   }
 });
+
+// TASK-001 (research_web): api/mcp.js'e minimum entegrasyon — asıl
+// provider/normalize testleri test/research-*.test.js'te (owns). Burada
+// yalnız tool'un TOOLS listesinde göründüğü ve callTool'un researchWeb'i
+// gerçekten çağırdığı doğrulanır.
+test("tools/list: research_web tool listesinde 'query' zorunlu, 'provider'/'urls' isteğe bağlı olarak yer alır", async () => {
+  const response = await handleMessage({ id: 1, method: "tools/list" });
+  const tool = response.result.tools.find((t) => t.name === "research_web");
+  assert.ok(tool, "research_web tools/list içinde bulunamadı");
+  assert.deepEqual(tool.inputSchema.required, ["query"]);
+  assert.deepEqual(tool.inputSchema.properties.provider.enum, ["auto", "google", "openai"]);
+});
+
+test("research_web: provider='google' ile researchWeb'i çağırır, normalize edilmiş sources döner", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => ({ candidates: [{ content: { parts: [{ text: "Cevap metni." }] }, groundingMetadata: { groundingChunks: [{ web: { uri: "https://example.com/a", title: "A" } }] } }] })
+  });
+  try {
+    const text = await callTool("research_web", { query: "buzsu su arıtma güncel fiyat", provider: "google" });
+    const parsed = JSON.parse(text);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.provider, "google");
+    assert.equal(parsed.answer, "Cevap metni.");
+    assert.deepEqual(parsed.sources, [{ url: "https://example.com/a", title: "A", snippet: "", provider: "google" }]);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("research_web: provider='openai' ama OPENAI_API_KEY yoksa google'a SESSİZCE geçmez, isError:true ile hata döner", async () => {
+  const originalOpenAiKey = process.env.OPENAI_API_KEY;
+  const originalOpenAiImageKey = process.env.OPENAI_IMAGE_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENAI_IMAGE_API_KEY;
+  const originalFetch = global.fetch;
+  let googleCalled = false;
+  global.fetch = async (url) => { if (String(url).includes("generativelanguage")) googleCalled = true; throw new Error("çağrılmamalıydı"); };
+  try {
+    const response = await handleMessage({ id: 1, method: "tools/call", params: { name: "research_web", arguments: { query: "test", provider: "openai" } } });
+    assert.equal(response.result.isError, true);
+    assert.match(response.result.content[0].text, /missing_api_key/);
+    assert.equal(googleCalled, false);
+  } finally {
+    global.fetch = originalFetch;
+    if (originalOpenAiKey !== undefined) process.env.OPENAI_API_KEY = originalOpenAiKey;
+    if (originalOpenAiImageKey !== undefined) process.env.OPENAI_IMAGE_API_KEY = originalOpenAiImageKey;
+  }
+});
+
+test("generate_reel_script: researchMode verilmezse research_web'e istek atmadan senaryo üretir (varsayılan davranış değişmedi)", async () => {
+  process.env.AIRTABLE_TOKEN = "test-token";
+  process.env.GOOGLE_CREATIVE_BALANCED_MODEL = "gemini-3.5-flash";
+  const originalFetch = global.fetch;
+  global.fetch = async (url, options) => {
+    const href = String(url);
+    if (href.includes("api.airtable.com")) return { ok: true, json: async () => ({ records: [] }) };
+    if (href.includes("buzsu.com.tr")) return { ok: true, text: async () => "<html></html>" };
+    if (href.includes("generativelanguage")) {
+      // discoverCreativeModels: GET /v1beta/models (istek gövdesi yok) —
+      // generateContent (POST, gövdeli) çağrısından body varlığıyla ayırt edilir.
+      if (!options?.body) return { ok: true, json: async () => ({ models: [{ name: "models/gemini-3.5-flash", displayName: "Gemini 3.5 Flash", supportedGenerationMethods: ["generateContent"] }] }) };
+      const body = JSON.parse(options.body);
+      if (body.tools) throw new Error("research_web çağrılmamalıydı (researchMode='none')");
+      return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({
+        title: "t", concept: "c", hook: "h", creativeDirection: "d",
+        scenes: [{ sceneId: "s1", startSeconds: 0, endSeconds: 8, purpose: "p", visualDescription: "v", action: "a", camera: "c", productVisibility: "hero", referenceImageRequired: false, veoPrompt: "A scene.", narrationText: "n", onScreenText: "", transition: "cut" }],
+        fullNarrationText: "n", musicBrief: { mood: "m", energy: "orta", tempo: "orta", instruments: [], lyriaPrompt: "Instrumental" },
+        claimsUsed: [], negativeConstraints: [], warnings: []
+      }) }] } }] }) };
+    }
+    throw new Error("beklenmeyen fetch: " + href);
+  };
+  try {
+    const text = await callTool("generate_reel_script", {
+      productUrl: "https://www.buzsu.com.tr/test-urun/", durationSeconds: 8, objective: "sales", aspectRatio: "9:16",
+      provider: "google", modelTier: "balanced", confirmed: true
+    });
+    const parsed = JSON.parse(text);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.researchMode, "none");
+    assert.equal(parsed.research, null);
+  } finally {
+    global.fetch = originalFetch;
+    delete process.env.AIRTABLE_TOKEN;
+    delete process.env.GOOGLE_CREATIVE_BALANCED_MODEL;
+  }
+});
