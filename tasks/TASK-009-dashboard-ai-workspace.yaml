@@ -1,0 +1,177 @@
+task_id: TASK-009
+title: Dashboard AI Research / Agent Workspace
+status: READY
+type: code
+assigned_to: claude-code
+review_by:
+  - chatgpt-root
+depends_on:
+  - TASK-007
+  - TASK-008
+branch: agent/task-009-dashboard-ai-workspace
+repo: https://github.com/gumustasas/buzsu-social-publisher
+
+goal: >
+  Expose the completed research, product-knowledge and controlled-orchestrator
+  capabilities through the existing authenticated dashboard. Add an AI Research /
+  Agent Workspace where a user can select a Buzsu product, run deep research or a
+  controlled agent workflow with explicit confirmation, and inspect structured
+  results without duplicating TASK-006/007/008 core logic.
+
+owns:
+  - api/ai-workspace.js
+  - test/ai-workspace*
+  - tasks/TASK-009-dashboard-ai-workspace.yaml
+
+shared_touch:
+  - dashboard.html
+  - README.md
+
+do_not_touch:
+  - src/deep-research/** except a minimal demonstrated compatibility fix
+  - src/orchestrator/** except a minimal demonstrated compatibility fix
+  - src/knowledge/** except a minimal demonstrated compatibility fix
+  - api/mcp.js unless a minimal demonstrated compatibility fix is strictly required
+  - publishing/autopilot implementation
+  - deployment configuration
+  - production environment variables
+
+dependency_gate:
+  - verify TASK-007 status is DONE on current main
+  - verify TASK-008 status is DONE on current main
+  - if either dependency is missing or not DONE, stop and report BLOCKED before implementation
+
+execution_rules:
+  - start from current main
+  - create or use branch agent/task-009-dashboard-ai-workspace only after dependency verification
+  - reuse runDeepResearch and runOrchestration directly; do not duplicate their provider, validation, allowlist or state-machine logic
+  - reuse existing product listing/context facilities where practical; do not create a second product catalog
+  - all workspace server routes must require the existing dashboard authentication/session mechanism
+  - preserve every existing confirmed:true and paid-action gate
+  - never synthesize confirmation on behalf of the user
+  - the first UI action for a paid run must not spend money; require an explicit confirmation interaction before execution
+  - deep-research UI must expose findings, normalized sources, uncertainty, conflicts and providers_or_capabilities_used
+  - agent UI must expose ordered step/state results and failures clearly rather than hiding them
+  - do not silently switch providers or retry paid operations
+  - do not add automatic publishing, draft/status mutation, upload, delete, autopilot, deployment or environment mutation to this workspace
+  - do not expose API keys, secrets or credentials in browser payloads, logs or errors
+  - keep mobile/responsive behavior compatible with the existing dashboard
+  - do not deploy or merge
+
+workspace_ui:
+  - add a clearly discoverable AI Research / Agent Workspace section to dashboard.html
+  - provide product selection when product context is relevant
+  - deep research modes: seo, competitor, weekly_content_opportunities
+  - accept objective, competitors and URLs only within TASK-008's existing validation contract
+  - show a pre-execution summary and explicit confirmation before paid research
+  - render findings separately from sources
+  - render source title/url/snippet/provider/capability when present
+  - render uncertainty and conflicts prominently without silently resolving them
+  - render providers/capabilities used
+  - provide an Advanced Agent area backed by TASK-007 rather than inventing a new orchestrator
+  - show running/completed/failed state with actionable error text
+  - prevent accidental double submission while a run is in progress
+  - preserve existing dashboard functionality and navigation
+
+server_integration:
+  - add the smallest authenticated HTTP adapter needed for the dashboard
+  - call existing core functions directly on the server; never expose MCP internals or secrets to the browser
+  - validate request shape and reject unsupported operation types fail-closed
+  - deep research execution must delegate to runDeepResearch
+  - agent execution must delegate to runOrchestration
+  - return structured JSON suitable for deterministic dashboard rendering
+  - redact sensitive error material using existing safe patterns
+  - no mutation/publish capability may become reachable through the TASK-009 adapter
+
+acceptance:
+  - authenticated dashboard exposes a usable AI Research / Agent Workspace
+  - unauthenticated workspace requests are rejected
+  - deep research runs all three TASK-008 modes through existing runDeepResearch
+  - controlled agent runs through existing runOrchestration
+  - no duplicate provider/research/orchestrator implementation is introduced
+  - paid execution requires explicit user confirmation and cannot run on the first unconfirmed action
+  - findings, sources, uncertainty, conflicts and provider/capability usage are visible in the UI
+  - orchestration state/results/errors are visible in the UI
+  - malformed/unsupported requests fail closed before downstream calls
+  - double-submit protection exists in the UI
+  - no publish/update/delete/autopilot/deployment action is introduced or reachable through the workspace adapter
+  - existing dashboard flows remain functional
+  - tests make no real paid generation/inference calls
+  - repository-standard full test suite passes
+  - npm run check passes
+
+required_tests:
+  - unauthenticated adapter rejection
+  - unsupported operation rejection with zero downstream calls
+  - deep-research adapter delegates to runDeepResearch
+  - deep-research confirmed false causes zero paid downstream calls
+  - deep-research structured output is preserved
+  - agent adapter delegates to runOrchestration
+  - malformed agent request fails closed
+  - forbidden mutation/publish capability cannot be reached through workspace
+  - sensitive error material is not leaked
+  - dashboard contains AI Research / Agent Workspace controls
+  - dashboard renders findings/sources/uncertainty/conflicts/provider usage
+  - dashboard has explicit confirmation UX before paid execution
+  - dashboard prevents duplicate in-flight submission
+  - existing dashboard regression coverage remains green
+  - TASK-007 and TASK-008 regression coverage remains green
+
+documentation:
+  - document how the dashboard workspace maps to TASK-007 and TASK-008
+  - document confirmation/cost behavior
+  - document that the workspace does not auto-publish or mutate content
+  - document known limitations
+  - mark this manifest DONE only after ROOT merge, not inside the worker PR
+
+validation:
+  - inspect package scripts before running commands; do not invent unsupported commands
+  - run focused TASK-009 tests
+  - run the repository-standard full validation suite
+  - run npm run check
+  - do not weaken, skip or delete existing tests to make validation pass
+  - no real paid generation/inference calls
+
+delivery:
+  branch: agent/task-009-dashboard-ai-workspace
+  pull_request:
+    base: main
+    draft: true
+    preferred_title: "feat: add dashboard AI research and agent workspace (TASK-009)"
+    merge: false
+  pr_body_must_include:
+    - architecture summary
+    - changed files
+    - dashboard UX summary
+    - TASK-007/TASK-008 reuse points
+    - authentication and confirmation behavior
+    - forbidden mutation boundary
+    - tests and validation results
+    - known limitations
+    - statement that no real paid generation/inference call was made
+    - statement that no production deployment was performed
+
+stop_condition: >
+  After committing the implementation and opening the Draft PR, stop. Do not
+  merge, deploy or expand scope. Wait for ChatGPT ROOT review.
+
+final_report:
+  - dependency check result
+  - branch
+  - commit SHA
+  - PR number
+  - main changed files
+  - dashboard UX implemented
+  - reuse/security decisions
+  - focused and full test results
+  - npm run check result
+  - open issues, if any
+  - READY FOR ROOT REVIEW or precise blocker
+
+deliverables:
+  - draft_pull_request
+  - dashboard_workspace
+  - authenticated_server_adapter
+  - tests
+  - documentation
+  - final implementation report
