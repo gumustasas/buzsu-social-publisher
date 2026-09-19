@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 import { validateComposeCinematicInput } from "../src/cinematic/schema.js";
 import { downloadAndNormalizeSceneImage } from "../src/cinematic/scene-image.js";
-import { buildScenePlan, buildMergePlan } from "../src/cinematic/render-plan.js";
+import { buildMergePlan } from "../src/cinematic/render-plan.js";
+import { preflightSceneImages, renderSceneClips } from "../src/cinematic/scene-pipeline.js";
 import { probeCinematicOutput, evaluateCinematicQc } from "../src/cinematic/qc.js";
 
 // GERÇEK bir FFmpeg render'ı yapan, secrets/token/ağ GEREKTİRMEYEN bir smoke
@@ -102,27 +103,27 @@ async function run() {
 
   const localImageBuffer = await fs.readFile(PRODUCT_IMAGE_PATH);
   const fakeFetchPublicImageImpl = async () => ({ buffer: localImageBuffer, mimeType: "image/png" });
+  // ROOT review fix (PR #110): worker artık her sahneyi tek bir birleşik
+  // döngüde indirip HEMEN render etmiyor — bu smoke test de GERÇEK worker
+  // mimarisiyle (preflightSceneImages TÜM sahneler için ÖNCE, renderSceneClips
+  // yalnızca SONRA) birebir aynı yolu izler (bkz. scripts/render-cinematic-reel.mjs).
+  const downloadAndNormalizeSceneImageImpl = (scene, index, opts) =>
+    downloadAndNormalizeSceneImage(scene, index, { ...opts, fetchPublicImageImpl: fakeFetchPublicImageImpl });
 
-  const scenePlans = [];
-  for (let i = 0; i < scenes.length; i++) {
-    const normalizedPng = await downloadAndNormalizeSceneImage(scenes[i], i, {
-      width, height, fetchPublicImageImpl: fakeFetchPublicImageImpl
-    });
-    const sourcePath = path.join(OUTPUT_DIR, `scene-${i}-source.png`);
-    await fs.writeFile(sourcePath, normalizedPng);
+  console.log("Preflight: tüm sahneler indirilip doğrulanıyor (henüz render YOK)...");
+  const sourcePaths = await preflightSceneImages(scenes, { width, height, workDir: OUTPUT_DIR, downloadAndNormalizeSceneImageImpl });
+  record("preflight: tüm sahneler render'dan ÖNCE indirilip doğrulandı", true, `${sourcePaths.length} sahne`);
 
-    const plan = await buildScenePlan({
-      scene: scenes[i], sceneIndex: i, sourceImagePath: sourcePath,
-      fps, width, height, visualProfile, cinematicOptions: cinematic, workDir: OUTPUT_DIR
-    });
-    for (const file of plan.filesToWrite) await fs.writeFile(file.path, file.buffer);
-
-    console.log(`Sahne ${i + 1}/${scenes.length} render ediliyor (${scenes[i].camera.type})...`);
-    const start = Date.now();
-    await execFileAsync("ffmpeg", plan.args, { maxBuffer: 1024 * 1024 * 64 });
-    console.log(`  -> ${((Date.now() - start) / 1000).toFixed(1)}s`);
-    scenePlans.push(plan);
-  }
+  const { scenePlans } = await renderSceneClips(scenes, sourcePaths, {
+    fps, width, height, visualProfile, cinematicOptions: cinematic, workDir: OUTPUT_DIR,
+    execFileImpl: async (cmd, args, opts2) => {
+      const start = Date.now();
+      const result = await execFileAsync(cmd, args, opts2);
+      console.log(`  -> ${((Date.now() - start) / 1000).toFixed(1)}s`);
+      return result;
+    },
+    onProgress: (i, total, scene) => console.log(`Sahne ${i + 1}/${total} render ediliyor (${scene.camera.type})...`)
+  });
   record("tüm sahneler gerçek ffmpeg ile render edildi", true, `${scenePlans.length} klip`);
 
   const outputPath = path.join(OUTPUT_DIR, "smoke-test-cinematic.mp4");
@@ -159,7 +160,7 @@ async function run() {
   const isBlack = startStats.channels.every((c) => c.mean < 8);
   record("başlangıç karesi siyah/boş değil", !isBlack, `mean=[${startStats.channels.map((c) => c.mean.toFixed(1)).join(",")}]`);
 
-  const startDiff = await grayscaleMeanAbsDiff(startFramePath, path.join(OUTPUT_DIR, "scene-0-source.png"));
+  const startDiff = await grayscaleMeanAbsDiff(startFramePath, sourcePaths[0]);
   record(
     "ürün sahnesi (scene-0-source) başlangıç karesinde tanınıyor — ürün gövdesi/logo/etiketler görsel olarak bozulmamış (yapısal: motor hiçbir üretken/warp katmanı uygulamıyor, bkz. subject-lock.js)",
     startDiff <= SCENE_MATCH_MAX_DIFF,

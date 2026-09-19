@@ -8,8 +8,9 @@ import path from "node:path";
 import { put } from "@vercel/blob";
 import { readVideoJobStatus, writeVideoJobStatus } from "../src/lib/video-jobs.js";
 import { fetchPublicAudio } from "../src/lib/upload-media.js";
-import { downloadAndNormalizeSceneImage, redactSceneUrlForLog } from "../src/cinematic/scene-image.js";
-import { buildScenePlan, buildMergePlan } from "../src/cinematic/render-plan.js";
+import { redactSceneUrlForLog } from "../src/cinematic/scene-image.js";
+import { buildMergePlan } from "../src/cinematic/render-plan.js";
+import { preflightSceneImages, renderSceneClips } from "../src/cinematic/scene-pipeline.js";
 import { buildCinematicAudioMixArgs, resolveSoundDesignFallback } from "../src/cinematic/audio-mix.js";
 import { probeCinematicOutput, evaluateCinematicQc } from "../src/cinematic/qc.js";
 
@@ -60,39 +61,25 @@ async function run() {
 
   const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "buzsu-cinematic-"));
   try {
-    const appliedEffects = new Set();
-    const fallbacks = new Set();
-    const warnings = [];
+    // --- Aşama 1 (preflight): TÜM sahneler indirilip TASK-010 ile
+    // doğrulanıp normalize edilir — BU AŞAMADA TEK BİR FFmpeg/execFile
+    // ÇAĞRISI YAPILMAZ (bkz. src/cinematic/scene-pipeline.js dosya başı
+    // yorumu). Sahne N+1 geçersizse (InvalidSceneImageError — scene_index/
+    // original_url/failure_stage/stable_error_code bağlamıyla), sahne 0..N
+    // için TEK bir FFmpeg render süreci dahi BAŞLAMAMIŞ olur; renderSceneClips
+    // (Aşama 2) bu satıra hiç ulaşmaz çünkü preflightSceneImages throw eder.
+    console.log(`Preflight: ${scenes.length} sahne indirilip doğrulanacak (henüz render YOK)...`);
+    const sourcePaths = await preflightSceneImages(scenes, { width, height, workDir });
+    console.log("Preflight tamamlandı — tüm sahne görselleri geçerli. Render başlıyor.");
 
-    // --- Aşama 1: her sahneyi indir/doğrula/normalize et, sonra AYRI klip render et ---
-    const scenePlans = [];
-    for (let i = 0; i < scenes.length; i++) {
-      const scene = scenes[i];
-      console.log(`[sahne ${i + 1}/${scenes.length}] indiriliyor: ${redactSceneUrlForLog(scene.imageUrl)}`);
-      // TASK-010'un sertleştirilmiş fetchPublicImage yolu (SSRF/DNS + MIME +
-      // magic-byte + decode doğrulaması) BURADA, tüm render/FFmpeg
-      // adımlarından ÖNCE tetiklenir — geçersiz bir görsel bu satırda,
-      // sahne bağlamıyla (InvalidSceneImageError) throw eder.
-      const normalizedPng = await downloadAndNormalizeSceneImage(scene, i, { width, height });
-      const sourcePath = path.join(workDir, `cinematic-scene-${i}-source.png`);
-      await fs.writeFile(sourcePath, normalizedPng);
+    // --- Aşama 2: her sahne için AYRI bir FFmpeg klibi render edilir
+    // (yalnızca Aşama 1 TÜM sahneler için başarıyla bittikten SONRA) ---
+    const { scenePlans, appliedEffects, fallbacks, warnings } = await renderSceneClips(scenes, sourcePaths, {
+      fps, width, height, visualProfile, cinematicOptions: cinematic, workDir,
+      onProgress: (i, total, scene) => console.log(`[sahne ${i + 1}/${total}] render ediliyor (kamera: ${scene.camera.type}, geçiş: ${scene.transition.type})...`)
+    });
 
-      const plan = await buildScenePlan({
-        scene, sceneIndex: i, sourceImagePath: sourcePath,
-        fps, width, height, visualProfile, cinematicOptions: cinematic, workDir
-      });
-      for (const file of plan.filesToWrite) await fs.writeFile(file.path, file.buffer);
-
-      console.log(`[sahne ${i + 1}/${scenes.length}] render ediliyor (kamera: ${scene.camera.type}, geçiş: ${scene.transition.type})...`);
-      await execFileAsync("ffmpeg", plan.args, { maxBuffer: 1024 * 1024 * 64 });
-
-      plan.appliedEffects.forEach((e) => appliedEffects.add(e));
-      plan.fallbacks.forEach((f) => fallbacks.add(f));
-      warnings.push(...plan.warnings);
-      scenePlans.push(plan);
-    }
-
-    // --- Aşama 2: klipleri ardışık ikili xfade ile birleştir ---
+    // --- Aşama 3: klipleri ardışık ikili xfade ile birleştir ---
     const silentOutputPath = audio.voiceoverUrl || audio.musicUrl
       ? path.join(workDir, "cinematic-silent.mp4")
       : path.join(workDir, "cinematic-final.mp4");
@@ -105,7 +92,7 @@ async function run() {
     }
     scenes.slice(0, -1).forEach((scene) => appliedEffects.add(`transition_${scene.transition.type}`));
 
-    // --- Aşama 3: (varsa) ses mix ---
+    // --- Aşama 4: (varsa) ses mix ---
     let finalOutputPath = silentOutputPath;
     let audioIncluded = false;
     const soundDesignResult = resolveSoundDesignFallback(audio.soundDesign);
@@ -143,7 +130,7 @@ async function run() {
       if (voiceoverPath || musicPath) appliedEffects.add("audio_mix");
     }
 
-    // --- Aşama 4: ffprobe QC (manifest: "QC failure must PREVENT the
+    // --- Aşama 5: ffprobe QC (manifest: "QC failure must PREVENT the
     // output from being reported as a successful production-ready render") ---
     const stat = await fs.stat(finalOutputPath);
     const probeJson = await probeCinematicOutput(finalOutputPath);

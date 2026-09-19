@@ -19,17 +19,29 @@ test("importing scripts/render-cinematic-reel.mjs triggers zero side effects (no
   }
 });
 
-// "worker error context (failed scene reports stage/index/url)" — worker'ın
-// KENDİSİ scene-image.js'in downloadAndNormalizeSceneImage'ını DOĞRUDAN,
-// hiçbir ek sarmalama/yutma OLMADAN çağırır (bkz. scripts/render-cinematic-
-// reel.mjs run()'daki "await downloadAndNormalizeSceneImage(scene, i, ...)"
-// satırı) — bu yüzden InvalidSceneImageError'ın scene_index/original_url/
-// failure_stage alanları worker seviyesinde DE aynen korunur; ayrıntılı
-// birim testleri test/cinematic-scene-image.test.js'te (owns), burada
-// yalnızca worker'ın bu fonksiyonu GERÇEKTEN, DEĞİŞTİRMEDEN import ettiği
-// doğrulanır (regresyon: worker kendi paralel bir hata-sarmalama katmanı
-// icat ETMEMELİ).
-test("the worker imports downloadAndNormalizeSceneImage/InvalidSceneImageError directly from src/cinematic/scene-image.js — no parallel error-wrapping layer", async () => {
+// ROOT REVIEW blocker 1 (PR #110, review 5257372536) fix: the worker no
+// longer downloads+validates+renders each scene in a single combined loop.
+// It now calls preflightSceneImages (src/cinematic/scene-pipeline.js) for
+// ALL scenes FIRST — which itself calls downloadAndNormalizeSceneImage
+// (scene-image.js) directly, no parallel error-wrapping layer, so
+// InvalidSceneImageError's scene_index/original_url/failure_stage/
+// stable_error_code context is preserved unchanged — and only calls
+// renderSceneClips (which starts FFmpeg) after preflightSceneImages has
+// resolved for every scene. Detailed unit tests for the "zero FFmpeg
+// execution on a later invalid scene" invariant live in
+// test/cinematic-scene-pipeline.test.js (owns); this is a source-level
+// regression check that the worker's call ORDER can't silently drift back
+// to the old single-loop shape.
+test("the worker calls preflightSceneImages for ALL scenes before calling renderSceneClips — no parallel/inline download+render loop was reintroduced", async () => {
   const workerSource = await import("node:fs/promises").then((fs) => fs.readFile(new URL("../scripts/render-cinematic-reel.mjs", import.meta.url), "utf8"));
-  assert.match(workerSource, /import \{ downloadAndNormalizeSceneImage, redactSceneUrlForLog \} from "\.\.\/src\/cinematic\/scene-image\.js"/);
+  assert.match(workerSource, /import \{ preflightSceneImages, renderSceneClips \} from "\.\.\/src\/cinematic\/scene-pipeline\.js"/);
+  const preflightIndex = workerSource.indexOf("await preflightSceneImages(");
+  const renderIndex = workerSource.indexOf("await renderSceneClips(");
+  assert.ok(preflightIndex > -1, "worker preflightSceneImages'ı çağırmalı");
+  assert.ok(renderIndex > -1, "worker renderSceneClips'i çağırmalı");
+  assert.ok(preflightIndex < renderIndex, "preflightSceneImages, renderSceneClips'TEN ÖNCE çağrılmalı");
+  // downloadAndNormalizeSceneImage/execFileAsync'in doğrudan bir render
+  // döngüsü içinde (eski, tek-geçişli mimari) birlikte kullanılmadığını
+  // doğrula — worker artık bu iki adımı KENDİSİ birleştirmiyor.
+  assert.doesNotMatch(workerSource, /import \{ downloadAndNormalizeSceneImage,/, "worker artık downloadAndNormalizeSceneImage'ı DOĞRUDAN import ETMEMELİ — bu artık yalnızca scene-pipeline.js'in sorumluluğu");
 });

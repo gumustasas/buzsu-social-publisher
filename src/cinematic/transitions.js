@@ -5,18 +5,27 @@
 // kullanılır (schema.js zaten transition.type'ı TRANSITION_TYPES'a karşı
 // doğrulamıştır; burası ikinci, bağımsız bir fail-closed katmanıdır).
 //
-// motion-blur ve match-cut, xfade'in kendi yerleşik bir "motion blur" modu
-// OLMADIĞI için (xfade yalnızca sabit geçiş adları sunar) deterministik
-// yaklaşımlarla eşleniyor: motion-blur -> "fade" + ayrı bir yön odaklı
-// tblend/hızlı-crossfade YERİNE (aşırı karmaşıklık, GH Actions render
-// süresini riske atar) kısa süreli hızlı bir "fadeblack" benzeri crossfade
-// (fade) kullanılıyor; gerçek optik akış tabanlı motion blur bu v1'in
-// kapsamı DIŞINDA — bu bir fallback DEĞİL, manifest'in "deterministic"
-// şartını karşılayan bilinçli bir v1 yaklaşımıdır ve final_report'ta
-// "known limitation" olarak raporlanmalıdır.
+// ROOT REVIEW (PR #110, review 5257372536) — BLOCKER 2: motion-blur ÖNCEDEN
+// "fade"e (yani ordinary crossfade'e) alias'lanıyordu — bu, "motion-blur
+// transition works" kabul kriterini karşılamıyordu (crossfade'den ayırt
+// edilemez). Düzeltme: motion-blur artık FFmpeg'in xfade filtresinin
+// KENDİ yerleşik "hblur" (transition #35, "hblur transition" — bkz.
+// `ffmpeg -h filter=xfade` çıktısı) geçiş moduna eşleniyor. hblur, geçiş
+// sırasında görüntüyü yatay yönde bulanıklaştırarak GERÇEK bir motion-blur
+// benzeri, yönlü bir bulanıklık/akış efekti üretir — bu, optik akış/AI
+// GEREKTİRMEYEN, tamamen deterministik, FFmpeg'in kendi (üçüncü taraf
+// olmayan, stabil) yerleşik bir filtresidir. "fade" ile ARTIK aynı değildir
+// (test/cinematic-transitions.test.js bunu doğrudan doğrular) — çıktı
+// filtergraph'ı plain crossfade'den YAPISAL olarak farklıdır
+// (xfade=transition=hblur vs. xfade=transition=fade).
+//
+// match-cut, xfade'in kendi yerleşik bir "match cut" modu OLMADIĞI için
+// (xfade yalnızca sabit geçiş adları sunar) hâlâ "fade"e eşleniyor —
+// transitionAnchor'ı kamera hedef noktasına yansıtma v1 kapsamı DIŞINDA
+// (final_report'ta "known limitation" olarak raporlanır).
 const XFADE_TRANSITION_MAP = {
   "crossfade": "fade",
-  "motion-blur": "fade",
+  "motion-blur": "hblur",
   "light-wipe": "fadewhite",
   "whip": "slideleft",
   "match-cut": "fade"

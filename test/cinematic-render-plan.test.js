@@ -96,3 +96,31 @@ test("buildMergePlan chains scenes pairwise with xfade, computing correct cumula
   assert.ok(Math.abs(totalDurationSeconds - (4 + 5 + 3 - 0.4 - 0.3)) < 1e-6);
   assert.equal(mergeSteps[1].outputPath, "/tmp/final.mp4", "son birleştirme adımı doğrudan finalOutputPath'e yazmalı");
 });
+
+// ROOT REVIEW blocker 2 (PR #110, review 5257372536): motion-blur'ın
+// ÜRETİLEN xfade filtergraph'ı, plain crossfade'den YAPISAL olarak farklı
+// olmalı — merge-plan seviyesinde (yalnızca transitions.js birim testinde
+// değil) uçtan uca doğrulanır.
+test("buildMergePlan: a motion-blur transition produces a materially different xfade filter_complex string than plain crossfade, at otherwise identical scene/duration settings", () => {
+  const scenePlans = [
+    { outputPath: "/tmp/clip-0.mp4", exactDurationSeconds: 4 },
+    { outputPath: "/tmp/clip-1.mp4", exactDurationSeconds: 4 }
+  ];
+  const crossfadeScenes = [{ ...BASE_SCENE, transition: { type: "crossfade", durationSeconds: 0.4 } }, BASE_SCENE];
+  const motionBlurScenes = [{ ...BASE_SCENE, transition: { type: "motion-blur", durationSeconds: 0.4 } }, BASE_SCENE];
+
+  const crossfadePlan = buildMergePlan({ scenePlans, scenes: crossfadeScenes, width: 1080, height: 1920, fps: 30, workDir: "/tmp", finalOutputPath: "/tmp/final.mp4" });
+  const motionBlurPlan = buildMergePlan({ scenePlans, scenes: motionBlurScenes, width: 1080, height: 1920, fps: 30, workDir: "/tmp", finalOutputPath: "/tmp/final.mp4" });
+
+  const crossfadeFilter = crossfadePlan.mergeSteps[0].args[crossfadePlan.mergeSteps[0].args.indexOf("-filter_complex") + 1];
+  const motionBlurFilter = motionBlurPlan.mergeSteps[0].args[motionBlurPlan.mergeSteps[0].args.indexOf("-filter_complex") + 1];
+
+  assert.match(crossfadeFilter, /xfade=transition=fade:/);
+  assert.match(motionBlurFilter, /xfade=transition=hblur:/);
+  assert.notEqual(motionBlurFilter, crossfadeFilter, "motion-blur ve crossfade için üretilen filter_complex string'i birebir AYNI olmamalı");
+  assert.equal(motionBlurPlan.mergeSteps[0].xfadeName, "hblur");
+  assert.equal(crossfadePlan.mergeSteps[0].xfadeName, "fade");
+  // Aynı süre/offset matematiği (duration/toplam süre) her iki geçiş için de
+  // aynı kalmalı — yalnızca xfade transition ADI değişmeli, başka hiçbir şey.
+  assert.equal(motionBlurPlan.totalDurationSeconds, crossfadePlan.totalDurationSeconds);
+});
