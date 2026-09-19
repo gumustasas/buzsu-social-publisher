@@ -1,58 +1,117 @@
 import { fetchMediaBytes } from "./media-fetch.js";
 
-// TASK-002 — Google adapter. Gemini gerçekten multimodaldir: video/ses
-// dosyasını inlineData olarak generateContent'e verip birebir transkript
-// istemek yeterlidir (aynı GEMINI_API_KEY, aynı uç nokta — research/
-// google-search.js/creative-providers/google.js ile aynı HTTP taşıması).
-// Zaman damgaları/diarization STRUCTURED bir API alanı DEĞİLDİR — modelden
-// yapılandırılmış JSON istenir (TAHMİNİ/best-effort, bkz. provider.js
-// timestampAccuracy). GERÇEK PARA HARCAR — confirmed kontrolü çağıran
-// tarafta (bkz. api/mcp.js) yapılır.
-const TRANSCRIPT_SCHEMA_HINT = `{"language":"ISO-639-1 dil kodu (ör. tr)","text":"tam ve birebir transkript","segments":[{"startSeconds":0,"endSeconds":4,"text":"bu aralıkta söylenen","speaker":"varsa tahmini konuşmacı etiketi (ör. Speaker 1), yoksa null"}]}`;
+const AUDIO_MIME_PATTERN = /^audio\//i;
 
-function buildPrompt({ languageHint, vocabularyHints, diarization }) {
-  const languageBlock = languageHint ? `\n\nBeklenen dil: ${languageHint} (yanlışsa gerçek algılanan dili "language" alanına yaz).` : "";
-  const vocabBlock = vocabularyHints.length
-    ? `\n\nBu terimler/markalar geçebilir, doğru yaz (uydurma, atlama): ${vocabularyHints.join(", ")}.`
-    : "";
-  const diarizationBlock = diarization
-    ? "\n\nKonuşmacı değişimlerini fark et; her segment için tahmini bir \"speaker\" etiketi ver (ör. \"Speaker 1\"/\"Speaker 2\") — eminlik düşükse tek bir etiket kullan, uydurma isim verme."
-    : "";
-  return `Verilen ses/videoyu BİREBİR (kelime kelime, uydurma/özetleme YAPMADAN) transkribe et.${languageBlock}${vocabBlock}${diarizationBlock}\n\nYanıtı YALNIZCA şu JSON şemasına göre ver, başka açıklama ekleme: ${TRANSCRIPT_SCHEMA_HINT}`;
+function secondsFromOffset(value) {
+  const match = String(value || "").match(/^([0-9]+(?:\.[0-9]+)?)s$/);
+  return match ? Number(match[1]) : NaN;
 }
 
-export async function transcribeWithGoogle({ mediaUrl, languageHint, vocabularyHints = [], diarization = false }, env = process.env, { fetchImpl = fetch, fetchMediaBytesImpl = fetchMediaBytes } = {}) {
+function extractText(interaction) {
+  if (interaction.output_text) return String(interaction.output_text).trim();
+  return (interaction.steps || [])
+    .flatMap((step) => step.content || [])
+    .filter((content) => content.type === "text")
+    .map((content) => content.text || "")
+    .join("")
+    .trim();
+}
+
+function extractWordSegments(interaction) {
+  return (interaction.steps || [])
+    .flatMap((step) => step.content || [])
+    .flatMap((content) => content.annotations || [])
+    .filter((annotation) => annotation?.type === "word_info")
+    .map((annotation) => ({
+      startSeconds: secondsFromOffset(annotation.start_offset),
+      endSeconds: secondsFromOffset(annotation.end_offset),
+      text: annotation.text || "",
+      speaker: annotation.speaker || null
+    }));
+}
+
+async function uploadGeminiFile(buffer, mimeType, apiKey, fetchImpl) {
+  const start = await fetchImpl("https://generativelanguage.googleapis.com/upload/v1beta/files", {
+    method: "POST",
+    headers: {
+      "x-goog-api-key": apiKey,
+      "X-Goog-Upload-Protocol": "resumable",
+      "X-Goog-Upload-Command": "start",
+      "X-Goog-Upload-Header-Content-Length": String(buffer.length),
+      "X-Goog-Upload-Header-Content-Type": mimeType,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ file: { display_name: "transcribe-media" } })
+  });
+  if (!start.ok) {
+    const data = await start.json().catch(() => ({}));
+    throw new Error(data.error?.message || `Gemini Files start HTTP ${start.status}`);
+  }
+  const uploadUrl = start.headers?.get?.("x-goog-upload-url");
+  if (!uploadUrl) throw new Error("Gemini Files API upload URL döndürmedi.");
+
+  const upload = await fetchImpl(uploadUrl, {
+    method: "POST",
+    headers: {
+      "Content-Length": String(buffer.length),
+      "X-Goog-Upload-Offset": "0",
+      "X-Goog-Upload-Command": "upload, finalize",
+      "Content-Type": mimeType
+    },
+    body: buffer
+  });
+  const info = await upload.json().catch(() => ({}));
+  if (!upload.ok) throw new Error(info.error?.message || `Gemini Files upload HTTP ${upload.status}`);
+  const file = info.file || {};
+  if (!file.uri) throw new Error("Gemini Files API file URI döndürmedi.");
+  return { uri: file.uri, mimeType: file.mimeType || mimeType };
+}
+
+export async function transcribeWithGoogle(
+  { mediaUrl, model, languageHint, vocabularyHints = [], diarization = false },
+  env = process.env,
+  { fetchImpl = fetch, fetchMediaBytesImpl = fetchMediaBytes } = {}
+) {
   const apiKey = env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY tanımlı değil.");
+  if (!model) throw new Error("Google transcription model çözülmedi.");
 
-  const model = env.GOOGLE_TRANSCRIBE_MODEL || env.GEMINI_REEL_MODEL || "gemini-3.5-flash";
   const { buffer, mimeType } = await fetchMediaBytesImpl(mediaUrl, { fetchImpl });
-  const prompt = buildPrompt({ languageHint, vocabularyHints, diarization });
+  if (!AUDIO_MIME_PATTERN.test(mimeType)) {
+    throw new Error("Gemini 3.5 Transcribe yalnız ses MIME türlerini kabul eder; video için mevcut FFmpeg render kuyruğuyla ses ayıklayın veya OpenAI transkripsiyon sağlayıcısını seçin.");
+  }
+  if (diarization && vocabularyHints.length) {
+    throw new Error("Gemini custom_vocabulary, speaker diarization ile birlikte kullanılamaz.");
+  }
 
-  const response = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+  const file = await uploadGeminiFile(buffer, mimeType, apiKey, fetchImpl);
+  const transcriptionConfig = {};
+  if (languageHint) transcriptionConfig.language_codes = [languageHint];
+  if (vocabularyHints.length) transcriptionConfig.custom_vocabulary = vocabularyHints;
+
+  // Word timestamps are requested only when compatible with custom vocabulary.
+  const mode = { type: "verbatim" };
+  if (!vocabularyHints.length) mode.timestamp_granularities = ["word"];
+  if (diarization) mode.diarization_mode = "speaker";
+  if (mode.timestamp_granularities || mode.diarization_mode) transcriptionConfig.mode = mode;
+
+  const response = await fetchImpl("https://generativelanguage.googleapis.com/v1beta/interactions", {
     method: "POST",
     headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({
-      contents: [{ parts: [{ inlineData: { mimeType, data: buffer.toString("base64") } }, { text: prompt }] }],
-      generationConfig: { responseMimeType: "application/json" }
+      model,
+      input: [{ type: "audio", uri: file.uri, mime_type: file.mimeType }],
+      generation_config: { transcription_config: transcriptionConfig }
     })
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error?.message || `Gemini HTTP ${response.status}`);
 
-  const raw = (data.candidates || []).flatMap((candidate) => candidate.content?.parts || []).map((part) => part.text || "").join("");
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error("Gemini yanıtı geçerli JSON değil.");
-  }
-
   return {
-    text: parsed.text || "",
-    language: parsed.language || null,
-    segments: Array.isArray(parsed.segments) ? parsed.segments : [],
-    diarizationApplied: diarization === true,
-    timestampAccuracy: "best_effort"
+    text: extractText(data),
+    language: null,
+    segments: extractWordSegments(data),
+    diarizationApplied: diarization,
+    timestampAccuracy: !vocabularyHints.length ? "exact" : null
   };
 }
