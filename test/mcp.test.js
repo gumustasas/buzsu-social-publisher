@@ -1178,3 +1178,66 @@ test("run_agent_orchestration: confirmed:true ile research_web adımını gerçe
     global.fetch = originalFetch;
   }
 });
+
+// TASK-008 (run_deep_research): api/mcp.js'e minimum entegrasyon — asıl
+// mode/allowlist/uncertainty/conflict testleri test/deep-research*.test.js'te
+// (owns). Burada yalnız tool'un TOOLS listesinde göründüğü, mevcut tool'ları
+// BOZMADIĞI ve callTool'un runDeepResearch'ü gerçekten çağırdığı doğrulanır.
+test("tools/list: run_deep_research tool listesinde 'mode' + 'confirmed' zorunlu, mode enum'ı sabit 3 araştırma moduyla eşleşir, ve MEVCUT tool'lar (TASK-001/006/007 dahil) BOZULMAMIŞTIR", async () => {
+  const response = await handleMessage({ id: 1, method: "tools/list" });
+  const tools = response.result.tools;
+  const tool = tools.find((t) => t.name === "run_deep_research");
+  assert.ok(tool, "run_deep_research tools/list içinde bulunamadı");
+  assert.deepEqual(tool.inputSchema.required, ["mode", "confirmed"]);
+  assert.deepEqual(tool.inputSchema.properties.mode.enum, ["seo", "competitor", "weekly_content_opportunities"]);
+  for (const existingName of ["research_web", "search_product_knowledge", "get_buzsu_product_context", "run_agent_orchestration", "list_products", "publish_now", "create_draft"]) {
+    assert.ok(tools.some((t) => t.name === existingName), `${existingName} tools/list'ten kaybolmuş`);
+  }
+});
+
+test("run_deep_research: desteklenmeyen bir mode hiçbir API çağrısı yapılmadan reddedilir", async () => {
+  const originalFetch = global.fetch;
+  let called = false;
+  global.fetch = async () => { called = true; throw new Error("çağrılmamalıydı"); };
+  try {
+    const response = await handleMessage({ id: 1, method: "tools/call", params: { name: "run_deep_research", arguments: { mode: "made_up_mode", confirmed: true } } });
+    assert.equal(response.result.isError, true);
+    assert.match(response.result.content[0].text, /Desteklenmeyen veya bilinmeyen research mode/);
+    assert.equal(called, false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("run_deep_research: confirmed:true olmadan hiçbir API çağrısı yapılmaz", async () => {
+  const originalFetch = global.fetch;
+  let called = false;
+  global.fetch = async () => { called = true; throw new Error("çağrılmamalıydı"); };
+  try {
+    const response = await handleMessage({ id: 1, method: "tools/call", params: { name: "run_deep_research", arguments: { mode: "seo", objective: "test" } } });
+    assert.equal(response.result.isError, true);
+    assert.match(response.result.content[0].text, /confirmed:true/);
+    assert.equal(called, false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("run_deep_research: confirmed:true ile geçerli bir SEO akışını çalıştırır, research_web'i (TASK-001) reuse ederek normalize edilmiş kaynaklar döner (regresyon bozulmamış)", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => ({ candidates: [{ content: { parts: [{ text: "SEO cevabı." }] }, groundingMetadata: { groundingChunks: [{ web: { uri: "https://example.com/seo", title: "SEO" } }] } }] })
+  });
+  try {
+    const text = await callTool("run_deep_research", { mode: "seo", objective: "kireç önleyici anahtar kelimeleri", provider: "google", confirmed: true });
+    const parsed = JSON.parse(text);
+    assert.equal(parsed.query_or_objective, "kireç önleyici anahtar kelimeleri");
+    assert.equal(parsed.findings[0].answer, "SEO cevabı.");
+    assert.deepEqual(parsed.providers_or_capabilities_used, ["research_web:google"]);
+    assert.ok(Array.isArray(parsed.uncertainty));
+    assert.deepEqual(parsed.conflicts, []);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

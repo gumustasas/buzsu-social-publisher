@@ -1255,6 +1255,94 @@ verilir.
 MCP örneği:
 `run_agent_orchestration({steps:[{stepId:"s1",capability:"research_web",args:{query:"...",confirmed:true}}]})`
 
+## run_deep_research (TASK-008: Read-Only Deep Research Layer)
+
+`src/deep-research/` — SEO fırsatları, rakip analizi ve haftalık içerik
+fırsatları için **salt-okunur**, provider-independent bir derin araştırma
+akışı. `research_web` (TASK-001) ve `search_product_knowledge`/
+`get_buzsu_product_context` (TASK-006) capability'lerini REUSE eder —
+kendi bir provider mantığı İCAT ETMEZ. `src/orchestrator/`'a (TASK-007)
+bağımlı DEĞİLDİR — TASK-008'in `depends_on`'u yalnız TASK-001/TASK-006'dır,
+bu modül kendi bağımsız, sabit allowlist'ini tutar.
+
+**Araştırma modları** (`RESEARCH_MODES`): `seo`, `competitor`,
+`weekly_content_opportunities`. `seo`/`competitor` için `objective`
+ZORUNLUDUR (uydurma bir hedef İCAT EDİLMEZ); `weekly_content_opportunities`
+için `objective` isteğe bağlıdır — sensible bir varsayılanı vardır ("Bu
+hafta Buzsu su arıtma ürünleri için güncel içerik ve trend fırsatları.").
+Bilinmeyen/desteklenmeyen bir mode veya eksik `objective`, hiçbir ağ
+çağrısı yapılmadan reddedilir.
+
+**Salt-okunur allowlist** (`DEEP_RESEARCH_ALLOWED_CAPABILITIES`): sabit,
+yalnızca 3 isim — `research_web`, `search_product_knowledge`,
+`get_buzsu_product_context`. `publish_now`/`create_draft`/`update_draft`/
+`update_status`/`set_autopilot`/`upload_media` veya herhangi bir silme/
+env/deployment işlemi bu modülde **hiç import edilmez/çağrılmaz** — bu
+sadece bir dokümantasyon iddiası değildir, `src/deep-research/index.js`
+başka hiçbir yazma/mutasyon fonksiyonunu import ETMEZ.
+
+**Çıktı sözleşmesi** — alan adları manifest'in `required_output`'uyla
+BİREBİR aynı (bu tek MCP yanıtı, depodaki diğerlerinin AKSİNE camelCase
+DEĞİL, snake_case'tir — bu görev için TASK-007'nin `state_model`'indeki
+gibi bir "equivalent names" izni verilmediğinden BİLEREK literal tutuldu):
+
+```
+{
+  query_or_objective,        // orijinal objective (veya mode'un varsayılanı)
+  findings,                  // [{capability, provider, answer}, ...] — HER kapasitenin kendi cevabı, TEK bir anlatıya birleştirilmez
+  sources,                   // normalize edilmiş {url,title,snippet,provider,capability}[] — research_web'in KENDİ normalizasyonu REUSE edilir
+  uncertainty,                // deterministik notlar dizisi (örn. "research_web yalnızca 1 kaynağa dayanıyor") — bir AI güven puanı DEĞİLDİR
+  conflicts,                  // search_product_knowledge kullanıldıysa TASK-006'nın KENDİ tespit ettiği çelişkiler, OLDUĞU GİBİ (sessizce çözülmeden)
+  providers_or_capabilities_used // örn. ["get_buzsu_product_context","research_web:google","search_product_knowledge:openai"]
+}
+```
+
+**Kaynak/uncertainty/conflict semantiği:**
+- `sources`, `research_web`'in KENDİ `normalizeSources`'ından (TASK-001) ve
+  (kullanılıyorsa) `search_product_knowledge`'ın `citations`'ından
+  (TASK-006) gelir — burada AYRICA bir normalizasyon İCAT EDİLMEZ, her
+  kayda hangi capability'den geldiği (`capability` alanı) eklenir.
+- `uncertainty` **arbitrary bir AI güven puanı DEĞİLDİR** (bkz.
+  `validate_product_visual`/TASK-004'teki AYNI "no arbitrary confidence
+  score" ilkesi) — tamamen deterministik, YAPISAL sinyallerden türetilir:
+  `research_web` sıfır kaynak döndürürse veya tam olarak 1 kaynağa
+  dayanıyorsa, ya da `search_product_knowledge` çelişki bulduysa
+  (`hasConflicts`) bir not eklenir; aksi halde boş dizidir (bu "kesin"
+  anlamına gelmez, sadece bu deterministik kontrolün bir bayrak
+  bulmadığı anlamına gelir).
+- `conflicts`, `search_product_knowledge`'ın KENDİ çelişki tespiti
+  (yüksek-otoriteli kaynak vs. düşük-otoriteli belge) OLDUĞU GİBİ
+  yüzeye çıkarılır — sessizce "gerçek" kabul edilip ezilmez.
+
+**Provider ve onay davranışı** — TEK bir üst-seviye `confirmed:true`
+TÜM akışı onaylar (`generate_reel_script`'in isteğe bağlı `researchMode`'u
+İLE AYNI ilke — bkz. yukarıdaki bölüm): bu, TASK-007'nin orkestratörünün
+AKSİNE, çağıranın seçtiği ADIMLARDAN oluşan genel bir plan DEĞİLDİR, sabit
+bir araştırma akışıdır, bu yüzden tek bir onay yeterli ve tutarlıdır.
+`confirmed:true` olmadan `get_buzsu_product_context` (ÜCRETSİZ) DAHİL
+hiçbir çağrı yapılmaz — onay hiçbir zaman kendiliğinden ÜRETİLMEZ.
+`research_web`/`search_product_knowledge`'ın KENDİ "sessiz fallback yok"
+ilkesi (bkz. TASK-001/TASK-006) burada da bozulmadan geçerlidir — bir
+provider başarısızlığında deep-research kendi başka bir provider'a
+GEÇMEZ, hatayı olduğu gibi (secret redaksiyonu dışında) yükseltir.
+
+**Ürün bağlamı (isteğe bağlı):** `productId`/`productUrl` verilirse
+`get_buzsu_product_context` (ÜCRETSİZ) ile sorgu zenginleştirilir.
+`productKnowledgeQuery` AYRICA verilirse (VE bir ürün bağlamı varsa)
+`search_product_knowledge` (ücretli, AYNI `confirmed:true` altında)
+DA çağrılır — otomatik/örtük DEĞİLDİR.
+
+**Bilinen sınırlamalar:** `conflicts`/kaynak-çakışması tespiti YALNIZ
+`search_product_knowledge` çağrıldığında mevcuttur (yani bir ürün bağlamı
++ `productKnowledgeQuery` verildiğinde) — `research_web`'in birden çok
+kaynağı arasındaki olası çelişkiler bu sürümde AYRICA analiz EDİLMEZ
+(bu, güvenilir bir şekilde deterministik olmayan bir semantik karşılaştırma
+gerektirirdi); `findings` her capability'nin kendi cevabını AYRI AYRI
+taşır, tek bir sentezlenmiş anlatıya BİRLEŞTİRİLMEZ.
+
+MCP örneği:
+`run_deep_research({mode:"seo",objective:"kireç önleyici anahtar kelimeleri",provider:"auto",confirmed:true})`
+
 ## AI Reels V2 — dashboard sihirbazı (PR-D: Ürün→Senaryo→Sahne Onayı, PR-E: Sahne Videosu, PR-F/G: Ses & Müzik + Final Reel)
 
 Dashboard'da (`dashboard-reels-v2.js` + `dashboard.html`, `data-tab="reels"`
