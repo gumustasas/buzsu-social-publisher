@@ -820,12 +820,14 @@ test("transcribe_media: confirmed:true olmadan hiçbir sağlayıcıya istek atı
   }
 });
 
-test("transcribe_media: provider='openai' ile transcribeMedia'yı çağırır, normalize edilmiş segments döner", async () => {
+test("transcribe_media: provider='openai' ile transcribeMedia'yı çağırır (gerçek /v1/models discovery dahil), normalize edilmiş segments döner", async () => {
   const originalFetch = global.fetch;
   const originalOpenAiKey = process.env.OPENAI_API_KEY;
   process.env.OPENAI_API_KEY = "test-openai-key";
   global.fetch = async (url) => {
-    if (String(url).includes("api.openai.com")) return { ok: true, json: async () => ({ text: "Merhaba dünya.", language: "turkish", segments: [{ start: 0, end: 2, text: "Merhaba dünya." }] }) };
+    const href = String(url);
+    if (href.includes("/v1/models")) return { ok: true, json: async () => ({ data: [{ id: "whisper-1" }] }) };
+    if (href.includes("/v1/audio/transcriptions")) return { ok: true, json: async () => ({ text: "Merhaba dünya.", language: "turkish", segments: [{ start: 0, end: 2, text: "Merhaba dünya." }] }) };
     return { ok: true, headers: { get: () => "audio/mpeg" }, arrayBuffer: async () => new ArrayBuffer(8) };
   };
   try {
@@ -833,6 +835,7 @@ test("transcribe_media: provider='openai' ile transcribeMedia'yı çağırır, n
     const parsed = JSON.parse(text);
     assert.equal(parsed.ok, true);
     assert.equal(parsed.provider, "openai");
+    assert.equal(parsed.modelUsed, "whisper-1");
     assert.equal(parsed.text, "Merhaba dünya.");
     assert.deepEqual(parsed.segments, [{ startSeconds: 0, endSeconds: 2, text: "Merhaba dünya.", speaker: null }]);
   } finally {
@@ -842,20 +845,34 @@ test("transcribe_media: provider='openai' ile transcribeMedia'yı çağırır, n
   }
 });
 
-test("transcribe_media: diarization:true + provider='openai' SESSİZCE yok sayılmaz, isError:true ile açık bir hata döner", async () => {
+test("transcribe_media: diarization:true + whisper-1 override (discovery diarization desteklemediğini doğrular) SESSİZCE yok sayılmaz, isError:true ile açık bir hata döner", async () => {
   const originalFetch = global.fetch;
   const originalOpenAiKey = process.env.OPENAI_API_KEY;
+  const originalModel = process.env.OPENAI_TRANSCRIBE_MODEL;
   process.env.OPENAI_API_KEY = "test-openai-key";
-  let called = false;
-  global.fetch = async () => { called = true; throw new Error("çağrılmamalıydı"); };
+  process.env.OPENAI_TRANSCRIBE_MODEL = "whisper-1";
+  let transcribeCalled = false;
+  global.fetch = async (url) => {
+    const href = String(url);
+    if (href.includes("/v1/models")) return { ok: true, json: async () => ({ data: [{ id: "whisper-1" }] }) };
+    // GEMINI_API_KEY dosya başında (process.env.GEMINI_API_KEY = ... || "test-gemini-key")
+    // her testte set edildiği için discoverTranscriptionModels her zaman Google'ı da
+    // sorgular — burada zararsız bir discovery yanıtı döndürülür, gerçek transkripsiyon
+    // çağrısıyla karıştırılmaz.
+    if (href.includes("generativelanguage")) return { ok: true, json: async () => ({ models: [] }) };
+    transcribeCalled = true;
+    throw new Error("çağrılmamalıydı");
+  };
   try {
     const response = await handleMessage({ id: 1, method: "tools/call", params: { name: "transcribe_media", arguments: { mediaUrl: "https://example.com/a.mp3", provider: "openai", diarization: true, confirmed: true } } });
     assert.equal(response.result.isError, true);
     assert.match(response.result.content[0].text, /diarization_not_supported/);
-    assert.equal(called, false);
+    assert.equal(transcribeCalled, false);
   } finally {
     global.fetch = originalFetch;
     if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = originalOpenAiKey;
+    if (originalModel === undefined) delete process.env.OPENAI_TRANSCRIBE_MODEL;
+    else process.env.OPENAI_TRANSCRIBE_MODEL = originalModel;
   }
 });
