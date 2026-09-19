@@ -1,0 +1,564 @@
+task_id: TASK-011
+title: Cinematic Render V2
+assigned_to: claude-code
+status: READY
+
+branch: agent/task-011-cinematic-render-v2
+
+depends_on:
+  - TASK-010
+
+objective: >
+  Buzsu Social Publisher için mevcut compose_product_video akışından bağımsız,
+  gerçek ürün görsellerinin kimliğini bozmadan Veo / Runway / Sora benzeri
+  sinematik kamera, derinlik, temporal continuity, motion-design ve ses kurgusu
+  hissi veren deterministik Cinematic Render V2 motorunu oluştur.
+
+context:
+  - TASK-010 main üzerinde DONE ve production deploy READY olmalıdır.
+  - TASK-010 ile güçlendirilen remote image validation / decode / normalization
+    davranışı korunmalıdır.
+  - Sorunlu remote JPEG/PNG/WebP girdileri cinematic renderer'a ham şekilde
+    geçirilmemelidir.
+  - Bu task generative video üretimi değildir.
+  - Ürün görseli, logo, etiket, gövde ve baskılar yeniden üretilmemelidir.
+  - Mevcut compose_product_video davranışı bozulmamalıdır.
+  - Veo, Omni ve mevcut video-generation araçlarının davranışına dokunulmamalıdır.
+
+owns:
+  - src/cinematic/**
+  - scripts/render-cinematic-reel.mjs
+  - cinematic render ile doğrudan ilgili yeni test dosyaları
+  - cinematic tool registration / schemas
+  - cinematic worker / job status handling
+  - ilgili README / architecture documentation
+
+shared_touch:
+  - src/lib/upload-media.js
+  - mevcut worker/job altyapısı
+  - tool registry
+  - package.json
+  - GitHub Actions workflow dosyaları
+
+do_not_change_unless_required:
+  - generate_video_clip
+  - generate_omni_video_edit
+  - generate_gemini_video
+  - compose_product_video public schema
+  - compose_reel_audio public schema
+  - existing publishing behavior
+  - existing Airtable queue semantics
+
+requirements:
+
+  api:
+    add_tools:
+      - compose_cinematic_reel
+      - get_cinematic_render_status
+
+    compose_cinematic_reel_schema:
+      scenes:
+        min_items: 2
+        fields:
+          imageUrl:
+            type: string
+            required: true
+          durationSeconds:
+            type: number
+            required: true
+          title:
+            type: string
+            required: false
+          subtitle:
+            type: string
+            required: false
+          camera:
+            required: false
+            fields:
+              type:
+                enum: [push-in, pull-out, pan-left, pan-right, tilt-up, tilt-down, static-premium]
+              intensity:
+                type: number
+                required: false
+              easing:
+                enum: [linear, ease-in, ease-out, ease-in-out]
+          depthEffect:
+            type: boolean
+            required: false
+          subjectLock:
+            type: boolean
+            required: false
+            default: true
+          transition:
+            required: false
+            fields:
+              type:
+                enum: [crossfade, motion-blur, light-wipe, whip, match-cut]
+              durationSeconds:
+                type: number
+                required: false
+          transitionAnchor:
+            required: false
+            fields:
+              x: { type: number }
+              y: { type: number }
+
+      aspectRatio:
+        enum: ["9:16", "1:1", "16:9"]
+        default: "9:16"
+
+      visualProfile:
+        enum: [clean-tech, premium-soft, commercial, natural]
+        default: clean-tech
+
+      cinematic:
+        fields:
+          depthParallax: { type: boolean }
+          contactShadow: { type: boolean }
+          lightSweep: { type: boolean }
+          motionBlur: { type: boolean }
+          depthOfField: { type: boolean }
+          vignette:
+            enum: [off, subtle]
+          grain:
+            enum: [off, very-low, low]
+
+      audio:
+        fields:
+          voiceoverUrl:
+            type: string
+            required: false
+          musicUrl:
+            type: string
+            required: false
+          autoDuck: { type: boolean }
+          soundDesign: { type: boolean }
+
+      output:
+        fields:
+          width: { type: integer, default: 1080 }
+          height: { type: integer, default: 1920 }
+          fps:
+            enum: [24, 25, 30, 60]
+            default: 30
+          codec:
+            enum: [h264]
+            default: h264
+          quality:
+            enum: [standard, high]
+            default: high
+
+  image_pipeline:
+    required_flow:
+      - secure fetch
+      - SSRF / DNS validation
+      - HTTP validation
+      - MIME validation
+      - magic-byte / actual-format validation
+      - decode validation
+      - normalization
+      - cinematic renderer
+    rules:
+      - Reuse TASK-010 validation path.
+      - Do not bypass fetchPublicImage hardening.
+      - Prefer normalized PNG buffer/path inside the renderer.
+      - Renderer must not depend on original remote extension.
+      - Invalid images must fail before cinematic processing begins.
+    error_context:
+      required_fields: [scene_index, original_url, failure_stage, stable_error_code]
+      example:
+        code: INVALID_SCENE_IMAGE
+        stage: decode
+
+  camera_engine:
+    requirements:
+      - Use normalized timeline progress from 0.0 to 1.0.
+      - Camera motion must be deterministic.
+      - Support easing curves.
+      - Support safe crop bounds.
+      - Support overscan.
+      - Support sub-pixel motion where possible.
+      - Avoid constant-speed PowerPoint-like zooming.
+    easing:
+      recommended_ease_in_out: >
+        progress = 0.5 - 0.5 * cos(pi * t)
+    push_in:
+      recommended_zoom_range:
+        min: 1.0
+        max: 1.10
+    rule: >
+      intensity/profile may reduce the maximum zoom, but no camera preset may
+      expose uninitialized borders or crop the subject destructively.
+
+  subject_lock:
+    default: true
+    rules:
+      - Never redraw the product.
+      - Never use generative fill.
+      - Never replace or mutate logos.
+      - Never replace or mutate labels or printed text.
+      - Never apply aggressive perspective warp to the product layer.
+      - Preserve product geometry as much as possible.
+      - Prefer camera/background motion over destructive product transforms.
+    architecture:
+      interfaces:
+        - subjectExtractor.extract(...)
+        - depthProvider.getDepth(...)
+    paid_ai:
+      allowed: false
+    fallback: >
+      If local/OSS segmentation is unavailable, use deterministic safe-layer
+      behavior and continue rendering. Do not fail the whole render solely
+      because advanced subject extraction is unavailable.
+
+  depth_parallax:
+    enabled_when: depthEffect=true
+    minimum_v1:
+      - foreground / midground / background motion amplitudes
+      - or deterministic center-weighted pseudo-depth
+    recommended_motion_ratio:
+      foreground: 1.0
+      midground: 0.5
+      background: 0.15
+    abstraction:
+      interface: DepthProvider
+      method: getDepth(image)
+    fallback:
+      behavior: deterministic_non_depth_motion
+      must_report_metadata: true
+      render_must_continue: true
+
+  contact_shadow:
+    optional: true
+    requirements:
+      - Soft alpha-based shadow.
+      - Low opacity.
+      - Small offset.
+      - May vary slightly with camera motion.
+      - Must not look like a hard CSS/drop-shadow effect.
+
+  light_sweep:
+    optional: true
+    requirements:
+      - Wide soft gradient.
+      - Low opacity.
+      - Controlled screen/add style blend.
+      - Must not clip highlights.
+      - Must not destroy logo or label readability.
+      - Must not materially alter product color.
+
+  depth_of_field:
+    optional: true
+    requirements:
+      - Foreground/product remains sharp.
+      - Background blur remains subtle.
+      - Blur may rise briefly during transitions.
+      - clean-tech profile must use minimal blur.
+
+  motion_blur:
+    optional: true
+    requirements:
+      - Apply primarily while camera motion is active.
+      - Blur amount should correlate with movement intensity.
+      - Static frames should remain nearly unblurred.
+
+  transitions:
+    supported: [crossfade, motion-blur, light-wipe, whip, match-cut]
+    requirements:
+      - Deterministic.
+      - Validate transition duration.
+      - Transition duration must not exceed scene duration.
+      - match-cut may use transitionAnchor.
+      - Invalid anchor/crop must fall back safely to center.
+
+  typography:
+    requirements:
+      - Support Turkish characters correctly: [ç, ğ, ı, İ, ö, ş, ü]
+      - Respect 9:16 safe areas.
+      - Use deterministic font fallback.
+      - Avoid TikTok-style exaggerated text motion.
+    default_animation:
+      opacity: "0 -> 1"
+      y_offset: "12-24px -> 0"
+      scale: "0.97 -> 1.00"
+      easing: ease-out
+
+  audio:
+    voiceover:
+      optional: true
+    music:
+      optional: true
+    auto_duck:
+      when_enabled:
+        voice_active_music_reduction_db:
+          min: 6
+          max: 10
+      requirements:
+        - Smooth attack.
+        - Smooth recovery.
+        - No clipping.
+        - Voice must remain intelligible.
+    mix:
+      requirements:
+        - limiter
+        - clipping prevention
+        - AAC output when audio exists
+        - 48kHz preferred
+    sound_design:
+      paid_generation_allowed: false
+      optional_local_sfx: [subtle whoosh, soft impact, tonal ping]
+      fallback: >
+        If deterministic local SFX are unavailable, skip them without failing
+        the render.
+
+  voice_standard:
+    name: Buzsu Natural Voice
+    properties:
+      - Turkish
+      - medium tempo
+      - warm
+      - slightly smiling
+      - natural conversational cadence
+      - small human-like pauses
+      - no exaggerated announcer delivery
+      - no robotic emphasis
+      - calm confidence
+    integration:
+      - Compatible with existing generate_turkish_voiceover flow.
+      - This task does not need to implement a new TTS provider.
+
+  visual_profiles:
+    clean-tech:
+      - neutral whites
+      - slightly cool highlights
+      - restrained blue
+      - mild contrast
+      - minimal saturation
+      - subtle vignette only
+      - very low grain
+    premium-soft:
+      - warm-neutral
+      - softer contrast
+      - smooth highlights
+    commercial:
+      - moderately increased contrast
+      - moderately increased saturation
+    natural:
+      - minimal grading
+    safety:
+      - Do not materially change true product color.
+      - Clamp aggressive filter values.
+
+  encode:
+    defaults:
+      width: 1080
+      height: 1920
+      fps: 30
+      codec: h264
+      pixel_format: yuv420p
+      faststart: true
+    audio_if_present:
+      codec: aac
+      sample_rate: 48000
+
+  output_metadata:
+    required:
+      - durationSeconds
+      - width
+      - height
+      - fps
+      - fileSizeBytes
+      - sceneCount
+      - appliedEffects
+      - fallbacks
+      - warnings
+
+  qc:
+    use_ffprobe: true
+    validate:
+      - video stream exists
+      - resolution matches requested output
+      - duration is within sane tolerance
+      - fps matches requested output
+      - codec is expected
+      - duration > 0
+      - file size exceeds sane minimum
+      - audio stream exists when audio was requested
+    rule: >
+      QC failure must prevent the output from being reported as a successful
+      production-ready render.
+
+  cost:
+    default_path: [local processing, FFmpeg, GitHub Actions]
+    paid_ai_required: false
+    rules:
+      - No hidden paid provider calls.
+      - No automatic paid fallback.
+      - No Veo/Omni/fal.ai/Runway calls inside this tool.
+
+implementation_guidance:
+  suggested_modules:
+    - src/cinematic/schema.js
+    - src/cinematic/easing.js
+    - src/cinematic/camera.js
+    - src/cinematic/transitions.js
+    - src/cinematic/typography.js
+    - src/cinematic/color-grade.js
+    - src/cinematic/audio-mix.js
+    - src/cinematic/depth.js
+    - src/cinematic/subject-lock.js
+    - src/cinematic/qc.js
+    - scripts/render-cinematic-reel.mjs
+  note: >
+    Adapt names/extensions to the repository's current conventions. Do not
+    introduce an inconsistent parallel architecture merely to follow these
+    suggested filenames.
+
+tests:
+  required:
+    - { name: schema validation, requirement: "Validate required and invalid cinematic tool inputs." }
+    - { name: basic two-scene render, requirement: "Render at least two scenes successfully." }
+    - { name: easing determinism, requirement: "Same inputs produce same motion values." }
+    - { name: camera crop safety, requirement: "No black/uninitialized border exposure." }
+    - { name: subject lock, requirement: "Subject-lock path avoids destructive product transform." }
+    - { name: Turkish typography, requirement: "Turkish characters render correctly." }
+    - { name: PNG normalized input, requirement: "Normalized PNG path succeeds." }
+    - { name: JPEG TASK-010 path, requirement: "JPEG goes through TASK-010 normalization safely." }
+    - { name: invalid image context, requirement: "Error includes scene index and original URL." }
+    - { name: audio ducking configuration, requirement: "Ducking graph/config is generated correctly." }
+    - { name: no-audio render, requirement: "Cinematic render works without audio." }
+    - { name: output resolution, requirement: "Default result is 1080x1920." }
+    - { name: output codec, requirement: "H264 + yuv420p." }
+    - { name: transition validation, requirement: "Invalid transition duration is rejected." }
+    - { name: depth fallback, requirement: "Missing depth provider does not fail render." }
+    - { name: compose_product_video regression, requirement: "Existing product video tests still pass." }
+    - { name: import side-effect free, requirement: "Worker/module import does not execute render automatically." }
+    - { name: worker error context, requirement: "Failed scene reports useful stage/index/url context." }
+
+checks:
+  - npm test
+  - npm run check
+
+acceptance:
+  - compose_cinematic_reel is exposed and callable.
+  - get_cinematic_render_status is exposed and callable.
+  - At least 2 scenes render successfully.
+  - Default output is 1080x1920 H264/yuv420p.
+  - Camera easing is implemented.
+  - push-in works.
+  - pull-out works.
+  - pan-left or pan-right works.
+  - subjectLock exists and is enabled by default.
+  - crossfade transition works.
+  - motion-blur transition works.
+  - kinetic typography works.
+  - clean-tech color grade works.
+  - voice/music mixing works.
+  - auto ducking works.
+  - invalid remote image fails at TASK-010 validation boundary with useful context.
+  - Existing compose_product_video behavior does not regress.
+  - Existing video-generation tools do not regress.
+  - All tests pass.
+  - npm run check passes.
+  - Worker import is side-effect free.
+  - Branch is clean before final report.
+  - Draft PR is opened.
+  - PR is NOT merged.
+  - Production is NOT deployed.
+
+smoke_test:
+  paid_ai_calls_allowed: false
+  input_image: >
+    https://cbhesavyapmoowpk.public.blob.vercel-storage.com/manual-uploads/1789838620142-code-advantage-original-tti13ZXo4WQSMUwsm3m8p2HzlGZWaT.png
+  output:
+    aspectRatio: "9:16"
+    width: 1080
+    height: 1920
+    duration_target_seconds:
+      min: 8
+      max: 12
+    visualProfile: clean-tech
+  scene:
+    subjectLock: true
+    camera:
+      type: push-in
+      easing: ease-in-out
+      intensity: 0.35
+    cinematic:
+      depthParallax: true
+      lightSweep: true
+      depthOfField: true
+      motionBlur: true
+      contactShadow: true
+      vignette: subtle
+      grain: very-low
+    title: Code Advantage
+    subtitle: Ev tipi su arıtma teknolojisi
+  validation:
+    - Product body shape remains visually intact.
+    - Code Advantage logo remains intact.
+    - Lower product labels remain intact.
+    - No generative alteration.
+    - No paid provider called.
+    - ffprobe QC passes.
+
+security_boundaries:
+  - Preserve TASK-010 SSRF protections.
+  - Do not weaken DNS/IP restrictions.
+  - Do not bypass MIME or magic-byte checks.
+  - Do not fetch arbitrary unsupported protocols.
+  - Do not log secrets.
+  - Do not return environment secrets.
+  - Do not introduce command injection through FFmpeg expressions or text fields.
+  - Escape/sanitize all user-controlled drawtext/path/filter inputs.
+
+workflow:
+  - Read this manifest as source of truth.
+  - Verify TASK-010 is DONE on current main before starting.
+  - Pull latest main.
+  - Ensure working tree is clean.
+  - Create branch agent/task-011-cinematic-render-v2 from current main.
+  - Implement only within this task's scope.
+  - Run focused tests during implementation.
+  - Run full test suite.
+  - Run npm run check.
+  - Produce the free Code Advantage smoke render.
+  - Inspect smoke metadata and QC.
+  - Commit changes.
+  - Push branch.
+  - Open a Draft PR.
+  - Do not merge.
+  - Do not deploy production.
+  - Leave this task manifest/status unchanged unless ROOT explicitly requests otherwise.
+
+stop_conditions:
+  - TASK-010 is not DONE on main.
+  - Current main is not clean/retrievable.
+  - Implementation would require an undisclosed paid provider.
+  - A required security boundary would need to be weakened.
+  - Existing production video behavior cannot be preserved without scope expansion.
+
+final_report:
+  include:
+    - branch
+    - commit SHA
+    - Draft PR number and URL
+    - changed files
+    - implementation summary
+    - focused test results
+    - full test count/result
+    - npm run check result
+    - compose_product_video regression result
+    - smoke render status
+    - smoke video URL
+    - duration
+    - resolution
+    - fps
+    - file size
+    - applied cinematic features
+    - fallbacks
+    - warnings
+    - known limitations
+    - confirmation that no paid AI call was made
+    - confirmation that PR was not merged
+    - confirmation that production was not deployed
