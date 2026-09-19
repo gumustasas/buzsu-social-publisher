@@ -28,6 +28,7 @@ import { generateReelScript } from "../src/reel-script.js";
 import { REEL_OBJECTIVES, REEL_ASPECT_RATIOS, REEL_DURATIONS } from "../src/lib/reel-script-schema.js";
 import { researchWeb, RESEARCH_PROVIDERS } from "../src/research/index.js";
 import { transcribeMedia, TRANSCRIPTION_PROVIDERS } from "../src/transcription/index.js";
+import { validateProductVisual, VISUAL_VALIDATION_CHECKS } from "../src/visual-validation/index.js";
 import { CREATIVE_TIERS } from "../src/creative-providers/model-registry.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
@@ -485,6 +486,23 @@ const TOOLS = [
         confirmed: { type: "boolean", description: "true olmadan ücretli transkripsiyon çağrısı yapılmaz." }
       },
       required: ["mediaUrl", "confirmed"]
+    }
+  },
+  {
+    name: "validate_product_visual",
+    description: `AI ile üretilmiş bir sahne görselini, ürünün GERÇEK referans fotoğrafıyla (Google Gemini vision) DOĞRUDAN karşılaştırır — generate_scene_image/generate_nano_banana_scene'in kendi otomatik incelemesinden (yalnızca metin bağlamına karşı, referans görsel YOK) farklıdır ve onların varsayılan akışını DEĞİŞTİRMEZ; ayrı, isteğe bağlı bir kontrol adımıdır. Karar, modelin bir güven puanından/confidence'ından DEĞİL, sabit ${VISUAL_VALIDATION_CHECKS.length} kontrol kategorisine (${VISUAL_VALIDATION_CHECKS.join(", ")}) karşı normalize edilmiş failedChecks listesinden türetilir — model bir sayısal puan döndürse bile bu OKUNMAZ/KULLANILMAZ. 'checks' alanı her zaman TAM listedir (hangi kriterlerin değerlendirildiğini gösterir); 'failedChecks' bunun başarısız alt kümesidir; passed = failedChecks boşsa true. GERÇEK PARA HARCAR (bir Gemini vision çağrısıdır) — confirmed:true olmadan hiçbir API çağrısı yapılmaz. generatedImageUrl veya generatedImageBase64'ten TAM OLARAK biri verilmelidir.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        referenceImageUrl: { type: "string", description: "Ürünün GERÇEK, herkese açık HTTPS referans fotoğrafı (ör. list_products çıktısındaki imageUrl)." },
+        generatedImageUrl: { type: "string", description: "AI ile üretilmiş, kontrol edilecek görselin herkese açık HTTPS URL'i. generatedImageBase64 ile birlikte verilemez." },
+        generatedImageBase64: { type: "string", description: "AI ile üretilmiş görselin base64 verisi (ör. generate_scene_image'ın dataUrl'inden). generatedImageMimeType ile birlikte verilmelidir; generatedImageUrl ile birlikte verilemez." },
+        generatedImageMimeType: { type: "string", enum: ["image/png", "image/jpeg", "image/webp"], description: "generatedImageBase64 kullanılıyorsa zorunlu." },
+        productTitle: { type: "string", description: "İsteğe bağlı — ürün adı, karşılaştırma bağlamı için kullanılır." },
+        sceneDescription: { type: "string", description: "İsteğe bağlı — hedeflenen sahne açıklaması, karşılaştırma bağlamı için kullanılır." },
+        confirmed: { type: "boolean", description: "true olmadan ücretli karşılaştırma çağrısı yapılmaz." }
+      },
+      required: ["referenceImageUrl", "confirmed"]
     }
   },
   {
@@ -982,6 +1000,21 @@ export async function callTool(name, args) {
       if (args.confirmed !== true) throw new Error("Bu işlem gerçek API kredisi harcar. Onaylamak için confirmed:true gönderin.");
       const result = await transcribeMedia(
         { mediaUrl: args.mediaUrl, provider: args.provider, languageHint: args.languageHint, vocabularyHints: args.vocabularyHints, diarization: args.diarization === true },
+        process.env
+      );
+      return JSON.stringify({ ok: true, ...result }, null, 2);
+    }
+    case "validate_product_visual": {
+      if (args.confirmed !== true) throw new Error("Bu işlem gerçek API kredisi harcar. Onaylamak için confirmed:true gönderin.");
+      const result = await validateProductVisual(
+        {
+          referenceImageUrl: args.referenceImageUrl,
+          generatedImageUrl: args.generatedImageUrl,
+          generatedImageBase64: args.generatedImageBase64,
+          generatedImageMimeType: args.generatedImageMimeType,
+          productTitle: args.productTitle,
+          sceneDescription: args.sceneDescription
+        },
         process.env
       );
       return JSON.stringify({ ok: true, ...result }, null, 2);
