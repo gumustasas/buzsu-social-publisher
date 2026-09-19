@@ -169,11 +169,90 @@ export async function fetchPublicMediaFile(rawUrl, { maxBytes, fetchImpl = fetch
   throw new Error("Çok fazla yönlendirme.");
 }
 
+// TASK-010: fetchPublicMediaFile'ın Content-Type kontrolü SADECE sunucunun
+// BİLDİRDİĞİ HTTP header'ına bakar — bu, gerçek dosya baytlarının o formatta
+// olduğunun KANITI DEĞİLDİR (bir sunucu "image/png" header'ıyla bir HTML
+// hata sayfası veya bozuk/kesilmiş bir dosya döndürebilir; bkz.
+// render-product-video.mjs'in FFmpeg'e verdiği kare pipeline'ı, orada bunun
+// sessizce geçmesi bozuk bir video render'ına veya libvips'in ham/anlaşılmaz
+// bir hatasına yol açar). Bu yüzden fetchPublicImage, MIME allowlist
+// kontrolünden SONRA, ayrıca (1) gerçek dosya imzasını (magic bytes) baytlardan
+// dedükte eder, (2) bunun bildirilen Content-Type ile AYNI olduğunu doğrular,
+// (3) Sharp/libvips ile GERÇEKTEN decode edilebildiğini doğrular — hiçbiri
+// atlanabilir/sessizce onarılabilir değildir.
+const JPEG_SIGNATURE = Buffer.from([0xff, 0xd8, 0xff]);
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+// Dosya baytlarından GERÇEK formatı dedükte eder — URL uzantısına veya
+// HTTP Content-Type'a HİÇ bakmaz, sadece baytların kendisine. JPEG/PNG/WebP
+// dışında bir imza (veya tanınmayan/eksik bir imza) için null döner; bu
+// "bilinmeyen bir görsel formatı" ile "HTML/JSON gibi görsel OLMAYAN bir
+// gövde" arasında ayrım YAPMAZ (ikisi de aynı şekilde reddedilir) — asıl
+// önemli olan yalnızca desteklenen 3 formattan biri olarak KANITLANABİLDİĞİ
+// durumdur.
+export function detectImageFormat(buffer) {
+  if (buffer.length >= JPEG_SIGNATURE.length && buffer.subarray(0, JPEG_SIGNATURE.length).equals(JPEG_SIGNATURE)) return "image/jpeg";
+  if (buffer.length >= PNG_SIGNATURE.length && buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) return "image/png";
+  if (buffer.length >= 12 && buffer.subarray(0, 4).toString("latin1") === "RIFF" && buffer.subarray(8, 12).toString("latin1") === "WEBP") return "image/webp";
+  return null;
+}
+
+// Stabil bir hata sözleşmesi — çağıranlar (bkz. scripts/render-product-video.mjs)
+// mesaj metnini regex'lemek yerine `.code === "INVALID_IMAGE_INPUT"` ve
+// (varsa) `.reason` alanına göre dallanabilir. `.reason` üç durumu ayırt eder:
+// "unsupported_bytes" (görsel OLMAYAN/tanınmayan bir dosya imzası),
+// "mime_mismatch" (gerçek format bildirilen Content-Type ile ÇELİŞİYOR),
+// "undecodable" (imza geçerli ama Sharp/libvips gerçekten decode EDEMEDİ —
+// örn. kesilmiş/bozuk bir dosya).
+export class InvalidImageInputError extends Error {
+  constructor(message, { reason, cause } = {}) {
+    super(message);
+    this.name = "InvalidImageInputError";
+    this.code = "INVALID_IMAGE_INPUT";
+    if (reason) this.reason = reason;
+    if (cause) this.cause = cause;
+  }
+}
+
+// Gerçek decode doğrulaması SADECE imza+MIME uyumu doğrulandıktan SONRA
+// çalışır (implementation_notes: "use Sharp/libvips as decode validation
+// only after byte-format and MIME agreement checks") — bu hem gereksiz
+// libvips çağrılarından kaçınır hem de bir decode hatasının birincil
+// teşhis olarak sızmasını önler (o zaten yalnızca "undecodable" dalında,
+// KENDİ mesajımızın ARKASINDA `cause` olarak taşınır, doğrudan gösterilmez).
+// `.toBuffer()` kasıtlı olarak `.metadata()` DEĞİLDİR — metadata() sadece
+// header'ı okur ve gövdesi kesilmiş/bozuk bir dosyayı KAÇIRABİLİR; toBuffer()
+// TÜM piksel verisini decode etmeye zorlar, bu yüzden kesilmiş/bozuk bir
+// JPEG/PNG/WebP burada güvenilir şekilde YAKALANIR. Görsel BURADA yeniden
+// kodlanmaz/normalize EDİLMEZ (decode çıktısı atılır) — fetchPublicImage'ın
+// döndürdüğü orijinal indirilen buffer AYNEN korunur (mevcut return
+// sözleşmesi/downstream davranışı DEĞİŞMEZ).
+async function assertDecodableImage(buffer, mimeType) {
+  const detectedFormat = detectImageFormat(buffer);
+  if (!detectedFormat) {
+    throw new InvalidImageInputError("INVALID_IMAGE_INPUT: İndirilen veri geçerli bir JPEG/PNG/WebP değil (dosya imzası tanınmadı).", { reason: "unsupported_bytes" });
+  }
+  if (detectedFormat !== mimeType) {
+    throw new InvalidImageInputError(`INVALID_IMAGE_INPUT: Bildirilen Content-Type (${mimeType}) gerçek dosya formatıyla (${detectedFormat}) uyuşmuyor.`, { reason: "mime_mismatch" });
+  }
+  try {
+    await sharp(buffer).toBuffer();
+  } catch (err) {
+    throw new InvalidImageInputError("INVALID_IMAGE_INPUT: Görsel decode edilemedi (bozuk veya kesilmiş olabilir).", { reason: "undecodable", cause: err });
+  }
+}
+
 // Herkese açık bir HTTPS görsel URL'ini güvenli şekilde indirir: her
 // yönlendirme adımını yeniden SSRF kontrolünden geçirir, Content-Type'ın
-// PNG/JPEG/WebP olduğunu ve boyutun sınırın altında kaldığını doğrular.
+// PNG/JPEG/WebP olduğunu ve boyutun sınırın altında kaldığını doğrular —
+// SONRA (TASK-010) gerçek dosya baytlarının GERÇEKTEN o formatta olduğunu
+// ve GERÇEKTEN decode edilebildiğini doğrular. Bu son adım BAŞARISIZ olursa
+// hiçbir onarım/yeniden yorumlama DENENMEZ — INVALID_IMAGE_INPUT ile açıkça
+// reddedilir.
 export async function fetchPublicImage(rawUrl, { maxBytes = MAX_MEDIA_BYTES, fetchImpl = fetch, lookup } = {}) {
-  return fetchPublicMediaFile(rawUrl, { maxBytes, fetchImpl, lookup, allowedMimeTypes: ALLOWED_IMAGE_MIME_TYPES, mediaLabel: "Görsel", mediaTypesLabel: "PNG/JPEG/WebP" });
+  const result = await fetchPublicMediaFile(rawUrl, { maxBytes, fetchImpl, lookup, allowedMimeTypes: ALLOWED_IMAGE_MIME_TYPES, mediaLabel: "Görsel", mediaTypesLabel: "PNG/JPEG/WebP" });
+  await assertDecodableImage(result.buffer, result.mimeType);
+  return result;
 }
 
 // compose_product_video'nun opsiyonel müzik URL'i için — fetchPublicImage ile
