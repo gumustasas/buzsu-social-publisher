@@ -41,30 +41,86 @@ test("generate_scene_image: ürünün bilinen bir fotoğrafı yoksa hiçbir üre
   assert.equal(generateCalled, false);
 });
 
-test("generate_scene_image: provider='composite' generateCompositeSceneImageImpl'e yönlendirilir, generateSceneImageImpl'e HİÇ gidilmez", async () => {
+test("generate_scene_image: provider='composite' generateCompositeSceneImageImpl'e yönlendirilir, generateSceneImageImpl'e HİÇ gidilmez, availableSceneProvidersImpl HİÇ çağrılmaz", async () => {
   let compositeCalled = false;
   let normalCalled = false;
+  let availableCalled = false;
   const registry = createCapabilityRegistry({
     resolveOrchestratorProductImpl: async () => ({ title: "x", imageUrl: "https://example.com/p.png" }),
-    availableSceneProvidersImpl: () => ["gemini", "composite"],
+    availableSceneProvidersImpl: () => { availableCalled = true; return ["gemini", "composite"]; },
     generateCompositeSceneImageImpl: async () => { compositeCalled = true; return { dataUrl: "data:image/png;base64,AA==", provider: "composite" }; },
     generateSceneImageImpl: async () => { normalCalled = true; return {}; }
   });
   const result = await registry.generate_scene_image.run({ productId: "p1", sceneDescription: "mutfak", provider: "composite", confirmed: true }, {});
   assert.equal(compositeCalled, true);
   assert.equal(normalCalled, false);
+  assert.equal(availableCalled, false, "composite özel rotası availableSceneProviders'ı hiç sormamalı");
   assert.equal(result.provider, "composite");
 });
 
-test("generate_scene_image: geçersiz/desteklenmeyen bir provider istenirse SESSİZCE yok sayılmaz, mevcut providers listesinin ilkine düşer (generateSceneImage'ın kendi ilkesiyle AYNI)", async () => {
+// ROOT review (PR #106): "composite" generateSceneImage'ın normal provider
+// switch'inde YOKTUR ve availableSceneProviders(env)'in listelediği
+// "normal" bir provider GİBİ davranılmamalı — orada YOKSA (örn.
+// GEMINI_API_KEY tanımsız, sadece OPENAI_API_KEY varken) bu onu reddetmek
+// için bir sebep DEĞİLDİR; composite kendi GERÇEK ön koşulunu (GEMINI_API_KEY)
+// KENDİSİ uygular.
+test("generate_scene_image: provider='composite', availableSceneProviders(env) listesinde HİÇ YOKSA (örn. sadece OPENAI_API_KEY varken) bile reddedilmez — composite'e yönlendirilir", async () => {
+  let compositeCalled = false;
+  const registry = createCapabilityRegistry({
+    resolveOrchestratorProductImpl: async () => ({ title: "x", imageUrl: "https://example.com/p.png" }),
+    availableSceneProvidersImpl: () => ["openai", "openai-low", "openai-high"], // composite YOK
+    generateCompositeSceneImageImpl: async () => { compositeCalled = true; return { dataUrl: "data:image/png;base64,AA==", provider: "composite" }; }
+  });
+  const result = await registry.generate_scene_image.run({ productId: "p1", sceneDescription: "mutfak", provider: "composite", confirmed: true }, {});
+  assert.equal(compositeCalled, true);
+  assert.equal(result.provider, "composite");
+});
+
+test("generate_scene_image: provider='composite'nin GERÇEK ön koşulu (örn. GEMINI_API_KEY eksikliği) composite'in KENDİ implementasyonu tarafından uygulanır — orkestratör bunu bypass ETMEZ", async () => {
+  const registry = createCapabilityRegistry({
+    resolveOrchestratorProductImpl: async () => ({ title: "x", imageUrl: "https://example.com/p.png" }),
+    generateCompositeSceneImageImpl: async () => { throw new Error("GEMINI_API_KEY Vercel Production ortamında tanımlı değil."); }
+  });
+  await assert.rejects(
+    () => registry.generate_scene_image.run({ productId: "p1", sceneDescription: "mutfak", provider: "composite", confirmed: true }, {}),
+    /GEMINI_API_KEY/
+  );
+});
+
+test("generate_scene_image: açıkça istenen NORMAL bir provider kullanılabilirse tam olarak O provider ile çağrılır", async () => {
   let seenProvider;
   const registry = createCapabilityRegistry({
     resolveOrchestratorProductImpl: async () => ({ title: "x", imageUrl: "https://example.com/p.png" }),
-    availableSceneProvidersImpl: () => ["nano-banana-2", "openai"],
+    availableSceneProvidersImpl: () => ["gemini", "nano-banana-2", "openai"],
     generateSceneImageImpl: async (product, sceneDescription, env, opts) => { seenProvider = opts.provider; return {}; }
   });
-  await registry.generate_scene_image.run({ productId: "p1", sceneDescription: "mutfak", provider: "made-up-provider", confirmed: true }, {});
+  await registry.generate_scene_image.run({ productId: "p1", sceneDescription: "mutfak", provider: "nano-banana-2", confirmed: true }, {});
   assert.equal(seenProvider, "nano-banana-2");
+});
+
+test("generate_scene_image: açıkça istenen NORMAL bir provider kullanılamıyorsa FAIL CLOSED reddedilir — providers[0]'a SESSİZCE düşülmez, hiçbir üretim çağrısı yapılmaz", async () => {
+  let generateCalled = false;
+  const registry = createCapabilityRegistry({
+    resolveOrchestratorProductImpl: async () => ({ title: "x", imageUrl: "https://example.com/p.png" }),
+    availableSceneProvidersImpl: () => ["nano-banana-2", "openai"],
+    generateSceneImageImpl: async () => { generateCalled = true; return {}; }
+  });
+  await assert.rejects(
+    () => registry.generate_scene_image.run({ productId: "p1", sceneDescription: "mutfak", provider: "made-up-provider", confirmed: true }, {}),
+    /Desteklenmeyen veya şu anda kullanılamayan sahne üretim sağlayıcısı/
+  );
+  assert.equal(generateCalled, false, "sağlayıcı doğrulaması başarısız olduktan sonra HİÇBİR üretim çağrısı yapılmamalı");
+});
+
+test("generate_scene_image: provider hiç verilmezse dokümante edilmiş varsayılan (ilk kullanılabilir provider) seçilir — bu bir silent fallback DEĞİLDİR, caller başka bir şey istemedi", async () => {
+  let seenProvider;
+  const registry = createCapabilityRegistry({
+    resolveOrchestratorProductImpl: async () => ({ title: "x", imageUrl: "https://example.com/p.png" }),
+    availableSceneProvidersImpl: () => ["openai", "openai-low", "openai-high"],
+    generateSceneImageImpl: async (product, sceneDescription, env, opts) => { seenProvider = opts.provider; return {}; }
+  });
+  await registry.generate_scene_image.run({ productId: "p1", sceneDescription: "mutfak", confirmed: true }, {});
+  assert.equal(seenProvider, "openai");
 });
 
 test("get_buzsu_product_context: productId ve productUrl'den hiçbiri verilmezse hiçbir çağrı yapılmadan reddedilir", async () => {

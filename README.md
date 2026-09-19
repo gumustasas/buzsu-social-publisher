@@ -1201,6 +1201,22 @@ KENDİ İÇLERİNDE de ayrıca bir confirmed kontrolü yapar (savunma katmanı).
   external-state updates"e girer. Orkestratörden gelen bu adımın çıktısı
   SADECE `dataUrl`/`prompt`/`provider`/`model` içerir, hiçbir Airtable
   kaydı DEĞİŞMEZ.
+- **`generate_scene_image` provider yönlendirmesi (ROOT review, PR #106)**:
+  `args.provider === "composite"` ÖZEL bir yürütme rotasıdır — normal
+  provider doğrulamasından ÖNCE ele alınır ve `availableSceneProviders(env)`
+  hiç sorulmadan doğrudan `generateCompositeSceneImage`'a yönlendirilir;
+  "composite" o listede GÖRÜNMESE bile (örn. `GEMINI_API_KEY` tanımsız,
+  sadece `OPENAI_API_KEY` varken) bu adım REDDEDİLMEZ — composite'in
+  GERÇEK ön koşulu (`GEMINI_API_KEY`) zaten `generateCompositeSceneImage`'ın
+  KENDİSİ tarafından uygulanır, orkestratör bunu bypass ETMEZ/tekrar
+  KONTROL ETMEZ. Normal (composite dışı) bir provider caller tarafından
+  AÇIKÇA istenirse, gerçekten kullanılabilir `availableSceneProviders(env)`
+  listesine karşı doğrulanır — kullanılamıyorsa **FAIL CLOSED** bir hata
+  döner (`providers[0]`'a SESSİZCE düşülmez, hiçbir üretim çağrısı
+  YAPILMAZ). `provider` hiç verilmemişse (caller açıkça başka bir şey
+  istemediği için) mevcut "ilk kullanılabilir provider" varsayılanı
+  KORUNUR — bu bir silent fallback değildir, dokümante edilmiş bir
+  varsayılan seçimdir.
 - Ürün çözümleme (`productId`→ürün) `api/mcp.js`'in özel (export
   edilmemiş) `resolveProduct`'ından KOPYALANMAZ/import EDİLMEZ (bir `src/`
   modülünün bir `api/` route dosyasına bağımlı olması ters bir katman

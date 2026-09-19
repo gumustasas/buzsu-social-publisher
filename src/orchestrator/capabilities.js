@@ -34,11 +34,29 @@ async function resolveOrchestratorProduct(productId) {
 }
 
 // generate_scene_image'ın MCP case handler'ındaki provider seçim satırı
-// İLE AYNI — ama case handler'ın ARDINDAN geldiği Blob upload + Airtable
-// "Görsel URL" PATCH'i (arbitrary external-state update, orkestratörün
-// forbidden_capabilities listesi) BİLEREK dahil EDİLMEZ. Bu fonksiyon
-// SADECE dataUrl/prompt/provider/model döner, hiçbir kalıcı yan etkisi
-// yoktur.
+// İLE AYNI RUHTA — ama case handler'ın ARDINDAN geldiği Blob upload +
+// Airtable "Görsel URL" PATCH'i (arbitrary external-state update,
+// orkestratörün forbidden_capabilities listesi) BİLEREK dahil EDİLMEZ. Bu
+// fonksiyon SADECE dataUrl/prompt/provider/model döner, hiçbir kalıcı yan
+// etkisi yoktur.
+//
+// ROOT review (PR #106): provider seçimi burada İKİ AYRI kural izler —
+// (1) "composite" generateSceneImage'ın normal provider switch'inde HİÇ
+//     YOKTUR (kendi ayrı fonksiyonuna, generateCompositeSceneImage'a
+//     gider) — availableSceneProviders(env)'in listelediği "normal"
+//     provider'lardan biri GİBİ davranılmaz ve orada YOKSA (örn.
+//     GEMINI_API_KEY tanımsızken OPENAI_API_KEY tanımlıysa listede hiç
+//     görünmez) bu SESSİZCE başka bir provider'a düşülmesi için bir sebep
+//     DEĞİLDİR — composite'in GERÇEK ön koşulu (GEMINI_API_KEY) zaten
+//     generateCompositeSceneImageImpl'in KENDİSİ tarafından uygulanır,
+//     burada AYRICA kontrol EDİLMEZ/BYPASS edilmez.
+// (2) Normal (composite dışı) bir provider caller tarafından AÇIKÇA
+//     istenirse, gerçekten kullanılabilir provider'lar listesine karşı
+//     doğrulanır — kullanılamıyorsa FAIL CLOSED (providers[0]'a SESSİZCE
+//     düşülmez, hiçbir üretim çağrısı yapılmaz). provider hiç
+//     verilmemişse (caller açıkça başka bir şey istemediği için) mevcut
+//     "ilk kullanılabilir provider" varsayılanı KORUNUR — bu bir silent
+//     fallback DEĞİLDİR, dokümante edilmiş varsayılan seçimdir.
 async function runGenerateSceneImage(args, env, deps) {
   const resolveProductImpl = deps.resolveOrchestratorProductImpl || resolveOrchestratorProduct;
   const availableSceneProvidersImpl = deps.availableSceneProvidersImpl || availableSceneProviders;
@@ -47,17 +65,35 @@ async function runGenerateSceneImage(args, env, deps) {
 
   const product = await resolveProductImpl(args.productId);
   if (!product.imageUrl) throw new Error("Bu ürünün bilinen bir fotoğrafı yok; önce Görsel URL alanını doldurun.");
+
+  const requestedProvider = String(args.provider || "").trim();
+
+  // (1) ÖZEL yürütme rotası — normal provider doğrulamasından ÖNCE ele
+  // alınır, availableSceneProvidersImpl(env) HİÇ SORULMAZ.
+  if (requestedProvider === "composite") {
+    return generateCompositeSceneImageImpl(product, args.sceneDescription, env, {});
+  }
+
+  // (2) Normal provider(ler) — YALNIZ burada gerçek kullanılabilirlik
+  // listesine bakılır.
   const providers = availableSceneProvidersImpl(env);
   if (!providers.length) throw new Error("AI görsel sağlayıcı anahtarı (GEMINI_API_KEY veya OPENAI_API_KEY) tanımlı değil.");
-  const provider = providers.includes(args.provider) ? args.provider : providers[0];
 
-  return provider === "composite"
-    ? generateCompositeSceneImageImpl(product, args.sceneDescription, env, {})
-    : generateSceneImageImpl(product, args.sceneDescription, env, {
-        removeFaucet: Boolean(args.removeFaucet),
-        provider,
-        aspectRatio: args.aspectRatio
-      });
+  let provider;
+  if (requestedProvider) {
+    if (!providers.includes(requestedProvider)) {
+      throw new Error(`Desteklenmeyen veya şu anda kullanılamayan sahne üretim sağlayıcısı: "${requestedProvider}". Kullanılabilir sağlayıcılar: ${providers.join(", ")}. Sessizce başka bir sağlayıcıya düşülmez.`);
+    }
+    provider = requestedProvider;
+  } else {
+    provider = providers[0];
+  }
+
+  return generateSceneImageImpl(product, args.sceneDescription, env, {
+    removeFaucet: Boolean(args.removeFaucet),
+    provider,
+    aspectRatio: args.aspectRatio
+  });
 }
 
 // Her capability'nin AÇIK, sınırlı (bounded) bir sözleşmesi vardır:
