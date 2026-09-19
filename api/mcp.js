@@ -34,6 +34,8 @@ import { CREATIVE_TIERS } from "../src/creative-providers/model-registry.js";
 import { searchProductKnowledge, KNOWLEDGE_PROVIDERS, SOURCE_PRIORITY } from "../src/knowledge/index.js";
 import { runOrchestration, ORCHESTRATOR_CAPABILITIES } from "../src/orchestrator/index.js";
 import { MAX_STEPS as MAX_ORCHESTRATOR_STEPS, MAX_RETRY_ATTEMPTS as MAX_ORCHESTRATOR_RETRY_ATTEMPTS } from "../src/orchestrator/validate.js";
+import { runDeepResearch, RESEARCH_MODES as DEEP_RESEARCH_MODES } from "../src/deep-research/index.js";
+import { MAX_COMPETITORS as MAX_DEEP_RESEARCH_COMPETITORS } from "../src/deep-research/validate.js";
 
 const MCP_API_KEY = process.env.MCP_API_KEY || "";
 const SERVER_INFO = { name: "buzsu-social-publisher", version: "1.0.0" };
@@ -563,6 +565,25 @@ const TOOLS = [
         }
       },
       required: ["steps"]
+    }
+  },
+  {
+    name: "run_deep_research",
+    description: `Salt-okunur, provider-independent bir derin araştırma akışı — SEO fırsatları, rakip analizi veya haftalık içerik fırsatları için ${DEEP_RESEARCH_MODES.join(", ")} modlarından birini kullanır. YALNIZCA research_web (TASK-001) ve search_product_knowledge/get_buzsu_product_context (TASK-006) capability'lerini çağırır — publish_now/create_draft/update_draft/update_status/set_autopilot/upload_media veya herhangi bir silme/yayınlama/harici-durum-güncelleme işlemi BU ARAÇTA HİÇ YOKTUR. mode='seo'/'competitor' için 'objective' ZORUNLUDUR (uydurma bir hedef kullanılmaz); 'weekly_content_opportunities' için objective isteğe bağlıdır (sensible bir varsayılanı vardır). Yanıt normalize edilmiş 'sources' (her biri hangi capability'den geldiğini gösterir), açık bir 'uncertainty' listesi (örn. kaynak sayısı azsa) ve search_product_knowledge kullanıldıysa TASK-006'nın KENDİ tespit ettiği 'conflicts'i (sessizce çözülmeden) içerir. TEK bir confirmed:true TÜM akışı (research_web ve varsa search_product_knowledge dahil) onaylar — generate_reel_script'in isteğe bağlı researchMode'u İLE AYNI ilke; confirmed hiçbir zaman kendiliğinden üretilmez, provider başarısızlığında SESSİZCE başka bir sağlayıcıya geçilmez. GERÇEK PARA HARCAR — confirmed:true olmadan hiçbir API çağrısı yapılmaz.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        mode: { type: "string", enum: DEEP_RESEARCH_MODES, description: "Araştırma modu. seo/competitor için objective zorunludur." },
+        objective: { type: "string", description: "Araştırılacak hedef/soru (Türkçe). weekly_content_opportunities için isteğe bağlıdır." },
+        competitors: { type: "array", items: { type: "string" }, description: `İsteğe bağlı, en fazla ${MAX_DEEP_RESEARCH_COMPETITORS} rakip ürün/marka adı (competitor modunda en anlamlıdır).` },
+        urls: { type: "array", items: { type: "string" }, description: "İsteğe bağlı — research_web'in url_context'ine geçirilecek en fazla 5 URL (aynı sınır research_web'de zaten uygulanır)." },
+        provider: { type: "string", enum: ["auto", ...RESEARCH_PROVIDERS], description: "Hem research_web hem (kullanılıyorsa) search_product_knowledge için. Varsayılan 'auto'; başarısızlıkta sessizce diğerine geçilmez." },
+        productId: { type: "string", description: "İsteğe bağlı — verilirse get_buzsu_product_context ile ÜCRETSİZ ürün bağlamı sorguyu zenginleştirir." },
+        productUrl: { type: "string", description: "İsteğe bağlı — productId ile aynı amaç, resmi Buzsu ürün URL'i." },
+        productKnowledgeQuery: { type: "string", description: "İsteğe bağlı — verilirse (VE productId/productUrl'den biri varsa) search_product_knowledge'ı AYRICA çağırır (ek ücretli bir File Search/model çağrısı, aynı confirmed:true altında)." },
+        confirmed: { type: "boolean", description: "true olmadan hiçbir API çağrısı yapılmaz/ücret alınmaz — research_web VE (kullanılıyorsa) search_product_knowledge dahil." }
+      },
+      required: ["mode", "confirmed"]
     }
   },
   {
@@ -1112,6 +1133,28 @@ export async function callTool(name, args) {
       // yaşar (bkz. src/orchestrator/capabilities.js requiresConfirmation),
       // runOrchestration bunu asla kendiliğinden üretmez/atlamaz.
       const result = await runOrchestration({ steps: args.steps }, process.env);
+      return JSON.stringify(result, null, 2);
+    }
+    case "run_deep_research": {
+      // Bilinçli olarak burada bir top-level confirmed KONTROLÜ YOKTUR —
+      // runDeepResearch bunu KENDİSİ, ağa dokunan HER adımdan (ÜCRETSİZ
+      // get_buzsu_product_context dahil) önce uygular (bkz.
+      // src/deep-research/index.js); burada erken kontrol etmek yalnızca
+      // iki farklı hata mesajı yolu oluştururdu.
+      const result = await runDeepResearch(
+        {
+          mode: args.mode,
+          objective: args.objective,
+          competitors: args.competitors,
+          urls: args.urls,
+          provider: args.provider,
+          productId: args.productId,
+          productUrl: args.productUrl,
+          productKnowledgeQuery: args.productKnowledgeQuery,
+          confirmed: args.confirmed === true
+        },
+        process.env
+      );
       return JSON.stringify(result, null, 2);
     }
     case "generate_video_narration": {
