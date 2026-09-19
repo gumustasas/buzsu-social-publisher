@@ -14,8 +14,16 @@ export async function airtableRequest(path = "", options = {}) {
 }
 
 export async function listRawRecords() {
-  const data = await airtableRequest("?pageSize=100");
-  return data.records || [];
+  const records = [];
+  let offset = "";
+  do {
+    const params = new URLSearchParams({ pageSize: "100" });
+    if (offset) params.set("offset", offset);
+    const data = await airtableRequest(`?${params.toString()}`);
+    records.push(...(data.records || []));
+    offset = data.offset || "";
+  } while (offset);
+  return records;
 }
 
 // create_draft'ın "mevcut metni yeniden kullan" yolu (bkz. src/content-worker.js
