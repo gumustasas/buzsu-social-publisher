@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import { assertPublicHttpsUrl, fetchPublicImage, fetchPublicAudio, fetchPublicVideo, decodeImageBase64, imageExtensionFor, isPrivateIp, extractDriveFileId, normalizeDriveUrl, normalizeImageForMeta } from "../src/lib/upload-media.js";
+import { assertPublicHttpsUrl, fetchPublicImage, fetchPublicAudio, fetchPublicVideo, decodeImageBase64, imageExtensionFor, isPrivateIp, extractDriveFileId, normalizeDriveUrl, normalizeImageForMeta, detectImageFormat, InvalidImageInputError } from "../src/lib/upload-media.js";
 
 const TINY_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
@@ -115,6 +115,137 @@ test("fetchPublicImage downloads a valid PNG and returns its buffer + mimeType",
   const { buffer, mimeType } = await fetchPublicImage("https://example.com/photo.png", { fetchImpl, lookup });
   assert.equal(mimeType, "image/png");
   assert.equal(buffer.length, bytes.length);
+});
+
+// TASK-010: fetchPublicMediaFile'ın Content-Type kontrolü baytların
+// GERÇEKTEN o formatta olduğunun kanıtı DEĞİLDİR — fetchPublicImage bunu
+// ARTIK ayrıca (imza + decode) doğrular. Bu bloktaki testler, önceki
+// sürümde SESSİZCE geçecek (Content-Type allowlist'te olduğu için) ama
+// gerçekte bozuk/sahte/uyumsuz olan girdileri hedefler.
+function lookupPublic() { return async () => [{ address: "93.184.216.34" }]; }
+function fetchImplFor(contentType, bytes) {
+  return async () => ({
+    ok: true, status: 200,
+    headers: { get: (name) => ({ "content-type": contentType, "content-length": String(bytes.length) }[name] || null) },
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+  });
+}
+
+test("detectImageFormat: gerçek JPEG/PNG/WebP imzalarını doğru tanır, tanınmayan/eksik bir imza için null döner", async () => {
+  const jpeg = await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 1, g: 2, b: 3 } } }).jpeg().toBuffer();
+  const png = await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 1, g: 2, b: 3 } } }).png().toBuffer();
+  const webp = await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 1, g: 2, b: 3 } } }).webp().toBuffer();
+  assert.equal(detectImageFormat(jpeg), "image/jpeg");
+  assert.equal(detectImageFormat(png), "image/png");
+  assert.equal(detectImageFormat(webp), "image/webp");
+  assert.equal(detectImageFormat(Buffer.from("<html>not an image</html>")), null);
+  assert.equal(detectImageFormat(Buffer.from([0xff, 0xd8])), null); // JPEG imzası için 1 bayt eksik
+});
+
+test("fetchPublicImage: gerçek bir JPEG (declared image/jpeg) kabul edilir", async () => {
+  const bytes = await sharp({ create: { width: 10, height: 10, channels: 3, background: { r: 200, g: 20, b: 20 } } }).jpeg().toBuffer();
+  const { buffer, mimeType } = await fetchPublicImage("https://example.com/photo.jpg", { fetchImpl: fetchImplFor("image/jpeg", bytes), lookup: lookupPublic() });
+  assert.equal(mimeType, "image/jpeg");
+  assert.equal(buffer.length, bytes.length);
+});
+
+test("fetchPublicImage: gerçek bir WebP (declared image/webp) kabul edilir", async () => {
+  const bytes = await sharp({ create: { width: 10, height: 10, channels: 3, background: { r: 20, g: 200, b: 20 } } }).webp().toBuffer();
+  const { buffer, mimeType } = await fetchPublicImage("https://example.com/photo.webp", { fetchImpl: fetchImplFor("image/webp", bytes), lookup: lookupPublic() });
+  assert.equal(mimeType, "image/webp");
+  assert.equal(buffer.length, bytes.length);
+});
+
+test("fetchPublicImage: image/jpeg olarak bildirilen HTML gövdesi (Drive interstitial sayfası gibi) INVALID_IMAGE_INPUT ile reddedilir — Content-Type'a güvenilmez", async () => {
+  const html = Buffer.from("<html><body>Bu bir görsel değil</body></html>");
+  await assert.rejects(
+    () => fetchPublicImage("https://example.com/fake.jpg", { fetchImpl: fetchImplFor("image/jpeg", html), lookup: lookupPublic() }),
+    (err) => {
+      assert.ok(err instanceof InvalidImageInputError);
+      assert.equal(err.code, "INVALID_IMAGE_INPUT");
+      assert.equal(err.reason, "unsupported_bytes");
+      return true;
+    }
+  );
+});
+
+test("fetchPublicImage: image/jpeg olarak bildirilen JSON gövdesi (örn. bir API hata yanıtı) INVALID_IMAGE_INPUT ile reddedilir", async () => {
+  const json = Buffer.from(JSON.stringify({ error: "not found" }));
+  await assert.rejects(
+    () => fetchPublicImage("https://example.com/fake2.jpg", { fetchImpl: fetchImplFor("image/jpeg", json), lookup: lookupPublic() }),
+    /INVALID_IMAGE_INPUT/
+  );
+});
+
+test("fetchPublicImage: gerçek PNG baytları image/jpeg olarak bildirilirse MIME/gerçek-format uyuşmazlığıyla reddedilir — sessizce PNG olarak yeniden yorumlanmaz", async () => {
+  const pngBytes = await sharp({ create: { width: 6, height: 6, channels: 3, background: { r: 1, g: 1, b: 1 } } }).png().toBuffer();
+  await assert.rejects(
+    () => fetchPublicImage("https://example.com/mislabeled.jpg", { fetchImpl: fetchImplFor("image/jpeg", pngBytes), lookup: lookupPublic() }),
+    (err) => {
+      assert.ok(err instanceof InvalidImageInputError);
+      assert.equal(err.reason, "mime_mismatch");
+      assert.match(err.message, /image\/jpeg.*image\/png|image\/png.*image\/jpeg/);
+      return true;
+    }
+  );
+});
+
+test("fetchPublicImage: gerçek JPEG baytları image/png olarak bildirilirse de aynı şekilde reddedilir (ters yön)", async () => {
+  const jpegBytes = await sharp({ create: { width: 6, height: 6, channels: 3, background: { r: 1, g: 1, b: 1 } } }).jpeg().toBuffer();
+  await assert.rejects(
+    () => fetchPublicImage("https://example.com/mislabeled.png", { fetchImpl: fetchImplFor("image/png", jpegBytes), lookup: lookupPublic() }),
+    (err) => {
+      assert.equal(err.code, "INVALID_IMAGE_INPUT");
+      assert.equal(err.reason, "mime_mismatch");
+      return true;
+    }
+  );
+});
+
+test("fetchPublicImage: kesilmiş/bozuk bir JPEG (geçerli imza ama decode edilemeyen gövde) INVALID_IMAGE_INPUT ile reddedilir, sessizce onarılmaya çalışılmaz", async () => {
+  const full = await sharp({ create: { width: 64, height: 64, channels: 3, background: { r: 90, g: 90, b: 90 } } }).jpeg().toBuffer();
+  const truncated = full.subarray(0, Math.floor(full.length / 3));
+  assert.equal(detectImageFormat(truncated), "image/jpeg", "imza hâlâ geçerli olmalı — asıl sorun decode edilebilirlik");
+  await assert.rejects(
+    () => fetchPublicImage("https://example.com/truncated.jpg", { fetchImpl: fetchImplFor("image/jpeg", truncated), lookup: lookupPublic() }),
+    (err) => {
+      assert.ok(err instanceof InvalidImageInputError);
+      assert.equal(err.reason, "undecodable");
+      return true;
+    }
+  );
+});
+
+test("fetchPublicImage: bozuk bir PNG (imza geçerli, gövde bozulmuş) INVALID_IMAGE_INPUT ile reddedilir", async () => {
+  const full = await sharp({ create: { width: 64, height: 64, channels: 3, background: { r: 10, g: 200, b: 10 } } }).png().toBuffer();
+  const corrupted = Buffer.from(full);
+  // İmza baytlarına DOKUNMADAN gövdenin ortasını bozar — format tespiti
+  // yine "image/png" der, ama decode başarısız olmalı.
+  for (let i = Math.floor(corrupted.length / 2); i < corrupted.length; i++) corrupted[i] = 0;
+  assert.equal(detectImageFormat(corrupted), "image/png");
+  await assert.rejects(
+    () => fetchPublicImage("https://example.com/corrupt.png", { fetchImpl: fetchImplFor("image/png", corrupted), lookup: lookupPublic() }),
+    (err) => {
+      assert.equal(err.code, "INVALID_IMAGE_INPUT");
+      assert.equal(err.reason, "undecodable");
+      return true;
+    }
+  );
+});
+
+test("fetchPublicImage: bozuk bir WebP (imza geçerli, gövde bozulmuş) INVALID_IMAGE_INPUT ile reddedilir", async () => {
+  const full = await sharp({ create: { width: 64, height: 64, channels: 3, background: { r: 10, g: 10, b: 200 } } }).webp().toBuffer();
+  const corrupted = Buffer.from(full);
+  for (let i = Math.floor(corrupted.length / 2); i < corrupted.length; i++) corrupted[i] = 0;
+  assert.equal(detectImageFormat(corrupted), "image/webp");
+  await assert.rejects(
+    () => fetchPublicImage("https://example.com/corrupt.webp", { fetchImpl: fetchImplFor("image/webp", corrupted), lookup: lookupPublic() }),
+    (err) => {
+      assert.equal(err.code, "INVALID_IMAGE_INPUT");
+      assert.equal(err.reason, "undecodable");
+      return true;
+    }
+  );
 });
 
 test("decodeImageBase64 rejects an unsupported mime type", () => {

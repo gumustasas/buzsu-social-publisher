@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -16,22 +17,10 @@ const UPSCALE_MIN_DIMENSION_THRESHOLD = 1080;
 
 const execFileAsync = promisify(execFile);
 
-// GitHub Actions workflow_dispatch en fazla 10 string input kabul eder ve
-// mediaItems gibi karmaşık/uzun verileri taşımaya uygun değildir — bu yüzden
-// src/video-compose.js dispatch'ten ÖNCE tüm işi (mediaItems, süre/transition
-// seçenekleri, opsiyonel müzik) video-jobs/<jobId>.json'a "queued" durumuyla
-// yazar ve workflow_dispatch'e yalnızca jobId gönderir. Bu worker aynı
-// jobId'yi okuyup gerçek payload'u buradan alır.
-const jobId = process.env.JOB_ID;
-if (!jobId) {
-  console.error("JOB_ID env değişkeni gerekli.");
-  process.exit(1);
-}
-
 // Ürün/müzik URL'leri imzalı (signed) olabilir — query string'de kısa ömürlü
-// ama yine de hassas bir erişim token'ı taşıyabilir. Loglarda yalnızca
-// origin+path görünür, query/hash asla yazılmaz.
-function redactUrlForLog(rawUrl) {
+// ama yine de hassas bir erişim token'ı taşıyabilir. Loglarda VEYA hata
+// mesajlarında yalnızca origin+path görünür, query/hash/token ASLA yazılmaz.
+export function redactUrlForLog(rawUrl) {
   try {
     const url = new URL(String(rawUrl));
     return `${url.origin}${url.pathname}`;
@@ -39,6 +28,53 @@ function redactUrlForLog(rawUrl) {
     return "[geçersiz URL]";
   }
 }
+
+// TASK-010: mediaItems[i].imageUrl'i indirir (ve isteniyorsa AI ile büyütür) —
+// fetchPublicImage'ın (bkz. src/lib/upload-media.js) yeni INVALID_IMAGE_INPUT
+// doğrulaması dahil HER hata burada YAKALANIR ve hangi mediaItems girdisinin
+// başarısız olduğu (index) AÇIKÇA eklenerek yeniden fırlatılır — ama URL yalnız
+// redactUrlForLog ile (origin+path, query/hash/token OLMADAN) eklenir. Hatanın
+// KENDİSİ (örn. `.code === "INVALID_IMAGE_INPUT"`) OLDUĞU GİBİ korunur, yalnızca
+// mesaja bağlam eklenir — libvips'in ham hatası burada da birincil teşhis
+// olarak SIZMAZ, çünkü fetchPublicImage onu zaten kendi INVALID_IMAGE_INPUT
+// mesajının ARKASINDA (cause) tutar.
+export async function downloadMediaItemImage(item, index, total, {
+  upscaleImages = false,
+  fetchPublicImageImpl = fetchPublicImage,
+  upscaleImageImpl = upscaleImage,
+  sharpImpl = sharp
+} = {}) {
+  try {
+    console.log(`[${index + 1}/${total}] indiriliyor: ${redactUrlForLog(item.imageUrl)}`);
+    const { buffer: rawBuffer, mimeType } = await fetchPublicImageImpl(item.imageUrl);
+    let buffer = rawBuffer;
+    if (upscaleImages) {
+      const meta = await sharpImpl(rawBuffer).metadata();
+      const minSide = Math.min(meta.width || 0, meta.height || 0);
+      if (minSide < UPSCALE_MIN_DIMENSION_THRESHOLD) {
+        console.log(`[${index + 1}/${total}] AI ile büyütülüyor (${meta.width}x${meta.height} < ${UPSCALE_MIN_DIMENSION_THRESHOLD}px eşiği)...`);
+        const upscaledUrl = await upscaleImageImpl(rawBuffer, mimeType);
+        ({ buffer } = await fetchPublicImageImpl(upscaledUrl));
+      } else {
+        console.log(`[${index + 1}/${total}] zaten yeterli çözünürlük (${meta.width}x${meta.height}), upscale atlanıyor.`);
+      }
+    }
+    return buffer;
+  } catch (error) {
+    const wrapped = new Error(`mediaItems[${index}] (${redactUrlForLog(item.imageUrl)}): ${error.message}`);
+    if (error.code) wrapped.code = error.code;
+    if (error.reason) wrapped.reason = error.reason;
+    throw wrapped;
+  }
+}
+
+// GitHub Actions workflow_dispatch en fazla 10 string input kabul eder ve
+// mediaItems gibi karmaşık/uzun verileri taşımaya uygun değildir — bu yüzden
+// src/video-compose.js dispatch'ten ÖNCE tüm işi (mediaItems, süre/transition
+// seçenekleri, opsiyonel müzik) video-jobs/<jobId>.json'a "queued" durumuyla
+// yazar ve workflow_dispatch'e yalnızca jobId gönderir. Bu worker aynı
+// jobId'yi okuyup gerçek payload'u buradan alır.
+const jobId = process.env.JOB_ID;
 
 // run() bu değişkeni payload'u başarıyla okuduğu anda doldurur. markFailed
 // bunu koruyarak yazar — aksi halde bir hata sonrası "failed" durumu
@@ -109,20 +145,12 @@ async function run() {
     const frames = [];
     for (let i = 0; i < mediaItems.length; i++) {
       const item = mediaItems[i];
-      console.log(`[${i + 1}/${mediaItems.length}] indiriliyor: ${redactUrlForLog(item.imageUrl)}`);
-      const { buffer: rawBuffer, mimeType } = await fetchPublicImage(item.imageUrl);
-      let buffer = rawBuffer;
-      if (upscaleImages) {
-        const meta = await sharp(rawBuffer).metadata();
-        const minSide = Math.min(meta.width || 0, meta.height || 0);
-        if (minSide < UPSCALE_MIN_DIMENSION_THRESHOLD) {
-          console.log(`[${i + 1}/${mediaItems.length}] AI ile büyütülüyor (${meta.width}x${meta.height} < ${UPSCALE_MIN_DIMENSION_THRESHOLD}px eşiği)...`);
-          const upscaledUrl = await upscaleImage(rawBuffer, mimeType);
-          ({ buffer } = await fetchPublicImage(upscaledUrl));
-        } else {
-          console.log(`[${i + 1}/${mediaItems.length}] zaten yeterli çözünürlük (${meta.width}x${meta.height}), upscale atlanıyor.`);
-        }
-      }
+      // TASK-010: her mediaItem burada indirilir/doğrulanır — bozuk/uyumsuz/
+      // decode edilemeyen bir görsel (bkz. downloadMediaItemImage'ın
+      // fetchPublicImage üzerinden yaptığı INVALID_IMAGE_INPUT kontrolü)
+      // TÜM döngü/FFmpeg adımından ÖNCE, burada throw eder — bu satırdan
+      // sonraki hiçbir kare/FFmpeg adımı asla çalışmaz.
+      const buffer = await downloadMediaItemImage(item, i, mediaItems.length, { upscaleImages });
       const framePng = await composeVideoFrame(buffer, { title: item.title || "" });
       const framePath = path.join(workDir, `frame-${i}.png`);
       await fs.writeFile(framePath, framePng);
@@ -190,7 +218,20 @@ async function run() {
   }
 }
 
-run().catch(async (error) => {
-  await markFailed(error);
-  process.exit(1);
-});
+// TASK-010: bu script'in downloadMediaItemImage/redactUrlForLog export'larını
+// (mediaItems[index] hata bağlamı + URL redaksiyonu) test dosyalarının
+// yan-etkisiz import edebilmesi için — bkz. src/publish-approved.js'teki AYNI
+// "sadece doğrudan çalıştırıldığında çalış" deseni. jobId kontrolü ve gerçek
+// run() çağrısı BİLEREK bu blok İÇİNDEDİR; bir test bu dosyayı import ettiğinde
+// (jobId env değişkeni tanımsız olsa dahi) process.exit/gerçek render ASLA
+// tetiklenmez.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  if (!jobId) {
+    console.error("JOB_ID env değişkeni gerekli.");
+    process.exit(1);
+  }
+  run().catch(async (error) => {
+    await markFailed(error);
+    process.exit(1);
+  });
+}

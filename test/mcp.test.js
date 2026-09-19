@@ -1002,12 +1002,17 @@ test("validate_product_visual: confirmed:true ile referans+üretilen görseli in
   const originalFetch = global.fetch;
   const originalGeminiKey = process.env.GEMINI_API_KEY;
   process.env.GEMINI_API_KEY = "test-gemini-key";
-  const referenceBytes = new Uint8Array([1, 2, 3, 4]).buffer;
-  const generatedBytes = new Uint8Array([5, 6, 7, 8]).buffer;
+  // TASK-010: fetchPublicImage artık indirilen baytların GERÇEKTEN geçerli
+  // bir PNG/JPEG/WebP olduğunu (imza + decode) doğruluyor — bu yüzden bu
+  // testin önceki sürümündeki keyfi 4 baytlık placeholder ([1,2,3,4]) artık
+  // INVALID_IMAGE_INPUT ile reddedilir. Test'in amacı (MCP wiring/parametre
+  // aktarımı) DEĞİŞMEDİ, sadece fixture GERÇEK bir PNG'ye çevrildi.
+  const referenceBytes = await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 10, g: 20, b: 30 } } }).png().toBuffer();
+  const generatedBytes = await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 200, g: 100, b: 50 } } }).png().toBuffer();
   const fakeImageResponse = (buffer) => ({
     ok: true,
     status: 200,
-    headers: { get: (name) => (name === "content-type" ? "image/png" : name === "content-length" ? "4" : null) },
+    headers: { get: (name) => (name === "content-type" ? "image/png" : name === "content-length" ? String(buffer.length) : null) },
     arrayBuffer: async () => buffer
   });
   let generateContentCalled = false;
