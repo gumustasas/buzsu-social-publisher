@@ -20,6 +20,7 @@ owns:
 # Conflict Protocol". Merge order across tasks touching these is set by
 # chatgpt-root.
 shared_touch:
+  - src/lib/products.js
   - api/mcp.js
   - test/mcp.test.js
   - README.md
