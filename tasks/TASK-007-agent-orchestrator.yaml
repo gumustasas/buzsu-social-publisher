@@ -1,0 +1,32 @@
+task_id: TASK-007
+title: Controlled Agent Orchestrator
+status: BLOCKED
+type: code
+assigned_to: claude-code
+review_by:
+  - chatgpt-root
+depends_on:
+  - TASK-001
+  - TASK-002
+  - TASK-003
+  - TASK-004
+  - TASK-005
+  - TASK-006
+branch: agent/task-007-orchestrator
+repo: https://github.com/gumustasas/buzsu-social-publisher
+goal: >
+  Build a provider-independent, deterministic state-machine orchestrator for READ+GENERATE
+  workflow steps only. No autonomous publish/delete/update actions.
+owns:
+  - src/orchestrator/**
+  - test/orchestrator*
+acceptance:
+  - deterministic state machine exists
+  - tool registry reuses existing tools
+  - failed steps preserve prior successful artifacts
+  - write/publish/destructive tools are excluded
+  - npm run check passes
+deliverables:
+  - pull_request
+  - tests
+  - state-machine documentation

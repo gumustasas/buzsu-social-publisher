@@ -1,0 +1,33 @@
+task_id: TASK-004
+title: Visual Product Validation
+status: BLOCKED
+type: code
+assigned_to: claude-code
+review_by:
+  - gemini
+  - chatgpt-root
+depends_on:
+  - TASK-003
+branch: agent/task-004-visual-validation
+repo: https://github.com/gumustasas/buzsu-social-publisher
+goal: >
+  Compare generated product visuals against real product references and return deterministic
+  failed-check categories for identity, logo, label, proportions, component count, installation
+  and fabricated text.
+owns:
+  - src/visual-validation/**
+  - test/visual-validation*
+shared_touch:
+  - api/mcp.js
+  - test/mcp.test.js
+  - README.md
+  - .env.example
+acceptance:
+  - validate_product_visual MCP tool exists
+  - no arbitrary single confidence score is used as the decision
+  - output includes passed, needsReview, checks, failedChecks, notes
+  - existing scene generation default behavior remains unchanged
+  - npm run check passes
+deliverables:
+  - pull_request
+  - tests
